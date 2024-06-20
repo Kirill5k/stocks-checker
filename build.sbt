@@ -19,6 +19,7 @@ val core = project
   .settings(
     name                 := "stock-checker-core",
     moduleName           := "stock-checker-core",
+    libraryDependencies ++= Dependencies.core ++ Dependencies.test
   )
 
 val root = project
