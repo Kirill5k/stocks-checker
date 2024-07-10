@@ -1,8 +1,8 @@
 package stockchecker.clients
 
-import kirill5k.common.cats.test.IOWordSpec
+import kirill5k.common.sttp.test.SttpWordSpec
 
-class FinancialModelingPrepClientSpec extends IOWordSpec {
+class FinancialModelingPrepClientSpec extends SttpWordSpec {
   "A FinancialModelingPrepClient" when {
 
   }
