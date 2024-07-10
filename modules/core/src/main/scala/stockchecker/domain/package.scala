@@ -13,6 +13,7 @@ package object domain {
       name: String,
       price: BigDecimal,
       exchange: String,
-      exchangeShortName: String
+      exchangeShortName: String,
+      stockType: String
   ) derives Codec.AsObject
 }
