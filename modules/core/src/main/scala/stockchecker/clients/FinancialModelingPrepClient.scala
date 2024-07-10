@@ -1,9 +1,12 @@
 package stockchecker.clients
 
 import cats.effect.Async
+import cats.syntax.flatMap.*
+import io.circe.Codec
 import stockchecker.common.config.FinancialModelingPrepConfig
-import stockchecker.domain.Ticker
-import sttp.client3.SttpBackend
+import stockchecker.domain.{Symbol, Ticker}
+import sttp.client3.*
+import sttp.client3.circe.asJson
 
 trait FinancialModelingPrepClient[F[_]]:
   def allTradedStocks: F[List[Ticker]]
@@ -15,10 +18,41 @@ final private class LiveFinancialModelingPrepClient[F[_]](
     F: Async[F]
 ) extends FinancialModelingPrepClient[F] {
 
-  override def allTradedStocks: F[List[Ticker]] = ???
+  override def allTradedStocks: F[List[Ticker]] =
+    backend
+      .send {
+        emptyRequest
+          .get(uri"${config.baseUri}/api/v3/available-traded/list?apikey=${config.apiKey}")
+          .response(asJson[List[FinancialModelingPrepClient.TradedStock]])
+      }
+      .flatMap { res =>
+        res.body match
+          case Right(stocks) => F.pure(stocks.map(_.toDomain))
+          case Left(value)   => ???
+      }
 
 }
 
-object FinancialModelingPrepClient:
+object FinancialModelingPrepClient {
+  final case class TradedStock(
+      symbol: Symbol,
+      exchange: String,
+      exchangeShortName: String,
+      price: BigDecimal,
+      name: String,
+      `type`: String
+  ) derives Codec.AsObject {
+    def toDomain: Ticker =
+      Ticker(
+        symbol = symbol,
+        name = name,
+        price = price,
+        exchange = exchange,
+        exchangeShortName = exchangeShortName,
+        stockType = `type`
+      )
+  }
+
   def make[F[_]](config: FinancialModelingPrepConfig, backend: SttpBackend[F, Any])(using F: Async[F]): F[FinancialModelingPrepClient[F]] =
     F.pure(LiveFinancialModelingPrepClient[F](config, backend))
+}

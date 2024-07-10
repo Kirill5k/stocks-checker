@@ -6,7 +6,7 @@ import pureconfig.generic.derivation.default.*
 
 object config {
   final case class FinancialModelingPrepConfig(
-      baseUrl: String,
+      baseUri: String,
       apiKey: String
   ) derives ConfigReader
 
