@@ -5,6 +5,14 @@ import pureconfig.*
 import pureconfig.generic.derivation.default.*
 
 object config {
+  final case class FinancialModelingPrepConfig(
+      apiKey: String
+  ) derives ConfigReader
+
+  final case class Clients(
+      financialModelingPrep: FinancialModelingPrepConfig
+  ) derives ConfigReader
+
   final case class AppConfig(
   ) derives ConfigReader
 
