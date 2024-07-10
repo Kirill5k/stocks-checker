@@ -9,7 +9,8 @@ import sttp.client3.*
 import sttp.client3.circe.asJson
 
 trait FinancialModelingPrepClient[F[_]]:
-  def allTradedStocks: F[List[Ticker]]
+  //https://site.financialmodelingprep.com/developer/docs/tradable-list-api
+  def getAllTradedStocks: F[List[Ticker]]
 
 final private class LiveFinancialModelingPrepClient[F[_]](
     private val config: FinancialModelingPrepConfig,
@@ -18,12 +19,12 @@ final private class LiveFinancialModelingPrepClient[F[_]](
     F: Async[F]
 ) extends FinancialModelingPrepClient[F] {
 
-  override def allTradedStocks: F[List[Ticker]] =
+  override def getAllTradedStocks: F[List[Ticker]] =
     backend
       .send {
         emptyRequest
           .get(uri"${config.baseUri}/api/v3/available-traded/list?apikey=${config.apiKey}")
-          .response(asJson[List[FinancialModelingPrepClient.TradedStock]])
+          .response(asJson[List[FinancialModelingPrepClient.Stock]])
       }
       .flatMap { res =>
         res.body match
@@ -34,7 +35,7 @@ final private class LiveFinancialModelingPrepClient[F[_]](
 }
 
 object FinancialModelingPrepClient {
-  final case class TradedStock(
+  final case class Stock(
       symbol: Symbol,
       exchange: String,
       exchangeShortName: String,
