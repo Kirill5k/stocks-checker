@@ -4,6 +4,7 @@ import cats.effect.Async
 import cats.syntax.flatMap.*
 import io.circe.Codec
 import stockchecker.common.config.FinancialModelingPrepConfig
+import stockchecker.domain.errors.AppError
 import stockchecker.domain.{Symbol, Ticker}
 import sttp.client3.*
 import sttp.client3.circe.asJson
@@ -28,8 +29,12 @@ final private class LiveFinancialModelingPrepClient[F[_]](
       }
       .flatMap { res =>
         res.body match
-          case Right(stocks) => F.pure(stocks.map(_.toDomain))
-          case Left(value)   => ???
+          case Right(stocks) => 
+            F.pure(stocks.map(_.toDomain))
+          case Left(DeserializationException(_, error)) =>
+            F.raiseError(AppError.Json(s"Failed to deserialize available traded stocks response: ${error}"))
+          case Left(HttpError(b, s)) =>
+            F.raiseError(AppError.Http(s.code, s"Error retrieving traded stocks: $b"))
       }
 
 }
