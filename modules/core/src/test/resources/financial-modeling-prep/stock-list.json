@@ -1,0 +1,34 @@
+[
+  {
+    "symbol": "PMGOLD.AX",
+    "name": "Perth Mint Gold",
+    "price": 17.94,
+    "exchange": "Australian Securities Exchange",
+    "exchangeShortName": "ASX",
+    "type": "etf"
+  },
+  {
+    "symbol": "IREDA.NS",
+    "name": "Indian Renewable Energy Development Agency Limited",
+    "price": 239.5,
+    "exchange": "National Stock Exchange of India",
+    "exchangeShortName": "NSE",
+    "type": "stock"
+  },
+  {
+    "symbol": "GMDCLTD.NS",
+    "name": "Gujarat Mineral Development Corporation Limited",
+    "price": 419.2,
+    "exchange": "National Stock Exchange of India",
+    "exchangeShortName": "NSE",
+    "type": "stock"
+  },
+  {
+    "symbol": "SAKUMA.NS",
+    "name": "Sakuma Exports Limited",
+    "price": 30.22,
+    "exchange": "National Stock Exchange of India",
+    "exchangeShortName": "NSE",
+    "type": "stock"
+  }
+]
