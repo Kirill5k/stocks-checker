@@ -1,6 +1,5 @@
 package stockchecker
 
-import io.circe.Codec
 import stockchecker.common.types.StringType
 
 package object domain {
@@ -15,5 +14,5 @@ package object domain {
       exchange: String,
       exchangeShortName: String,
       stockType: String
-  ) derives Codec.AsObject
+  )
 }
