@@ -3,7 +3,7 @@ package stockchecker.clients
 import cats.effect.IO
 import kirill5k.common.sttp.test.SttpWordSpec
 import stockchecker.common.config.FinancialModelingPrepConfig
-import stockchecker.domain.{Symbol, Ticker}
+import stockchecker.domain.{Stock, Ticker}
 import sttp.client3.{Response, SttpBackend}
 
 class FinancialModelingPrepClientSpec extends SttpWordSpec {
@@ -27,8 +27,8 @@ class FinancialModelingPrepClientSpec extends SttpWordSpec {
 
         result.asserting { s =>
           s must have size 4
-          s.head mustBe Ticker(
-            symbol = Symbol("PMGOLD.AX"),
+          s.head mustBe Stock(
+            ticker = Ticker("PMGOLD.AX"),
             name = "Perth Mint Gold",
             price = BigDecimal(17.94),
             exchange = "Australian Securities Exchange",

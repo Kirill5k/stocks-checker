@@ -5,13 +5,14 @@ import cats.syntax.flatMap.*
 import io.circe.Codec
 import stockchecker.common.config.FinancialModelingPrepConfig
 import stockchecker.domain.errors.AppError
-import stockchecker.domain.{Symbol, Ticker}
+import stockchecker.domain.{Stock, Ticker}
 import sttp.client3.*
 import sttp.client3.circe.asJson
 
 trait FinancialModelingPrepClient[F[_]]:
-  //https://site.financialmodelingprep.com/developer/docs/tradable-list-api
-  def getAllTradedStocks: F[List[Ticker]]
+  // https://site.financialmodelingprep.com/developer/docs/tradable-list-api
+  // available alternative: https://finnhub.io/docs/api/stock-symbols
+  def getAllTradedStocks: F[List[Stock]]
 
 final private class LiveFinancialModelingPrepClient[F[_]](
     private val config: FinancialModelingPrepConfig,
@@ -20,16 +21,16 @@ final private class LiveFinancialModelingPrepClient[F[_]](
     F: Async[F]
 ) extends FinancialModelingPrepClient[F] {
 
-  override def getAllTradedStocks: F[List[Ticker]] =
+  override def getAllTradedStocks: F[List[Stock]] =
     backend
       .send {
         emptyRequest
           .get(uri"${config.baseUri}/api/v3/available-traded/list?apikey=${config.apiKey}")
-          .response(asJson[List[FinancialModelingPrepClient.Stock]])
+          .response(asJson[List[FinancialModelingPrepClient.StockResponse]])
       }
       .flatMap { res =>
         res.body match
-          case Right(stocks) => 
+          case Right(stocks) =>
             F.pure(stocks.map(_.toDomain))
           case Left(DeserializationException(_, error)) =>
             F.raiseError(AppError.Json(s"Failed to deserialize available traded stocks response: ${error}"))
@@ -40,17 +41,17 @@ final private class LiveFinancialModelingPrepClient[F[_]](
 }
 
 object FinancialModelingPrepClient {
-  final case class Stock(
-      symbol: Symbol,
+  final case class StockResponse(
+      symbol: Ticker,
       exchange: String,
       exchangeShortName: String,
       price: BigDecimal,
       name: String,
       `type`: String
   ) derives Codec.AsObject {
-    def toDomain: Ticker =
-      Ticker(
-        symbol = symbol,
+    def toDomain: Stock =
+      Stock(
+        ticker = symbol,
         name = name,
         price = price,
         exchange = exchange,

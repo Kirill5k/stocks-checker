@@ -4,11 +4,11 @@ import stockchecker.common.types.StringType
 
 package object domain {
 
-  opaque type Symbol = String
-  object Symbol extends StringType[Symbol]
+  opaque type Ticker = String
+  object Ticker extends StringType[Ticker]
 
-  final case class Ticker(
-      symbol: Symbol,
+  final case class Stock(
+      ticker: Ticker,
       name: String,
       price: BigDecimal,
       exchange: String,
