@@ -1,15 +1,21 @@
 package stockchecker.clients
 
 import cats.effect.IO
+import kirill5k.common.cats.Clock
 import kirill5k.common.sttp.test.SttpWordSpec
 import stockchecker.common.config.FinancialModelingPrepConfig
 import stockchecker.domain.{Stock, Ticker}
 import sttp.client3.{Response, SttpBackend}
 
+import java.time.Instant
+
 class FinancialModelingPrepClientSpec extends SttpWordSpec {
   "A FinancialModelingPrepClient" when {
 
+    val time   = Instant.parse("2024-01-01T00:00:00Z")
     val config = FinancialModelingPrepConfig("http://financialmodelingprep.com", "api-key")
+
+    given Clock[IO] = Clock.mock[IO](time)
 
     "getAllTradedStocks" should {
       "return list of all traded stocks on success" in {
@@ -33,7 +39,8 @@ class FinancialModelingPrepClientSpec extends SttpWordSpec {
             price = BigDecimal(17.94),
             exchange = "Australian Securities Exchange",
             exchangeShortName = "ASX",
-            stockType = "etf"
+            stockType = "etf",
+            lastUpdatedAt = time
           )
         }
       }
