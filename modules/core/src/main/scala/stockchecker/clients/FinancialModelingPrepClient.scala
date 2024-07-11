@@ -7,7 +7,7 @@ import io.circe.Codec
 import kirill5k.common.cats.Clock
 import stockchecker.common.config.FinancialModelingPrepConfig
 import stockchecker.domain.errors.AppError
-import stockchecker.domain.{Stock, Ticker}
+import stockchecker.domain.{CompanyProfile, Stock, Ticker}
 import sttp.client3.*
 import sttp.client3.circe.asJson
 
@@ -17,6 +17,8 @@ trait FinancialModelingPrepClient[F[_]]:
   // https://site.financialmodelingprep.com/developer/docs/tradable-list-api
   // available alternative: https://finnhub.io/docs/api/stock-symbols
   def getAllTradedStocks: F[List[Stock]]
+  // https://site.financialmodelingprep.com/developer/docs/companies-key-stats-free-api
+  def getCompanyProfile(ticker: Ticker): F[CompanyProfile]
 
 final private class LiveFinancialModelingPrepClient[F[_]](
     private val config: FinancialModelingPrepConfig,
@@ -43,6 +45,7 @@ final private class LiveFinancialModelingPrepClient[F[_]](
           F.raiseError(AppError.Http(s.code, s"Error retrieving traded stocks: $b"))
     yield res
 
+  override def getCompanyProfile(ticker: Ticker): F[CompanyProfile] = ???
 }
 
 object FinancialModelingPrepClient {
@@ -66,8 +69,6 @@ object FinancialModelingPrepClient {
       )
   }
 
-  def make[F[_]: Clock](config: FinancialModelingPrepConfig, backend: SttpBackend[F, Any])(using
-      F: Async[F]
-  ): F[FinancialModelingPrepClient[F]] =
-    F.pure(LiveFinancialModelingPrepClient[F](config, backend))
+  def make[F[_]: Clock: Async](config: FinancialModelingPrepConfig, backend: SttpBackend[F, Any]): F[FinancialModelingPrepClient[F]] =
+    Async[F].pure(LiveFinancialModelingPrepClient[F](config, backend))
 }
