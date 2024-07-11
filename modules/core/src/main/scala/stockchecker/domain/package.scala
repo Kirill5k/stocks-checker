@@ -35,6 +35,7 @@ package object domain {
       isEtf: Boolean,
       isActivelyTrading: Boolean,
       isFund: Boolean,
-      isAdr: Boolean
+      isAdr: Boolean,
+      lastUpdatedAt: Instant
   )
 }
