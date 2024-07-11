@@ -2,7 +2,7 @@ package stockchecker
 
 import stockchecker.common.types.StringType
 
-import java.time.Instant
+import java.time.{Instant, LocalDate}
 
 package object domain {
 
@@ -17,5 +17,24 @@ package object domain {
       exchangeShortName: String,
       stockType: String,
       lastUpdatedAt: Instant
+  )
+
+  final case class CompanyProfile(
+      ticker: Ticker,
+      name: String,
+      country: String,
+      sector: String,
+      industry: String,
+      description: String,
+      website: String,
+      ipoDate: LocalDate,
+      currency: String,
+      price: BigDecimal,
+      mktCap: Long,
+      volAvg: Long,
+      isEtf: Boolean,
+      isActivelyTrading: Boolean,
+      isFund: Boolean,
+      isAdr: Boolean
   )
 }
