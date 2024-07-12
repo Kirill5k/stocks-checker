@@ -92,8 +92,8 @@ object FinancialModelingPrepClient {
   }
 
   final case class CompanyProfileResponse(
-      ticker: Ticker,
-      name: String,
+      symbol: Ticker,
+      companyName: String,
       country: String,
       sector: String,
       industry: String,
@@ -111,8 +111,8 @@ object FinancialModelingPrepClient {
   ) derives Codec.AsObject {
     def toDomain(time: Instant): CompanyProfile =
       CompanyProfile(
-        ticker = ticker,
-        name = name,
+        ticker = symbol,
+        name = companyName,
         country = country,
         sector = sector,
         industry = industry,
@@ -120,9 +120,9 @@ object FinancialModelingPrepClient {
         website = website,
         ipoDate = ipoDate,
         currency = currency,
-        price = price,
-        mktCap = mktCap,
-        volAvg = volAvg,
+        stockPrice = price,
+        marketCap = mktCap,
+        averageTradedVolume = volAvg,
         isEtf = isEtf,
         isActivelyTrading = isActivelyTrading,
         isFund = isFund,
