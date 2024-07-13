@@ -10,11 +10,12 @@ object config {
       apiKey: String
   ) derives ConfigReader
 
-  final case class Clients(
+  final case class ClientsConfig(
       financialModelingPrep: FinancialModelingPrepConfig
   ) derives ConfigReader
 
   final case class AppConfig(
+      clients: ClientsConfig
   ) derives ConfigReader
 
   object AppConfig {
