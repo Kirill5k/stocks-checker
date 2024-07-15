@@ -8,7 +8,7 @@ import sttp.client3.{SttpBackend, SttpBackendOptions}
 import scala.concurrent.duration.*
 
 trait Resources[F[_]]:
-  def httpClientBackend: SttpBackend[F, Any]
+  def httpBackend: SttpBackend[F, Any]
 
 object Resources {
 
@@ -18,5 +18,5 @@ object Resources {
   def make[F[_]](config: AppConfig)(using F: Async[F]): Resource[F, Resources[F]] =
     for hb <- mkHttpClientBackend(1.minute)
     yield new Resources[F]:
-      def httpClientBackend: SttpBackend[F, Any] = hb
+      def httpBackend: SttpBackend[F, Any] = hb
 }
