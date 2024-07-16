@@ -14,8 +14,14 @@ object config {
       financialModelingPrep: FinancialModelingPrepConfig
   ) derives ConfigReader
 
+  final case class MongoConfig(
+      connectionUri: String,
+      dbName: String
+  ) derives ConfigReader
+
   final case class AppConfig(
-      clients: ClientsConfig
+      clients: ClientsConfig,
+      mongo: MongoConfig
   ) derives ConfigReader
 
   object AppConfig {
