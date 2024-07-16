@@ -7,7 +7,6 @@ import mongo4cats.database.MongoDatabase
 import stockchecker.domain.Stock
 import stockchecker.repositories.entities.StockEntity
 import fs2.Stream
-import mongo4cats.circe.MongoJsonCodecs
 
 trait StockRepository[F[_]]:
   def save(stock: Stock): F[Unit]
@@ -24,7 +23,7 @@ final private class LiveStockRepository[F[_]: Monad](
     collection.find.stream.map(_.toDomain)
 }
 
-object StockRepository extends MongoJsonCodecs:
+object StockRepository:
   def make[F[_]](database: MongoDatabase[F])(using F: Monad[F]): F[StockRepository[F]] =
     database
       .getCollectionWithCodec[StockEntity]("stocks")
