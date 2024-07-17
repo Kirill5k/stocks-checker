@@ -19,9 +19,9 @@ class StockRepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo
         withEmbeddedMongoDatabase { db =>
           for
             repo <- StockRepository.make(db)
-            _    <- repo.save(AAPLSock)
+            _    <- repo.save(AAPLStock)
             all  <- repo.streamAll.compile.toList
-          yield all mustBe List(AAPLSock)
+          yield all mustBe List(AAPLStock)
         }
       }
 
@@ -29,7 +29,7 @@ class StockRepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo
         withEmbeddedMongoDatabase { db =>
           for
             repo <- StockRepository.make(db)
-            stocks = List(AAPLSock, AAPLSock, AAPLSock)
+            stocks = List(AAPLStock, MSFTStock)
             _   <- repo.save(stocks)
             all <- repo.streamAll.compile.toList
           yield all mustBe stocks
