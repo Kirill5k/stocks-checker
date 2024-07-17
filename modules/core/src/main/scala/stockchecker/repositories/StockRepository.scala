@@ -34,7 +34,7 @@ final private class LiveStockRepository[F[_]: Concurrent](
 }
 
 object StockRepository:
-  def make[F[_]](database: MongoDatabase[F])(using F: Concurrent[F]): F[StockRepository[F]] =
+  def make[F[_]: Concurrent](database: MongoDatabase[F]): F[StockRepository[F]] =
     database
       .getCollectionWithCodec[StockEntity]("stocks")
-      .map(coll => LiveStockRepository[F](coll))
+      .map(LiveStockRepository[F](_))
