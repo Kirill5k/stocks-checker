@@ -1,4 +1,4 @@
-package stockchecker.repositories
+package stockschecker.repositories
 
 import cats.effect.IO
 import cats.effect.unsafe.IORuntime
@@ -7,7 +7,7 @@ import mongo4cats.database.MongoDatabase
 import mongo4cats.embedded.EmbeddedMongo
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AsyncWordSpec
-import stockchecker.fixtures.*
+import stockschecker.fixtures.*
 
 import scala.concurrent.Future
 

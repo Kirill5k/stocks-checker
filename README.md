@@ -1,1 +1,1 @@
-# Stock Checker
+# Stocks Checker

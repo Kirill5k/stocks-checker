@@ -1,11 +1,11 @@
-package stockchecker.repositories
+package stockschecker.repositories
 
 import cats.effect.Concurrent
 import cats.syntax.functor.*
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import stockchecker.domain.Stock
-import stockchecker.repositories.entities.StockEntity
+import stockschecker.domain.Stock
+import stockschecker.repositories.entities.StockEntity
 import fs2.Stream
 
 trait StockRepository[F[_]]:

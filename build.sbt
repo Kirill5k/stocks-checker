@@ -17,8 +17,8 @@ val noPublish = Seq(
 val core = project
   .in(file("modules/core"))
   .settings(
-    name                 := "stock-checker-core",
-    moduleName           := "stock-checker-core",
+    name                 := "stocks-checker-core",
+    moduleName           := "stocks-checker-core",
     libraryDependencies ++= Dependencies.core ++ Dependencies.test
   )
 
@@ -26,6 +26,6 @@ val root = project
   .in(file("."))
   .settings(noPublish)
   .settings(
-    name := "stock-checker"
+    name := "stocks-checker"
   )
   .aggregate(core)

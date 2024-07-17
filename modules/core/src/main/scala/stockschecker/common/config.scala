@@ -1,4 +1,4 @@
-package stockchecker.common
+package stockschecker.common
 
 import cats.effect.Async
 import pureconfig.*

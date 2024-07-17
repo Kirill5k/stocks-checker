@@ -1,8 +1,8 @@
-package stockchecker.clients
+package stockschecker.clients
 
 import cats.effect.Async
 import cats.syntax.functor.*
-import stockchecker.common.config.ClientsConfig
+import stockschecker.common.config.ClientsConfig
 import sttp.client3.SttpBackend
 
 trait Clients[F[_]]:

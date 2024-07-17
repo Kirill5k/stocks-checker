@@ -1,10 +1,10 @@
-package stockchecker.clients
+package stockschecker.clients
 
 import cats.effect.IO
 import kirill5k.common.cats.Clock
 import kirill5k.common.sttp.test.SttpWordSpec
-import stockchecker.common.config.FinancialModelingPrepConfig
-import stockchecker.domain.{CompanyProfile, Stock, Ticker}
+import stockschecker.common.config.FinancialModelingPrepConfig
+import stockschecker.domain.{CompanyProfile, Stock, Ticker}
 import sttp.client3.{Response, SttpBackend}
 
 import java.time.{Instant, LocalDate}

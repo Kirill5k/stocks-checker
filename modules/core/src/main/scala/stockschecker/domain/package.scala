@@ -1,6 +1,6 @@
-package stockchecker
+package stockschecker
 
-import stockchecker.common.types.StringType
+import stockschecker.common.types.StringType
 
 import java.time.{Instant, LocalDate}
 

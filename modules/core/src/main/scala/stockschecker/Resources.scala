@@ -1,10 +1,10 @@
-package stockchecker
+package stockschecker
 
 import cats.effect.{Async, Resource}
 import mongo4cats.client.MongoClient
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.client.{ConnectionString, MongoClientSettings}
-import stockchecker.common.config.{AppConfig, MongoConfig}
+import stockschecker.common.config.{AppConfig, MongoConfig}
 import sttp.client3.httpclient.fs2.HttpClientFs2Backend
 import sttp.client3.{SttpBackend, SttpBackendOptions}
 

@@ -1,14 +1,14 @@
-package stockchecker.clients
+package stockschecker.clients
 
 import cats.effect.Async
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import io.circe.Codec
 import kirill5k.common.cats.Clock
-import stockchecker.clients.FinancialModelingPrepClient.CompanyProfileResponse
-import stockchecker.common.config.FinancialModelingPrepConfig
-import stockchecker.domain.errors.AppError
-import stockchecker.domain.{CompanyProfile, Stock, Ticker}
+import stockschecker.clients.FinancialModelingPrepClient.CompanyProfileResponse
+import stockschecker.common.config.FinancialModelingPrepConfig
+import stockschecker.domain.errors.AppError
+import stockschecker.domain.{CompanyProfile, Stock, Ticker}
 import sttp.client3.*
 import sttp.client3.circe.asJson
 import sttp.model.StatusCode

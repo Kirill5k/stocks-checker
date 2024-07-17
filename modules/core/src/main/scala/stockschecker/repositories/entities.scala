@@ -1,9 +1,9 @@
-package stockchecker.repositories
+package stockschecker.repositories
 
 import io.circe.Codec
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
-import stockchecker.domain.{CompanyProfile, Stock, Ticker}
+import stockschecker.domain.{CompanyProfile, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
 

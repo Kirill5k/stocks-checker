@@ -1,4 +1,4 @@
-package stockchecker.domain
+package stockschecker.domain
 
 object errors {
   sealed trait AppError extends Throwable:

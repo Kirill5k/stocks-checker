@@ -1,6 +1,6 @@
-package stockchecker
+package stockschecker
 
-import stockchecker.domain.{Stock, Ticker}
+import stockschecker.domain.{Stock, Ticker}
 
 import java.time.Instant
 import java.time.temporal.ChronoUnit
