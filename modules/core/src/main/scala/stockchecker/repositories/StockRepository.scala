@@ -1,8 +1,7 @@
 package stockchecker.repositories
 
-import cats.Monad
+import cats.effect.Concurrent
 import cats.syntax.functor.*
-import cats.syntax.traverse.*
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import stockchecker.domain.Stock
@@ -14,17 +13,18 @@ trait StockRepository[F[_]]:
   def save(stocks: List[Stock]): F[Unit]
   def streamAll: Stream[F, Stock]
 
-final private class LiveStockRepository[F[_]: Monad](
+final private class LiveStockRepository[F[_]: Concurrent](
     private val collection: MongoCollection[F, StockEntity]
 ) extends StockRepository[F] {
 
   override def save(stocks: List[Stock]): F[Unit] =
-    stocks
+    Stream
+      .emits(stocks)
       .map(StockEntity.from)
-      .grouped(1024)
-      .toList
-      .traverse(collection.insertMany)
-      .void
+      .chunkN(1024)
+      .mapAsync(4)(chunk => collection.insertMany(chunk.toList))
+      .compile
+      .drain
 
   override def save(stock: Stock): F[Unit] =
     collection.insertOne(StockEntity.from(stock)).void
@@ -34,7 +34,7 @@ final private class LiveStockRepository[F[_]: Monad](
 }
 
 object StockRepository:
-  def make[F[_]](database: MongoDatabase[F])(using F: Monad[F]): F[StockRepository[F]] =
+  def make[F[_]](database: MongoDatabase[F])(using F: Concurrent[F]): F[StockRepository[F]] =
     database
       .getCollectionWithCodec[StockEntity]("stocks")
       .map(coll => LiveStockRepository[F](coll))
