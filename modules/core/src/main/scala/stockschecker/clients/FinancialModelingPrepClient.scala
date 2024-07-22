@@ -15,20 +15,13 @@ import sttp.model.StatusCode
 
 import java.time.{Instant, LocalDate}
 
-trait FinancialModelingPrepClient[F[_]]:
-  // https://site.financialmodelingprep.com/developer/docs/tradable-list-api
-  // available alternative: https://finnhub.io/docs/api/stock-symbols
-  def getAllTradedStocks: F[List[Stock]]
-  // https://site.financialmodelingprep.com/developer/docs/companies-key-stats-free-api
-  def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]]
-
-final private class LiveFinancialModelingPrepClient[F[_]](
+final private class FinancialModelingPrepClient[F[_]](
     private val config: FinancialModelingPrepConfig,
     private val backend: SttpBackend[F, Any]
 )(using
     F: Async[F],
     C: Clock[F]
-) extends FinancialModelingPrepClient[F] {
+) extends MarketDataClient[F] {
 
   override def getAllTradedStocks: F[List[Stock]] =
     val request = emptyRequest
@@ -131,6 +124,6 @@ object FinancialModelingPrepClient {
       )
   }
 
-  def make[F[_]: Clock: Async](config: FinancialModelingPrepConfig, backend: SttpBackend[F, Any]): F[FinancialModelingPrepClient[F]] =
-    Async[F].pure(LiveFinancialModelingPrepClient[F](config, backend))
+  def make[F[_]: Clock: Async](config: FinancialModelingPrepConfig, backend: SttpBackend[F, Any]): F[MarketDataClient[F]] =
+    Async[F].pure(FinancialModelingPrepClient[F](config, backend))
 }
