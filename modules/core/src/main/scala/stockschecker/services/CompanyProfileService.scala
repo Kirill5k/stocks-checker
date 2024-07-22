@@ -40,3 +40,7 @@ final private class LiveCompanyProfileService[F[_]](
         )
       )
 }
+
+object CompanyProfileService:
+  def make[F[_]](repo: CompanyProfileRepository[F], client: MarketDataClient[F])(using F: MonadThrow[F]): F[CompanyProfileService[F]] =
+    F.pure(LiveCompanyProfileService[F](repo, client))
