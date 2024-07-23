@@ -6,7 +6,7 @@ import stockschecker.clients.MarketDataClient
 import stockschecker.repositories.StockRepository
 
 trait StockService[F[_]]:
-  def fetchStocks: F[Unit]
+  def seedStocks: F[Unit]
 
 final private class LiveStockService[F[_]](
     private val repository: StockRepository[F],
@@ -14,7 +14,7 @@ final private class LiveStockService[F[_]](
 )(using
     F: MonadThrow[F]
 ) extends StockService[F] {
-  override def fetchStocks: F[Unit] =
+  override def seedStocks: F[Unit] =
     marketDataClient.getAllTradedStocks.flatMap(repository.save)
 }
 
