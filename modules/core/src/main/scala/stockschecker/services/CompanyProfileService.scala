@@ -9,6 +9,7 @@ import stockschecker.domain.{CompanyProfile, Ticker}
 import stockschecker.repositories.CompanyProfileRepository
 
 trait CompanyProfileService[F[_]]:
+  //TODO: add flag for fetching new CP
   def get(ticker: Ticker): F[CompanyProfile]
 
 final private class LiveCompanyProfileService[F[_]](
