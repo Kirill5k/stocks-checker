@@ -10,13 +10,16 @@ object Dependencies {
     val http4s      = "0.23.27"
     val logback     = "1.5.6"
     val log4cats    = "2.6.0"
+    val tapir       = "1.10.9"
   }
 
   private object Libraries {
     object commonScala {
-      val cats     = "io.github.kirill5k" %% "common-cats"      % Versions.commonScala
-      val syntax   = "io.github.kirill5k" %% "common-syntax"    % Versions.commonScala
-      val testSttp = "io.github.kirill5k" %% "common-sttp-test" % Versions.commonScala
+      val cats       = "io.github.kirill5k" %% "common-cats"        % Versions.commonScala
+      val syntax     = "io.github.kirill5k" %% "common-syntax"      % Versions.commonScala
+      val testSttp   = "io.github.kirill5k" %% "common-sttp-test"   % Versions.commonScala
+      val http4s     = "io.github.kirill5k" %% "common-http4s"      % Versions.commonScala
+      val testHttp4s = "io.github.kirill5k" %% "common-http4s-test" % Versions.commonScala
     }
 
     object mongo4cats {
@@ -51,6 +54,14 @@ object Dependencies {
 
       val all = Seq(core, circe, catsBackend)
     }
+
+    object tapir {
+      val core   = "com.softwaremill.sttp.tapir" %% "tapir-core"          % Versions.tapir
+      val circe  = "com.softwaremill.sttp.tapir" %% "tapir-json-circe"    % Versions.tapir
+      val http4s = "com.softwaremill.sttp.tapir" %% "tapir-http4s-server" % Versions.tapir
+
+      val all = Seq(core, circe, http4s)
+    }
   }
 
   val core = Seq(
@@ -58,14 +69,17 @@ object Dependencies {
     Libraries.mongo4cats.circe,
     Libraries.commonScala.cats,
     Libraries.commonScala.syntax,
-    Libraries.pureconfig.core
+    Libraries.pureconfig.core,
+    Libraries.commonScala.http4s
   ) ++
     Libraries.circe.all ++
     Libraries.logging.all ++
-    Libraries.sttp.all
+    Libraries.sttp.all ++
+    Libraries.tapir.all
 
   val test = Seq(
-    Libraries.commonScala.testSttp % Test,
-    Libraries.mongo4cats.embedded  % Test
+    Libraries.commonScala.testHttp4s % Test,
+    Libraries.commonScala.testSttp   % Test,
+    Libraries.mongo4cats.embedded    % Test
   )
 }
