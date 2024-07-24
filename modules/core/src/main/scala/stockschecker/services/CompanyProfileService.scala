@@ -9,8 +9,7 @@ import stockschecker.domain.{CompanyProfile, Ticker}
 import stockschecker.repositories.CompanyProfileRepository
 
 trait CompanyProfileService[F[_]]:
-  //TODO: add flag for fetching new CP
-  def get(ticker: Ticker): F[CompanyProfile]
+  def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
@@ -24,22 +23,19 @@ final private class LiveCompanyProfileService[F[_]](
       case Some(value) => ifPresent(value)
       case None        => ifMissing
 
-  override def get(ticker: Ticker): F[CompanyProfile] =
-    repository
-      .find(ticker)
+  private def fetchCompanyProfile(ticker: Ticker): F[CompanyProfile] =
+    client
+      .getCompanyProfile(ticker)
       .flatMap(
         unfoldOpt(
-          cp => F.pure(cp),
-          client
-            .getCompanyProfile(ticker)
-            .flatMap(
-              unfoldOpt(
-                cp => repository.save(cp).as(cp),
-                F.raiseError(AppError.NotFound(s"Couldn't not find company profile for $ticker"))
-              )
-            )
+          cp => repository.save(cp).as(cp),
+          F.raiseError(AppError.NotFound(s"Couldn't not find company profile for $ticker"))
         )
       )
+
+  override def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile] =
+    if (fetchLatest) fetchCompanyProfile(ticker)
+    else repository.find(ticker).flatMap(unfoldOpt(cp => F.pure(cp), fetchCompanyProfile(ticker)))
 }
 
 object CompanyProfileService:
