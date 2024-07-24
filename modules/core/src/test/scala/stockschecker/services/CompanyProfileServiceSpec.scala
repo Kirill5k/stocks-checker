@@ -77,7 +77,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
           verify(repo).find(AAPL)
           verify(client).getCompanyProfile(AAPL)
           verifyNoMoreInteractions(repo)
-          err mustBe Left(AppError.NotFound("Couldn't not find company profile for AAPL"))
+          err mustBe Left(AppError.CompanyProfileNotFound(AAPL))
         }
       }
     }

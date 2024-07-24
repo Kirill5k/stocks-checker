@@ -29,7 +29,7 @@ final private class LiveCompanyProfileService[F[_]](
       .flatMap(
         unfoldOpt(
           cp => repository.save(cp).as(cp),
-          F.raiseError(AppError.NotFound(s"Couldn't not find company profile for $ticker"))
+          F.raiseError(AppError.CompanyProfileNotFound(ticker))
         )
       )
 

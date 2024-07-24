@@ -34,8 +34,8 @@ final private class FinancialModelingPrepClient[F[_]](
       res <- response.body match
         case Right(stocks) =>
           F.pure(stocks.map(_.toDomain(time)))
-        case Left(DeserializationException(_, error)) =>
-          F.raiseError(AppError.Json(s"Failed to deserialize available traded stocks response: ${error}"))
+        case Left(DeserializationException(body, error)) =>
+          F.raiseError(AppError.JsonParsingFailure(body, s"Failed to deserialize available traded stocks response: ${error}"))
         case Left(HttpError(b, s)) =>
           F.raiseError(AppError.Http(s.code, s"Error retrieving traded stocks: $b"))
     yield res
@@ -53,8 +53,8 @@ final private class FinancialModelingPrepClient[F[_]](
           F.pure(None)
         case Right(companyProfile :: _) =>
           F.pure(Some(companyProfile.toDomain(time)))
-        case Left(DeserializationException(_, error)) =>
-          F.raiseError(AppError.Json(s"Failed to deserialize company profile response: ${error}"))
+        case Left(DeserializationException(body, error)) =>
+          F.raiseError(AppError.JsonParsingFailure(body, s"Failed to deserialize company profile response: ${error}"))
         case Left(HttpError(b, s)) if s == StatusCode.NotFound =>
           F.pure(None)
         case Left(HttpError(b, s)) =>
