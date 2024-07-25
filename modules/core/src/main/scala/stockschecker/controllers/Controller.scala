@@ -38,6 +38,9 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
 
   private val error = statusCode.and(jsonBody[ErrorResponse])
 
+  val publicEndpoint: PublicEndpoint[Unit, (StatusCode, ErrorResponse), Unit, Any] =
+    endpoint.errorOut(error)
+
   def serverOptions[F[_]](using F: Sync[F]): Http4sServerOptions[F] = {
     val errorEndpointOut = (e: Throwable) => Some(ValuedEndpointOutput(error, Controller.mapError(e)))
     Http4sServerOptions.customiseInterceptors

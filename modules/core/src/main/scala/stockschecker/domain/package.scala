@@ -1,13 +1,18 @@
 package stockschecker
 
+import io.circe.Codec as CirceCodec
 import stockschecker.common.types.StringType
+import sttp.tapir.{Codec, DecodeResult, Schema}
 
 import java.time.{Instant, LocalDate}
 
 package object domain {
 
   opaque type Ticker = String
-  object Ticker extends StringType[Ticker]
+  object Ticker extends StringType[Ticker] {
+    inline given Codec.PlainCodec[Ticker] = Codec.string.mapDecode[Ticker](s => DecodeResult.Value(Ticker(s)))(_.value)
+    given Schema[Ticker] = Schema.string
+  }
 
   final case class Stock(
       ticker: Ticker,
@@ -37,5 +42,5 @@ package object domain {
       isFund: Boolean,
       isAdr: Boolean,
       lastUpdatedAt: Instant
-  )
+  ) derives CirceCodec.AsObject
 }
