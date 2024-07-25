@@ -37,4 +37,7 @@ object CompanyProfileController extends TapirJsonCirce with SchemaDerivation {
     .in(query[Option[Boolean]]("fetchLatest"))
     .out(jsonBody[CompanyProfile])
     .description("Get company profile by ticker")
+
+  def make[F[_]: Async](service: CompanyProfileService[F]): F[Controller[F]] =
+    Async[F].pure(CompanyProfileController[F](service))
 }
