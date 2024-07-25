@@ -3,8 +3,18 @@ package stockschecker.common
 import cats.effect.Async
 import pureconfig.*
 import pureconfig.generic.derivation.default.*
+import kirill5k.common.http4s.*
 
 object config {
+  final case class ServerConfig(
+      host: String,
+      port: Int
+  ) derives ConfigReader
+
+  object ServerConfig:
+    given Conversion[ServerConfig, Server.Config] =
+      (sc: ServerConfig) => Server.Config(sc.host, sc.port)
+
   final case class FinancialModelingPrepConfig(
       baseUri: String,
       apiKey: String
