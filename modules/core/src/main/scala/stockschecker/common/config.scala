@@ -30,6 +30,7 @@ object config {
   ) derives ConfigReader
 
   final case class AppConfig(
+      server: ServerConfig,
       clients: ClientsConfig,
       mongo: MongoConfig
   ) derives ConfigReader
