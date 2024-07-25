@@ -20,7 +20,7 @@ final private class CompanyProfileController[F[_]: Async](
         .mapResponse(identity)
     }
 
-  override def routes: HttpRoutes[F] =
+  val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
       List(
         getCompanyProfileByTicker
