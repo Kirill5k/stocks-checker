@@ -16,26 +16,28 @@ class HealthControllerSpec extends HttpRoutesWordSpec {
 
   given clock: Clock[IO] = Clock.mock[IO](ts)
 
-  "A HealthController" should {
+  "A HealthController" when {
+    "GET /health/status" should {
+      "return status of the app" in {
+        val controller = HealthController[IO]("stocks-checker", ts, ipAddress, Some("v0.0.1"))
 
-    "return status of the app" in {
-      val controller = HealthController[IO]("stocks-checker", ts, ipAddress, Some("v0.0.1"))
+        val response = for
+          _ <- clock.sleep(1.day + 2.hours + 30.minutes + 10.seconds)
+          req = Request[IO](uri = uri"/health/status", method = Method.GET)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
 
-      val response = for
-        _ <- clock.sleep(1.day + 2.hours + 30.minutes + 10.seconds)
-        req = Request[IO](uri = uri"/health/status", method = Method.GET)
-        res <- controller.routes.orNotFound.run(req)
-      yield res
-
-      val responseBody =
-        s"""{
-           |"service": "stocks-checker",
-           |"startupTime": "$ts",
-           |"appVersion": "v0.0.1",
-           |"upTime": "1d2h30m10s",
-           |"serverIpAddress": "$ipAddress"
-           |}""".stripMargin
-      response mustHaveStatus(Status.Ok, Some(responseBody))
+        val responseBody =
+          s"""{
+             |"service": "stocks-checker",
+             |"startupTime": "$ts",
+             |"appVersion": "v0.0.1",
+             |"upTime": "1d2h30m10s",
+             |"serverIpAddress": "$ipAddress"
+             |}""".stripMargin
+        response mustHaveStatus(Status.Ok, Some(responseBody))
+      }
     }
+    
   }
 }
