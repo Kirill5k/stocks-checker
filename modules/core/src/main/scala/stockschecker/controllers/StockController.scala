@@ -13,11 +13,16 @@ final private class StockController[F[_]: Async](
     private val stockService: StockService[F]
 ) extends Controller[F] {
 
-  
-  
+  val findStock = StockController.getStockEndpoint
+    .serverLogic { (ticker, fetchLatest) =>
+      stockService
+        .get(ticker, fetchLatest.getOrElse(false))
+        .mapResponse(identity)
+    }
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
-      List()
+      List(findStock)
     )
 }
 

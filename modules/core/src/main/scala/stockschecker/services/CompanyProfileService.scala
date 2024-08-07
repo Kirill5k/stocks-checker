@@ -35,7 +35,7 @@ final private class LiveCompanyProfileService[F[_]](
 
   override def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile] =
     if (fetchLatest) fetchCompanyProfile(ticker)
-    else repository.find(ticker).flatMap(unfoldOpt(cp => F.pure(cp), fetchCompanyProfile(ticker)))
+    else repository.find(ticker).flatMap(unfoldOpt(F.pure, fetchCompanyProfile(ticker)))
 }
 
 object CompanyProfileService:
