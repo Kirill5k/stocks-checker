@@ -22,7 +22,7 @@ package object domain {
       exchangeShortName: String,
       stockType: String,
       lastUpdatedAt: Instant
-  )
+  ) derives CirceCodec.AsObject
 
   final case class CompanyProfile(
       ticker: Ticker,
