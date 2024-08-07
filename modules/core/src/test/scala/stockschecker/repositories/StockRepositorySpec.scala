@@ -36,6 +36,27 @@ class StockRepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo
         }
       }
     }
+
+    "find" should {
+      "return empty option when stock is not found" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- StockRepository.make(db)
+            s    <- repo.find(AAPL)
+          yield s mustBe None
+        }
+      }
+
+      "find stock by ticker" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- StockRepository.make(db)
+            _    <- repo.save(AAPLStock)
+            s    <- repo.find(AAPL)
+          yield s mustBe Some(AAPLStock)
+        }
+      }
+    }
   }
 
   def withEmbeddedMongoDatabase[A](test: MongoDatabase[IO] => IO[A]): Future[A] =

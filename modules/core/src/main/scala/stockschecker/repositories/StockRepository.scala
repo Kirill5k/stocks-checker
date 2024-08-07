@@ -4,14 +4,17 @@ import cats.effect.Concurrent
 import cats.syntax.functor.*
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import stockschecker.domain.Stock
+import mongo4cats.operations.Filter
+import stockschecker.domain.{Stock, Ticker}
 import stockschecker.repositories.entities.StockEntity
 import fs2.Stream
+import kirill5k.common.cats.syntax.applicative.*
 
 trait StockRepository[F[_]]:
   def save(stock: Stock): F[Unit]
   def save(stocks: List[Stock]): F[Unit]
   def streamAll: Stream[F, Stock]
+  def find(ticker: Ticker): F[Option[Stock]]
 
 final private class LiveStockRepository[F[_]: Concurrent](
     private val collection: MongoCollection[F, StockEntity]
@@ -31,6 +34,9 @@ final private class LiveStockRepository[F[_]: Concurrent](
 
   override def streamAll: Stream[F, Stock] =
     collection.find.stream.map(_.toDomain)
+
+  override def find(ticker: Ticker): F[Option[Stock]] =
+    collection.find(Filter.idEq(ticker)).first.mapOpt(_.toDomain)
 }
 
 object StockRepository:
