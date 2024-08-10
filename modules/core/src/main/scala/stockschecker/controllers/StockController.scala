@@ -14,9 +14,9 @@ final private class StockController[F[_]: Async](
 ) extends Controller[F] {
 
   val findStock = StockController.getStockEndpoint
-    .serverLogic { (ticker, fetchLatest) =>
+    .serverLogic { (ticker) =>
       stockService
-        .get(ticker, fetchLatest.getOrElse(false))
+        .get(ticker)
         .mapResponse(identity)
     }
 
@@ -32,7 +32,6 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
 
   val getStockEndpoint = Controller.publicEndpoint.get
     .in(basePath / path[Ticker])
-    .in(query[Option[Boolean]]("fetchLatest"))
     .out(jsonBody[Stock])
     .description("Get company stock by ticker")
 

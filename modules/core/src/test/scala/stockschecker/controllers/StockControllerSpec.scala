@@ -14,11 +14,11 @@ class StockControllerSpec extends HttpRoutesWordSpec {
     "GET /stocks/:ticker" should {
       "return 200 and company stock on success" in {
         val svc = mocks
-        when(svc.get(any[Ticker], anyBoolean)).thenReturnIO(AAPLStock)
+        when(svc.get(any[Ticker])).thenReturnIO(AAPLStock)
 
         val res = for
           controller <- StockController.make(svc)
-          req = Request[IO](uri = uri"/stocks/AAPL?fetchLatest=true", method = Method.GET)
+          req = Request[IO](uri = uri"/stocks/AAPL", method = Method.GET)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -32,7 +32,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
                         |  "lastUpdatedAt" : "${ts}"
                         |}""".stripMargin
         res mustHaveStatus(Status.Ok, Some(resBody))
-        verify(svc).get(AAPL, true)
+        verify(svc).get(AAPL)
       }
     }
   }
