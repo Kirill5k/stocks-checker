@@ -10,7 +10,8 @@ import java.time.{Instant, LocalDate}
 private[repositories] object entities extends MongoJsonCodecs {
 
   final case class StockEntity(
-      _id: Ticker,
+      _id: String,
+      ticker: Ticker,
       name: String,
       price: BigDecimal,
       exchange: String,
@@ -20,7 +21,7 @@ private[repositories] object entities extends MongoJsonCodecs {
   ) derives Codec.AsObject:
     def toDomain: Stock =
       Stock(
-        ticker = _id,
+        ticker = ticker,
         name = name,
         price = price,
         exchange = exchange,
@@ -34,7 +35,8 @@ private[repositories] object entities extends MongoJsonCodecs {
 
     def from(stock: Stock): StockEntity =
       StockEntity(
-        _id = stock.ticker,
+        _id = s"${stock.ticker}${stock.lastUpdatedAt.toString.substring(0, 10)}",
+        ticker = stock.ticker,
         name = stock.name,
         price = stock.price,
         exchange = stock.exchange,
