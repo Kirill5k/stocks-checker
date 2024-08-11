@@ -20,31 +20,36 @@ trait StockRepository[F[_]]:
 final private class LiveStockRepository[F[_]: Concurrent](
     private val collection: MongoCollection[F, StockEntity]
 ) extends StockRepository[F] {
-  
+
   extension (stock: Stock)
-    def id: String = s"${stock.ticker}.${stock.lastUpdatedAt.toString.substring(0, 10)}"
-    def toUpdate: Update =
-      Update
-        .setOnInsert("_id", id)
-        .setOnInsert("ticker", stock.ticker)
-        .setOnInsert("name", stock.name)
-        .setOnInsert("exchange", stock.exchange)
-        .setOnInsert("exchangeShortName", stock.exchangeShortName)
-        .setOnInsert("stockType", stock.stockType)
-        .set("price", stock.price)
-        .set("lastUpdatedAt", stock.lastUpdatedAt)
+    private def id: String = s"${stock.ticker}.${stock.lastUpdatedAt.toString.substring(0, 10)}"
+    private def toUpdateCommand: WriteCommand[Nothing] =
+      val id = stock.id
+      WriteCommand.UpdateOne(
+        Filter.idEq(id),
+        Update
+          .setOnInsert("_id", id)
+          .setOnInsert("ticker", stock.ticker)
+          .setOnInsert("name", stock.name)
+          .setOnInsert("exchange", stock.exchange)
+          .setOnInsert("exchangeShortName", stock.exchangeShortName)
+          .setOnInsert("stockType", stock.stockType)
+          .set("price", stock.price)
+          .set("lastUpdatedAt", stock.lastUpdatedAt),
+        UpdateOptions(upsert = true)
+      )
 
   override def save(stocks: List[Stock]): F[Unit] =
     Stream
       .emits(stocks)
-      .map(s => WriteCommand.UpdateOne(Filter.idEq(s.id), s.toUpdate, UpdateOptions(upsert = true)))
+      .map(_.toUpdateCommand)
       .chunkN(1024)
       .mapAsync(4)(chunk => collection.bulkWrite(chunk.toList))
       .compile
       .drain
 
   override def save(stock: Stock): F[Unit] =
-    collection.updateOne(Filter.idEq(stock.id), stock.toUpdate, UpdateOptions(upsert = true)).void
+    collection.bulkWrite(List(stock.toUpdateCommand)).void
 
   override def streamAll: Stream[F, Stock] =
     collection.find.stream.map(_.toDomain)
