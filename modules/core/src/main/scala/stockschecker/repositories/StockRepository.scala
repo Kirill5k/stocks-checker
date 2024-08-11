@@ -36,7 +36,7 @@ final private class LiveStockRepository[F[_]: Concurrent](
     collection.find.stream.map(_.toDomain)
 
   override def find(ticker: Ticker): F[Option[Stock]] =
-    collection.find(Filter.idEq(ticker)).first.mapOpt(_.toDomain)
+    collection.find(Filter.idEq(ticker)).sortByDesc("lastUpdatedAt").first.mapOpt(_.toDomain)
 }
 
 object StockRepository:
