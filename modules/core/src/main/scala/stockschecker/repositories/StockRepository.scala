@@ -9,6 +9,7 @@ import stockschecker.domain.{Stock, Ticker}
 import stockschecker.repositories.entities.StockEntity
 import fs2.Stream
 import kirill5k.common.cats.syntax.applicative.*
+import mongo4cats.models.collection.WriteCommand
 
 trait StockRepository[F[_]]:
   def save(stock: Stock): F[Unit]
@@ -19,7 +20,7 @@ trait StockRepository[F[_]]:
 final private class LiveStockRepository[F[_]: Concurrent](
     private val collection: MongoCollection[F, StockEntity]
 ) extends StockRepository[F] {
-
+  
   override def save(stocks: List[Stock]): F[Unit] =
     Stream
       .emits(stocks)
@@ -36,7 +37,7 @@ final private class LiveStockRepository[F[_]: Concurrent](
     collection.find.stream.map(_.toDomain)
 
   override def find(ticker: Ticker): F[Option[Stock]] =
-    collection.find(Filter.idEq(ticker)).sortByDesc("lastUpdatedAt").first.mapOpt(_.toDomain)
+    collection.find(Filter.eq("ticker", ticker)).sortByDesc("lastUpdatedAt").first.mapOpt(_.toDomain)
 }
 
 object StockRepository:

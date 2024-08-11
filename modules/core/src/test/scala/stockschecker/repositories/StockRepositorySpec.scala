@@ -2,6 +2,7 @@ package stockschecker.repositories
 
 import cats.effect.IO
 import cats.effect.unsafe.IORuntime
+import kirill5k.common.syntax.time.*
 import mongo4cats.client.MongoClient
 import mongo4cats.database.MongoDatabase
 import mongo4cats.embedded.EmbeddedMongo
@@ -9,19 +10,24 @@ import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AsyncWordSpec
 import stockschecker.fixtures.*
 
+import java.time.Instant
 import scala.concurrent.Future
+import scala.concurrent.duration.*
 
 class StockRepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
 
   "A StockRepository" when {
     "save" should {
-      "store single stock in database" in {
+      "store only 1 stock per day" in {
         withEmbeddedMongoDatabase { db =>
+          val ts = Instant.parse("2020-01-01T00:00:00Z")
           for
             repo <- StockRepository.make(db)
-            _    <- repo.save(AAPLStock)
+            _    <- repo.save(AAPLStock.copy(lastUpdatedAt = ts))
+            _    <- repo.save(AAPLStock.copy(lastUpdatedAt = ts.plus(1.hour)))
+            _    <- repo.save(AAPLStock.copy(lastUpdatedAt = ts.plus(2.hour)))
             all  <- repo.streamAll.compile.toList
-          yield all mustBe List(AAPLStock)
+          yield all mustBe List(AAPLStock.copy(lastUpdatedAt = ts.plus(2.hour)))
         }
       }
 
@@ -47,13 +53,15 @@ class StockRepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo
         }
       }
 
-      "find stock by ticker" in {
+      "find latest stock by ticker" in {
         withEmbeddedMongoDatabase { db =>
+          val ts = Instant.parse("2020-01-01T00:00:00Z")
           for
             repo <- StockRepository.make(db)
-            _    <- repo.save(AAPLStock)
+            _    <- repo.save(AAPLStock.copy(lastUpdatedAt = ts))
+            _    <- repo.save(AAPLStock.copy(lastUpdatedAt = ts.plus(1.day)))
             s    <- repo.find(AAPL)
-          yield s mustBe Some(AAPLStock)
+          yield s mustBe Some(AAPLStock.copy(lastUpdatedAt = ts.plus(1.day)))
         }
       }
     }
