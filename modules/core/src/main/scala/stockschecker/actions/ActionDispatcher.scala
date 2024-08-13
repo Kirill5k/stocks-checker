@@ -14,7 +14,7 @@ final private class LiveActionDispatcher[F[_]: Functor](
     private val actions: Queue[F, Action]
 ) extends ActionDispatcher[F]:
   override def dispatch(action: Action): F[Unit] = actions.offer(action)
-  override def pendingActions: Stream[F, Action] = Stream.fromQueueUnterminated(queue)
+  override def pendingActions: Stream[F, Action] = Stream.fromQueueUnterminated(actions)
 
 object ActionDispatcher:
   def make[F[_]](using F: Concurrent[F]): F[ActionDispatcher[F]] =

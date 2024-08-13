@@ -1,4 +1,4 @@
 package stockschecker.actions
 
 enum Action:
-  FetchLatestStocks
+  case FetchLatestStocks
