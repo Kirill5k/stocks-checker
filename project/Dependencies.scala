@@ -11,9 +11,12 @@ object Dependencies {
     val logback     = "1.5.6"
     val log4cats    = "2.7.0"
     val tapir       = "1.10.15"
+    val cronUtils   = "9.2.1"
   }
 
   private object Libraries {
+    val cronUtils = "com.cronutils" % "cron-utils" % Versions.cronUtils
+
     object commonScala {
       val cats       = "io.github.kirill5k" %% "common-cats"        % Versions.commonScala
       val syntax     = "io.github.kirill5k" %% "common-syntax"      % Versions.commonScala
@@ -65,6 +68,7 @@ object Dependencies {
   }
 
   val core = Seq(
+    Libraries.cronUtils,
     Libraries.mongo4cats.core,
     Libraries.mongo4cats.circe,
     Libraries.commonScala.cats,
