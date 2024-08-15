@@ -18,6 +18,9 @@ object errors {
     final case class Http(status: Int, message: String)                  extends AppError
     final case class Critical(message: String)                           extends AppError
 
+    final case class EntityDoesNotExist(entityName: String, id: String) extends NotFound:
+      override val message: String = s"$entityName with id $id does not exist"
+    
     final case class StockNotFound(ticker: Ticker) extends NotFound:
       override val message: String = s"Couldn't not find stock for $ticker"
     
