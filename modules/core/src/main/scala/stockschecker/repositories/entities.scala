@@ -1,9 +1,11 @@
 package stockschecker.repositories
 
 import io.circe.Codec
+import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
-import stockschecker.domain.{CompanyProfile, Stock, Ticker}
+import stockschecker.actions.Action
+import stockschecker.domain.{Command, CommandId, CompanyProfile, Schedule, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
 
@@ -108,6 +110,40 @@ private[repositories] object entities extends MongoJsonCodecs {
         isFund = profile.isFund,
         isAdr = profile.isAdr,
         lastUpdatedAt = profile.lastUpdatedAt
+      )
+  }
+
+  final case class CommandEntity(
+      _id: ObjectId,
+      isActive: Boolean,
+      action: Action,
+      schedule: Schedule,
+      lastExecutedAt: Option[Instant],
+      executionCount: Int,
+      maxExecutions: Option[Int]
+  ) {
+    def toDomain: Command =
+      Command(
+        id = CommandId(_id),
+        isActive = isActive,
+        action = action,
+        schedule = schedule,
+        lastExecutedAt = lastExecutedAt,
+        executionCount = executionCount,
+        maxExecutions = maxExecutions
+      )
+  }
+
+  object CommandEntity {
+    def from(cmd: Command): CommandEntity =
+      CommandEntity(
+        _id = cmd.id.toObjectId,
+        isActive = cmd.isActive,
+        action = cmd.action,
+        schedule = cmd.schedule,
+        lastExecutedAt = cmd.lastExecutedAt,
+        executionCount = cmd.executionCount,
+        maxExecutions = cmd.maxExecutions
       )
   }
 }
