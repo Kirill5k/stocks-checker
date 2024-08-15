@@ -11,6 +11,12 @@ import scala.concurrent.duration.{Duration, FiniteDuration}
 opaque type CommandId = String
 object CommandId extends IdType[CommandId]
 
+final case class CreateCommand(
+    action: Action,
+    schedule: Schedule,
+    maxExecutions: Option[Int]
+) derives Codec.AsObject
+
 final case class Command(
     id: CommandId,
     isActive: Boolean,

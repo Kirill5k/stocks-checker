@@ -5,7 +5,7 @@ import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, Schedule, Stock, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Schedule, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
 
@@ -32,9 +32,8 @@ private[repositories] object entities extends MongoJsonCodecs {
         lastUpdatedAt = lastUpdatedAt
       )
 
-  object StockEntity {
+  object StockEntity:
     given MongoCodecProvider[StockEntity] = deriveCirceCodecProvider[StockEntity]
-
     def from(stock: Stock): StockEntity =
       StockEntity(
         _id = s"${stock.ticker}${stock.lastUpdatedAt.toString.substring(0, 10)}",
@@ -46,7 +45,6 @@ private[repositories] object entities extends MongoJsonCodecs {
         stockType = stock.stockType,
         lastUpdatedAt = stock.lastUpdatedAt
       )
-  }
 
   final case class CompanyProfileEntity(
       _id: Ticker,
@@ -88,9 +86,8 @@ private[repositories] object entities extends MongoJsonCodecs {
         lastUpdatedAt = lastUpdatedAt
       )
 
-  object CompanyProfileEntity {
+  object CompanyProfileEntity:
     given MongoCodecProvider[CompanyProfileEntity] = deriveCirceCodecProvider[CompanyProfileEntity]
-
     def from(profile: CompanyProfile): CompanyProfileEntity =
       CompanyProfileEntity(
         _id = profile.ticker,
@@ -111,7 +108,6 @@ private[repositories] object entities extends MongoJsonCodecs {
         isAdr = profile.isAdr,
         lastUpdatedAt = profile.lastUpdatedAt
       )
-  }
 
   final case class CommandEntity(
       _id: ObjectId,
@@ -121,7 +117,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       lastExecutedAt: Option[Instant],
       executionCount: Int,
       maxExecutions: Option[Int]
-  ) {
+  ) derives Codec.AsObject:
     def toDomain: Command =
       Command(
         id = CommandId(_id),
@@ -132,9 +128,9 @@ private[repositories] object entities extends MongoJsonCodecs {
         executionCount = executionCount,
         maxExecutions = maxExecutions
       )
-  }
 
-  object CommandEntity {
+  object CommandEntity:
+    given MongoCodecProvider[CommandEntity] = deriveCirceCodecProvider[CommandEntity]
     def from(cmd: Command): CommandEntity =
       CommandEntity(
         _id = cmd.id.toObjectId,
@@ -145,5 +141,15 @@ private[repositories] object entities extends MongoJsonCodecs {
         executionCount = cmd.executionCount,
         maxExecutions = cmd.maxExecutions
       )
-  }
+    def from(cmd: CreateCommand): CommandEntity =
+      CommandEntity(
+        _id = ObjectId.gen,
+        isActive = true,
+        action = cmd.action,
+        schedule = cmd.schedule,
+        lastExecutedAt = None,
+        executionCount = 0,
+        maxExecutions = cmd.maxExecutions
+      )
+
 }
