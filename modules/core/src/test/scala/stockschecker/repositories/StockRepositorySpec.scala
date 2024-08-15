@@ -1,12 +1,7 @@
 package stockschecker.repositories
 
 import cats.effect.IO
-import cats.effect.unsafe.IORuntime
 import kirill5k.common.syntax.time.*
-import mongo4cats.client.MongoClient
-import mongo4cats.database.MongoDatabase
-import mongo4cats.embedded.EmbeddedMongo
-import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AsyncWordSpec
 import stockschecker.fixtures.*
 
@@ -14,8 +9,10 @@ import java.time.Instant
 import scala.concurrent.Future
 import scala.concurrent.duration.*
 
-class StockRepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
+class StockRepositorySpec extends RepositorySpec {
 
+  override def port: Int = 12148
+  
   "A StockRepository" when {
     "save" should {
       "store only 1 stock per day" in {
@@ -66,12 +63,4 @@ class StockRepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo
       }
     }
   }
-
-  def withEmbeddedMongoDatabase[A](test: MongoDatabase[IO] => IO[A]): Future[A] =
-    withRunningEmbeddedMongo(12146) {
-      MongoClient
-        .fromConnectionString[IO]("mongodb://localhost:12146")
-        .evalMap(_.getDatabase("stock-checker"))
-        .use(test)
-    }.unsafeToFuture()(IORuntime.global)
 }
