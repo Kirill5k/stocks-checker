@@ -33,6 +33,7 @@ final private class LiveCommandRepository[F[_]](
     val schedule       = "schedule"
     val lastExecutedAt = "lastExecutedAt"
     val executionCount = "executionCount"
+    val maxExecutions = "maxExecutions"
 
   override def streamActive: Stream[F, Command] =
     collection.find(Filter.eq(Field.isActive, true)).stream.map(_.toDomain)
@@ -59,6 +60,7 @@ final private class LiveCommandRepository[F[_]](
           .set(Field.schedule, cmd.schedule)
           .set(Field.lastExecutedAt, cmd.lastExecutedAt)
           .set(Field.executionCount, cmd.executionCount)
+          .set(Field.maxExecutions, cmd.maxExecutions)
       )
       .flatMap(errorIfNoMatches(AppError.EntityDoesNotExist("Command", cmd.id.value)))
       .as(cmd)
