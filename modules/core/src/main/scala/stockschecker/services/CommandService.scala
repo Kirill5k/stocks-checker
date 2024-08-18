@@ -47,5 +47,5 @@ final private class LiveCommandService[F[_]](
 }
 
 object CommandService:
-  def make[F[_]: Temporal: Clock](ad: ActionDispatcher[F], repo: CommandRepository[F]): F[CommandService[F]] =
+  def make[F[_]: Temporal: Clock](repo: CommandRepository[F], ad: ActionDispatcher[F]): F[CommandService[F]] =
     Temporal[F].pure(LiveCommandService[F](ad, repo))

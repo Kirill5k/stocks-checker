@@ -25,7 +25,7 @@ class CommandServiceSpec extends IOWordSpec {
         when(repo.streamActive).thenReturn(Stream.empty)
 
         val res = for
-          svc <- CommandService.make(ad, repo)
+          svc <- CommandService.make(repo, ad)
           _   <- svc.rescheduleAll
         yield ()
 
@@ -42,7 +42,7 @@ class CommandServiceSpec extends IOWordSpec {
         when(ad.dispatch(any[Action])).thenReturnUnit
 
         val res = for
-          svc <- CommandService.make(ad, repo)
+          svc <- CommandService.make(repo, ad)
           _   <- svc.rescheduleAll
         yield ()
 
@@ -62,7 +62,7 @@ class CommandServiceSpec extends IOWordSpec {
         when(ad.dispatch(any[Action])).thenReturnUnit
 
         val res = for
-          svc <- CommandService.make(ad, repo)
+          svc <- CommandService.make(repo, ad)
           _ <- svc.execute(FetchLatestStocksCommand.id)
         yield ()
 
@@ -79,7 +79,7 @@ class CommandServiceSpec extends IOWordSpec {
         when(repo.find(any[CommandId])).thenReturnIO(FetchLatestStocksCommand.copy(executionCount = 2, maxExecutions = Some(2)))
 
         val res = for
-          svc <- CommandService.make(ad, repo)
+          svc <- CommandService.make(repo, ad)
           _ <- svc.execute(FetchLatestStocksCommand.id)
         yield ()
 
@@ -96,7 +96,7 @@ class CommandServiceSpec extends IOWordSpec {
         when(repo.find(any[CommandId])).thenReturnIO(FetchLatestStocksCommand.copy(isActive = false))
 
         val res = for
-          svc <- CommandService.make(ad, repo)
+          svc <- CommandService.make(repo, ad)
           _ <- svc.execute(FetchLatestStocksCommand.id)
         yield ()
 
