@@ -6,6 +6,7 @@ import stockschecker.domain.{Command, CommandId, CompanyProfile, Schedule, Stock
 
 import java.time.{Instant, LocalDate}
 import java.time.temporal.ChronoUnit
+import scala.concurrent.duration.*
 
 object fixtures {
 
@@ -59,7 +60,7 @@ object fixtures {
     id = CommandId(ObjectId.gen),
     isActive = true,
     action = FetchLatestStocks,
-    schedule = Schedule.Cron.unsafe("0 7,20 * * 1-5"),
+    schedule = Schedule.Periodic(20.minutes),
     lastExecutedAt = Some(ts),
     executionCount = 1,
     maxExecutions = Some(10)

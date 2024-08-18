@@ -12,7 +12,7 @@ trait CommandService[F[_]]:
 
 final private class LiveCommandService[F[_]](
     private val actionDispatcher: ActionDispatcher[F],
-    private val commandRepository: CommandRepository[F]
+    private val repo: CommandRepository[F]
 )(using 
   F: Temporal[F],
   C: Clock[F]
@@ -20,7 +20,7 @@ final private class LiveCommandService[F[_]](
   
   override def rescheduleAll: F[Unit] =
     C.now.flatMap { now =>
-      commandRepository
+      repo
         .streamActive
         .evalTap { cmd =>
           actionDispatcher.dispatch(Action.Schedule(cmd.id, cmd.durationUntilNextExecution(now)))
@@ -30,3 +30,7 @@ final private class LiveCommandService[F[_]](
     }
   
 }
+
+object CommandService:
+  def make[F[_]: Temporal: Clock](ad: ActionDispatcher[F], repo: CommandRepository[F]): F[CommandService[F]] =
+    Temporal[F].pure(LiveCommandService[F](ad, repo))
