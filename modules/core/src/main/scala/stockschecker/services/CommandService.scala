@@ -5,30 +5,33 @@ import cats.syntax.flatMap.*
 import kirill5k.common.cats.Clock
 import stockschecker.actions.Action
 import stockschecker.actions.ActionDispatcher
+import stockschecker.domain.{Command, CreateCommand}
 import stockschecker.repositories.CommandRepository
 
 trait CommandService[F[_]]:
   def rescheduleAll: F[Unit]
+  def create(cmd: CreateCommand): F[Command]
 
 final private class LiveCommandService[F[_]](
     private val actionDispatcher: ActionDispatcher[F],
     private val repo: CommandRepository[F]
-)(using 
-  F: Temporal[F],
-  C: Clock[F]
+)(using
+    F: Temporal[F],
+    C: Clock[F]
 ) extends CommandService[F] {
-  
+
   override def rescheduleAll: F[Unit] =
     C.now.flatMap { now =>
-      repo
-        .streamActive
+      repo.streamActive
         .evalTap { cmd =>
           actionDispatcher.dispatch(Action.Schedule(cmd.id, cmd.durationUntilNextExecution(now)))
         }
         .compile
         .drain
     }
-  
+
+  override def create(cmd: CreateCommand): F[Command] =
+    repo.create(cmd)
 }
 
 object CommandService:
