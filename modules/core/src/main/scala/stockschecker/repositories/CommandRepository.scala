@@ -33,7 +33,7 @@ final private class LiveCommandRepository[F[_]](
     val schedule       = "schedule"
     val lastExecutedAt = "lastExecutedAt"
     val executionCount = "executionCount"
-    val maxExecutions = "maxExecutions"
+    val maxExecutions  = "maxExecutions"
 
   override def streamActive: Stream[F, Command] =
     collection.find(Filter.eq(Field.isActive, true)).stream.map(_.toDomain)
