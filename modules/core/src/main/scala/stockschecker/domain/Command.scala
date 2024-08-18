@@ -36,4 +36,11 @@ final case class Command(
           case _: Schedule.Periodic => Duration.Zero
           case _: Schedule.Cron     => now.durationBetween(schedule.nextExecutionTime(now))
       }
+  def incExecutionCount(ts: Instant): Command =
+    copy(
+      executionCount = executionCount + 1,
+      lastExecutedAt = Some(ts)
+    )
+  def canBeExecuted: Boolean =
+    isActive && (maxExecutions.isEmpty || maxExecutions.exists(_ > executionCount))
 }
