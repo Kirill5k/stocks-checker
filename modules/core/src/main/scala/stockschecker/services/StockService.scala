@@ -8,7 +8,7 @@ import stockschecker.domain.{Stock, Ticker}
 import stockschecker.repositories.StockRepository
 
 trait StockService[F[_]]:
-  def seedStocks: F[Unit]
+  def fetchLatest: F[Unit]
   def get(ticker: Ticker): F[Stock]
 
 final private class LiveStockService[F[_]](
@@ -17,7 +17,7 @@ final private class LiveStockService[F[_]](
 )(using
     F: MonadThrow[F]
 ) extends StockService[F] {
-  override def seedStocks: F[Unit] =
+  override def fetchLatest: F[Unit] =
     marketDataClient.getAllTradedStocks.flatMap(repository.save)
 
   override def get(ticker: Ticker): F[Stock] =

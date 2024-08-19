@@ -4,7 +4,7 @@ import cats.effect.{IO, IOApp}
 import kirill5k.common.http4s.Server
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.log4cats.Logger
-import stockschecker.actions.ActionDispatcher
+import stockschecker.actions.{ActionDispatcher, ActionExecutor}
 import stockschecker.clients.Clients
 import stockschecker.common.config.AppConfig
 import stockschecker.controllers.Controllers
@@ -26,7 +26,12 @@ object Application extends IOApp.Simple {
             repositories     <- Repositories.make(res.mongoDatabase)
             services         <- Services.make(clients, repositories, actionDispatcher)
             controllers      <- Controllers.make(services)
-            _                <- Server.serveEmber(config.server, controllers.routes).compile.drain
+            actionExecutor   <- ActionExecutor.make(actionDispatcher, services)
+            _ <- Server
+              .serveEmber(config.server, controllers.routes)
+              .concurrently(actionExecutor.run)
+              .compile
+              .drain
           yield ()
     yield ()
 }

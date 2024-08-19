@@ -9,14 +9,14 @@ import stockschecker.fixtures.*
 
 class StockServiceSpec extends IOWordSpec {
   "A StockService" when {
-    "seedStocks" should {
+    "fetchLatest" should {
       "fetch traded stocks from client and store them in db" in {
         val (repo, client) = mocks
         when(client.getAllTradedStocks).thenReturnIO(List(AAPLStock))
         when(repo.save(anyList[Stock])).thenReturnUnit
         val res = for
           svc <- StockService.make(repo, client)
-          _ <- svc.seedStocks
+          _   <- svc.fetchLatest
         yield ()
 
         res.asserting { r =>
