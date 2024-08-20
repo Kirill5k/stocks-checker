@@ -13,6 +13,7 @@ trait CommandService[F[_]]:
   def rescheduleAll: F[Unit]
   def create(cmd: CreateCommand): F[Command]
   def execute(cid: CommandId): F[Unit]
+  def getAll: F[List[Command]]
 
 final private class LiveCommandService[F[_]](
     private val actionDispatcher: ActionDispatcher[F],
@@ -44,6 +45,9 @@ final private class LiveCommandService[F[_]](
           repo.update(cmd.incExecutionCount(now))
       }
     yield ()
+
+  override def getAll: F[List[Command]] =
+    repo.all
 }
 
 object CommandService:

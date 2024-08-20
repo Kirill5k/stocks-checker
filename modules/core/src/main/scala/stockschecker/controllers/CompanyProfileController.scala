@@ -32,7 +32,7 @@ object CompanyProfileController extends TapirJsonCirce with SchemaDerivation {
 
   private val basePath = "company-profiles"
 
-  val getCompanyProfileByTickerEndpoint = Controller.publicEndpoint.get
+  private val getCompanyProfileByTickerEndpoint = Controller.publicEndpoint.get
     .in(basePath / path[Ticker])
     .in(query[Option[Boolean]]("fetchLatest"))
     .out(jsonBody[CompanyProfile])

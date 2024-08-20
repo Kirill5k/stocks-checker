@@ -30,7 +30,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
 
   private val basePath = "stocks"
 
-  val getStockEndpoint = Controller.publicEndpoint.get
+  private val getStockEndpoint = Controller.publicEndpoint.get
     .in(basePath / path[Ticker])
     .out(jsonBody[Stock])
     .description("Get company stock by ticker")

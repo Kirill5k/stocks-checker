@@ -14,8 +14,10 @@ import mongo4cats.database.MongoDatabase
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule}
 import stockschecker.repositories.entities.CommandEntity
+import kirill5k.common.cats.syntax.applicative.*
 
 trait CommandRepository[F[_]]:
+  def all: F[List[Command]]
   def streamActive: Stream[F, Command]
   def find(id: CommandId): F[Command]
   def create(cmd: CreateCommand): F[Command]
@@ -34,6 +36,9 @@ final private class LiveCommandRepository[F[_]](
     val lastExecutedAt = "lastExecutedAt"
     val executionCount = "executionCount"
     val maxExecutions  = "maxExecutions"
+
+  override def all: F[List[Command]] =
+    collection.find.all.mapList(_.toDomain)
 
   override def streamActive: Stream[F, Command] =
     collection.find(Filter.eq(Field.isActive, true)).stream.map(_.toDomain)
