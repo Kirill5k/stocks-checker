@@ -11,7 +11,7 @@ import stockschecker.repositories.CommandRepository
 
 trait CommandService[F[_]]:
   def rescheduleAll: F[Unit]
-  def create(cmd: CreateCommand): F[Command]
+  def create(cc: CreateCommand): F[Command]
   def execute(cid: CommandId): F[Unit]
   def getAll: F[List[Command]]
 
@@ -33,8 +33,12 @@ final private class LiveCommandService[F[_]](
         .drain
     }
 
-  override def create(cmd: CreateCommand): F[Command] =
-    repo.create(cmd)
+  override def create(cc: CreateCommand): F[Command] =
+    for
+      now <- C.now
+      cmd <- repo.create(cc)
+      _   <- actionDispatcher.dispatch(Action.Schedule(cmd.id, cmd.durationUntilNextExecution(now)))
+    yield cmd
 
   override def execute(cid: CommandId): F[Unit] =
     for

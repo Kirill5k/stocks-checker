@@ -8,7 +8,8 @@ import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.fixtures.*
 import stockschecker.repositories.CommandRepository
 import fs2.Stream
-import stockschecker.domain.{Command, CommandId}
+import stockschecker.actions.Action.Schedule
+import stockschecker.domain.{Command, CommandId, CreateCommand}
 
 import scala.concurrent.duration.*
 
@@ -19,6 +20,28 @@ class CommandServiceSpec extends IOWordSpec {
   given Clock[IO] = Clock.mock(now)
 
   "A CommandService" when {
+    "create" should {
+      "create new command and schedule it for execution" in {
+        val cc     = CreateCommand(FetchLatestStocksCommand.action, FetchLatestStocksCommand.schedule, None)
+        val newCmd = FetchLatestStocksCommand.copy(lastExecutedAt = None)
+
+        val (ad, repo) = mocks
+        when(repo.create(any[CreateCommand])).thenReturnIO(newCmd)
+        when(ad.dispatch(any[Action])).thenReturnUnit
+
+        val res = for
+          svc <- CommandService.make(repo, ad)
+          cmd <- svc.create(cc)
+        yield cmd
+
+        res.asserting { r =>
+          verify(repo).create(cc)
+          verify(ad).dispatch(Action.Schedule(FetchLatestStocksCommand.id, 0.minutes))
+          r mustBe newCmd
+        }
+      }
+    }
+
     "rescheduleAll" should {
       "not do anything when there are no active commands" in {
         val (ad, repo) = mocks
@@ -63,7 +86,7 @@ class CommandServiceSpec extends IOWordSpec {
 
         val res = for
           svc <- CommandService.make(repo, ad)
-          _ <- svc.execute(FetchLatestStocksCommand.id)
+          _   <- svc.execute(FetchLatestStocksCommand.id)
         yield ()
 
         res.asserting { r =>
@@ -80,14 +103,14 @@ class CommandServiceSpec extends IOWordSpec {
 
         val res = for
           svc <- CommandService.make(repo, ad)
-          _ <- svc.execute(FetchLatestStocksCommand.id)
+          _   <- svc.execute(FetchLatestStocksCommand.id)
         yield ()
 
         res.asserting { r =>
           verify(repo).find(FetchLatestStocksCommand.id)
           verifyNoInteractions(ad)
           verifyNoMoreInteractions(repo)
-          r mustBe()
+          r mustBe ()
         }
       }
 
@@ -97,14 +120,14 @@ class CommandServiceSpec extends IOWordSpec {
 
         val res = for
           svc <- CommandService.make(repo, ad)
-          _ <- svc.execute(FetchLatestStocksCommand.id)
+          _   <- svc.execute(FetchLatestStocksCommand.id)
         yield ()
 
         res.asserting { r =>
           verify(repo).find(FetchLatestStocksCommand.id)
           verifyNoInteractions(ad)
           verifyNoMoreInteractions(repo)
-          r mustBe()
+          r mustBe ()
         }
       }
     }
