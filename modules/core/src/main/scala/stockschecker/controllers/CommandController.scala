@@ -21,7 +21,8 @@ final private class CommandController[F[_]: Async](
       service.getAll
         .mapResponse(identity)
     }
-  
+
+  //TODO: Write tests for happy path + error cases
   private val createCommand = CommandController.createCommandEndpoint
     .serverLogic { req =>
       service

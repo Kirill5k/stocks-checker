@@ -4,6 +4,7 @@ import cats.effect.Async
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import io.circe.Codec
+import io.circe.fs2.*
 import kirill5k.common.cats.Clock
 import stockschecker.clients.FinancialModelingPrepClient.CompanyProfileResponse
 import stockschecker.common.config.FinancialModelingPrepConfig
@@ -11,34 +12,38 @@ import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, Stock, Ticker}
 import sttp.client3.*
 import sttp.client3.circe.asJson
+import sttp.capabilities.fs2.Fs2Streams
 import sttp.model.StatusCode
+import fs2.Stream
+import sttp.capabilities.WebSockets
 
 import java.time.{Instant, LocalDate}
 
 final private class FinancialModelingPrepClient[F[_]](
     private val config: FinancialModelingPrepConfig,
-    private val backend: SttpBackend[F, Any]
+    private val backend: SttpBackend[F, Fs2Streams[F] & WebSockets]
 )(using
     F: Async[F],
     C: Clock[F]
 ) extends MarketDataClient[F] {
 
-  override def getAllTradedStocks: F[List[Stock]] =
+  override def getAllTradedStocks: Stream[F, Stock] =
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v3/available-traded/list?apikey=${config.apiKey}")
-      .response(asJson[List[FinancialModelingPrepClient.StockResponse]])
+      .response(asStreamUnsafe(Fs2Streams[F]))
 
     for
-      time     <- C.now
-      response <- backend.send(request)
-      res <- response.body match
-        case Right(stocks) =>
-          F.pure(stocks.map(_.toDomain(time)))
-        case Left(DeserializationException(body, error)) =>
-          F.raiseError(AppError.JsonParsingFailure(body, s"Failed to deserialize available traded stocks response: ${error}"))
-        case Left(HttpError(b, s)) =>
-          F.raiseError(AppError.Http(s.code, s"Error retrieving traded stocks: $b"))
-    yield res
+      time     <- Stream.eval(C.now)
+      response <- Stream.eval(backend.send(request))
+      data <- response.body match
+        case Right(stream) =>
+          stream
+            .through(byteArrayParser[F])
+            .through(decoder[F, FinancialModelingPrepClient.StockResponse])
+            .map(_.toDomain(time))
+        case Left(err) =>
+          Stream.raiseError(AppError.Http(response.code.code, s"Error retrieving traded stocks from financial modeling prep: $err"))
+    yield data
 
   override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
     val request = emptyRequest
@@ -124,6 +129,9 @@ object FinancialModelingPrepClient {
       )
   }
 
-  def make[F[_]: Clock: Async](config: FinancialModelingPrepConfig, backend: SttpBackend[F, Any]): F[MarketDataClient[F]] =
+  def make[F[_]: Clock: Async](
+      config: FinancialModelingPrepConfig,
+      backend: SttpBackend[F, Fs2Streams[F] & WebSockets]
+  ): F[MarketDataClient[F]] =
     Async[F].pure(FinancialModelingPrepClient[F](config, backend))
 }

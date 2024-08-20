@@ -3,9 +3,10 @@ import sbt.*
 object Dependencies {
   private object Versions {
     val mongo4cats  = "0.7.8"
-    val commonScala = "0.1.18"
+    val commonScala = "0.1.19"
     val pureConfig  = "0.17.7"
     val circe       = "0.14.9"
+    val circeFs2    = "0.14.1"
     val sttp        = "3.9.7"
     val http4s      = "0.23.27"
     val logback     = "1.5.6"
@@ -46,8 +47,9 @@ object Dependencies {
       val core    = "io.circe" %% "circe-core"    % Versions.circe
       val generic = "io.circe" %% "circe-generic" % Versions.circe
       val parser  = "io.circe" %% "circe-parser"  % Versions.circe
+      val fs2     = "io.circe" %% "circe-fs2"     % Versions.circeFs2
 
-      val all = Seq(core, generic, parser)
+      val all = Seq(core, generic, parser, fs2)
     }
 
     object sttp {

@@ -40,13 +40,7 @@ final private class LiveStockRepository[F[_]: Concurrent](
       )
 
   override def save(stocks: List[Stock]): F[Unit] =
-    Stream
-      .emits(stocks)
-      .map(_.toUpdateCommand)
-      .chunkN(1024)
-      .mapAsync(4)(chunk => collection.bulkWrite(chunk.toList))
-      .compile
-      .drain
+    collection.bulkWrite(stocks.map(_.toUpdateCommand)).void
 
   override def save(stock: Stock): F[Unit] =
     collection.bulkWrite(List(stock.toUpdateCommand)).void

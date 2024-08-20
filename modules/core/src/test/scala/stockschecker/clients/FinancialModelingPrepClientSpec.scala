@@ -5,7 +5,8 @@ import kirill5k.common.cats.Clock
 import kirill5k.common.sttp.test.SttpWordSpec
 import stockschecker.common.config.FinancialModelingPrepConfig
 import stockschecker.domain.{CompanyProfile, Stock, Ticker}
-import sttp.client3.{Response, SttpBackend}
+import sttp.client3.Response
+import fs2.Stream
 
 import java.time.{Instant, LocalDate}
 
@@ -19,16 +20,16 @@ class FinancialModelingPrepClientSpec extends SttpWordSpec {
 
     "getAllTradedStocks" should {
       "return list of all traded stocks on success" in {
-        val testingBackend: SttpBackend[IO, Any] = backendStub
+        val testingBackend = backendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v3/available-traded/list") && r.hasParams(Map("apikey" -> "api-key")) =>
-              Response.ok(readJson("financial-modeling-prep/stock-list.json"))
+              Response.ok(Right(Stream.emit(readJson("financial-modeling-prep/stock-list.json")).through(fs2.text.utf8.encode)))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
         val result = for
           client <- FinancialModelingPrepClient.make[IO](config, testingBackend)
-          stocks <- client.getAllTradedStocks
+          stocks <- client.getAllTradedStocks.compile.toList
         yield stocks
 
         result.asserting { s =>
@@ -48,7 +49,7 @@ class FinancialModelingPrepClientSpec extends SttpWordSpec {
 
     "getCompanyProfile" should {
       "return company profile on success" in {
-        val testingBackend: SttpBackend[IO, Any] = backendStub
+        val testingBackend = backendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v3/profile/AAPL") && r.hasParams(Map("apikey" -> "api-key")) =>
               Response.ok(readJson("financial-modeling-prep/company-profile.json"))

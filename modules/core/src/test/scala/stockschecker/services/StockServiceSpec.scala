@@ -12,7 +12,7 @@ class StockServiceSpec extends IOWordSpec {
     "fetchLatest" should {
       "fetch traded stocks from client and store them in db" in {
         val (repo, client) = mocks
-        when(client.getAllTradedStocks).thenReturnIO(List(AAPLStock))
+        when(client.getAllTradedStocks).thenStream(AAPLStock)
         when(repo.save(anyList[Stock])).thenReturnUnit
         val res = for
           svc <- StockService.make(repo, client)
