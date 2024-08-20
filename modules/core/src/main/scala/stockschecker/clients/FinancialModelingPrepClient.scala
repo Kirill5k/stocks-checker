@@ -40,6 +40,7 @@ final private class FinancialModelingPrepClient[F[_]](
           stream
             .through(byteArrayParser[F])
             .through(decoder[F, FinancialModelingPrepClient.StockResponse])
+            .filter(_.isValid)
             .map(_.toDomain(time))
         case Left(err) =>
           Stream.raiseError(AppError.Http(response.code.code, s"Error retrieving traded stocks from financial modeling prep: $err"))
@@ -69,22 +70,22 @@ final private class FinancialModelingPrepClient[F[_]](
 }
 
 object FinancialModelingPrepClient {
-  // TODO: Fix nulls
   final case class StockResponse(
       symbol: Ticker,
-      exchange: String,
-      exchangeShortName: String,
+      exchange: Option[String],
+      exchangeShortName: Option[String],
       price: BigDecimal,
-      name: String,
+      name: Option[String],
       `type`: String
   ) derives Codec.AsObject {
+    def isValid: Boolean = exchange.isDefined && name.isDefined
     def toDomain(lastUpdatedAt: Instant): Stock =
       Stock(
         ticker = symbol,
-        name = name,
+        name = name.getOrElse(""),
         price = price,
-        exchange = exchange,
-        exchangeShortName = exchangeShortName,
+        exchange = exchange.getOrElse(""),
+        exchangeShortName = exchangeShortName.getOrElse(""),
         stockType = `type`,
         lastUpdatedAt = lastUpdatedAt
       )
