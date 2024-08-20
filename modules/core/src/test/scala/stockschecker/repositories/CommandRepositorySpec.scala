@@ -106,6 +106,29 @@ class CommandRepositorySpec extends RepositorySpec {
         }
       }
     }
+
+    "all" should {
+      "return empty list when there are no commands in db" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CommandRepository.make(db)
+            cmds <- repo.all
+          yield cmds mustBe Nil
+        }
+      }
+
+      "return all commands from repo" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo           <- CommandRepository.make(db)
+            cmd            <- repo.create(newCmd)
+            _              <- repo.setActive(cmd.id, false)
+            activeCmd      <- repo.create(newCmd)
+            cmds <- repo.all
+          yield cmds mustBe List(cmd.copy(isActive = false), activeCmd)
+        }
+      }
+    }
   }
 
 }
