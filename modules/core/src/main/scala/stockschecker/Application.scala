@@ -4,7 +4,7 @@ import cats.effect.{IO, IOApp}
 import kirill5k.common.http4s.Server
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.log4cats.Logger
-import stockschecker.actions.{ActionDispatcher, ActionExecutor}
+import stockschecker.actions.{Action, ActionDispatcher, ActionExecutor}
 import stockschecker.clients.Clients
 import stockschecker.common.config.AppConfig
 import stockschecker.controllers.Controllers
@@ -27,6 +27,7 @@ object Application extends IOApp.Simple {
             services         <- Services.make(clients, repositories, actionDispatcher)
             controllers      <- Controllers.make(services)
             actionExecutor   <- ActionExecutor.make(actionDispatcher, services)
+            _                <- actionDispatcher.dispatch(Action.RescheduleAll)
             _ <- Server
               .serveEmber(config.server, controllers.routes)
               .concurrently(actionExecutor.run)
