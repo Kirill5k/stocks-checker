@@ -21,6 +21,8 @@ final private class LiveActionExecutor[F[_]](
 
   private def handleAction(action: Action): F[Unit] =
     action match
+      case Action.RescheduleAll =>
+        logger.info(s"Executing ${action.kind}") >> services.command.rescheduleAll
       case Action.FetchLatestStocks =>
         logger.info(s"Executing ${action.kind}") >> services.stock.fetchLatest
       case Action.Schedule(cid, waiting) =>
