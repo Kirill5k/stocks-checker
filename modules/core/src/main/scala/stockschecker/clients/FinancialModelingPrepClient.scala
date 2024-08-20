@@ -69,6 +69,7 @@ final private class FinancialModelingPrepClient[F[_]](
 }
 
 object FinancialModelingPrepClient {
+  // TODO: Fix nulls
   final case class StockResponse(
       symbol: Ticker,
       exchange: String,
