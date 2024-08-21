@@ -34,7 +34,6 @@ package object domain {
       website: String,
       ipoDate: LocalDate,
       currency: String,
-      stockPrice: BigDecimal,
       marketCap: Long,
       averageTradedVolume: Long,
       isEtf: Boolean,

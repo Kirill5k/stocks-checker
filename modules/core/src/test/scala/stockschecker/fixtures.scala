@@ -46,7 +46,6 @@ object fixtures {
     website = "https://www.apple.com",
     ipoDate = LocalDate.parse("1980-12-12"),
     currency = "USD",
-    stockPrice = BigDecimal(224.31),
     marketCap = 3439591971000L,
     averageTradedVolume = 68274858L,
     isEtf = false,

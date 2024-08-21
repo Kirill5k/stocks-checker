@@ -40,7 +40,7 @@ final private class FinancialModelingPrepClient[F[_]](
           stream
             .through(byteArrayParser[F])
             .through(decoder[F, FinancialModelingPrepClient.StockResponse])
-            .filter(_.isValid)
+            .filter(s => s.isValid && s.isRegularStock)
             .map(_.toDomain(time))
         case Left(err) =>
           Stream.raiseError(AppError.Http(response.code.code, s"Error retrieving traded stocks from financial modeling prep: $err"))
@@ -79,6 +79,7 @@ object FinancialModelingPrepClient {
       `type`: String
   ) derives Codec.AsObject {
     def isValid: Boolean = exchange.isDefined && name.isDefined
+    def isRegularStock: Boolean = name.exists(n => !n.contains("."))
     def toDomain(lastUpdatedAt: Instant): Stock =
       Stock(
         ticker = symbol,
@@ -120,7 +121,6 @@ object FinancialModelingPrepClient {
         website = website,
         ipoDate = ipoDate,
         currency = currency,
-        stockPrice = price,
         marketCap = mktCap,
         averageTradedVolume = volAvg,
         isEtf = isEtf,

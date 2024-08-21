@@ -73,7 +73,6 @@ class FinancialModelingPrepClientSpec extends SttpWordSpec {
               website = "https://www.apple.com",
               ipoDate = LocalDate.parse("1980-12-12"),
               currency = "USD",
-              stockPrice = BigDecimal(232.98),
               marketCap = 3572538618000L,
               averageTradedVolume = 69852872L,
               isEtf = false,
