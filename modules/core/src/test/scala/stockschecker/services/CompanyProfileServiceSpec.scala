@@ -27,6 +27,23 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         }
       }
 
+      "fetch latest company profile" in {
+        val (repo, client) = mocks
+        when(client.getCompanyProfile(any[Ticker])).thenReturnSome(AAPLCompanyProfile)
+        when(repo.save(any[CompanyProfile])).thenReturnUnit
+
+        val res = for
+          svc <- CompanyProfileService.make(repo, client)
+          res <- svc.get(AAPL, true)
+        yield res
+
+        res.asserting { cp =>
+          verify(client).getCompanyProfile(AAPL)
+          verify(repo).save(AAPLCompanyProfile)
+          cp mustBe AAPLCompanyProfile
+        }
+      }
+
       "fetch company profile from client if it is not present in db" in {
         val (repo, client) = mocks
         when(repo.find(any[Ticker])).thenReturnNone

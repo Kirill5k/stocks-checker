@@ -15,11 +15,11 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
     "GET /company-profiles/:ticker" should {
       "return 200 and company profile on success" in {
         val svc = mocks
-        when(svc.get(any[Ticker])).thenReturnIO(AAPLCompanyProfile)
+        when(svc.get(any[Ticker], anyBoolean)).thenReturnIO(AAPLCompanyProfile)
 
         val res = for
           controller <- CompanyProfileController.make(svc)
-          req = Request[IO](uri = uri"/company-profiles/AAPL", method = Method.GET)
+          req = Request[IO](uri = uri"/company-profiles/AAPL?fetchLatest=true", method = Method.GET)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -33,6 +33,7 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "website" : "https://www.apple.com",
                               |  "ipoDate" : "1980-12-12",
                               |  "currency" : "USD",
+                              |  "stockPrice" : 224.31,
                               |  "marketCap" : 3439591971000,
                               |  "averageTradedVolume" : 68274858,
                               |  "isEtf" : false,
@@ -42,12 +43,12 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "lastUpdatedAt" : "${ts}"
                               |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        verify(svc).get(AAPL)
+        verify(svc).get(AAPL, true)
       }
 
       "return 404 on not found" in {
         val svc = mocks
-        when(svc.get(any[Ticker])).thenRaiseError(AppError.CompanyProfileNotFound(AAPL))
+        when(svc.get(any[Ticker], anyBoolean)).thenRaiseError(AppError.CompanyProfileNotFound(AAPL))
 
         val res = for
           controller <- CompanyProfileController.make(svc)
@@ -56,7 +57,7 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
         yield res
 
         res mustHaveStatus(Status.NotFound, Some("""{"message":"Couldn't not find company profile for AAPL"}"""))
-        verify(svc).get(AAPL)
+        verify(svc).get(AAPL, false)
       }
     }
   }
