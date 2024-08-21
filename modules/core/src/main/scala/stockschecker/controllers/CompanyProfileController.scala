@@ -14,9 +14,9 @@ final private class CompanyProfileController[F[_]: Async](
 ) extends Controller[F] {
 
   private val getCompanyProfileByTicker = CompanyProfileController.getCompanyProfileByTickerEndpoint
-    .serverLogic { (ticker, fetchLatest) =>
+    .serverLogic { (ticker) =>
       companyProfileService
-        .get(ticker, fetchLatest.getOrElse(false))
+        .get(ticker)
         .mapResponse(identity)
     }
 
@@ -34,7 +34,6 @@ object CompanyProfileController extends TapirJsonCirce with SchemaDerivation {
 
   private val getCompanyProfileByTickerEndpoint = Controller.publicEndpoint.get
     .in(basePath / path[Ticker])
-    .in(query[Option[Boolean]]("fetchLatest"))
     .out(jsonBody[CompanyProfile])
     .description("Get company profile by ticker")
 

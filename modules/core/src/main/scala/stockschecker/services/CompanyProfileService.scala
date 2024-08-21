@@ -9,7 +9,7 @@ import stockschecker.domain.{CompanyProfile, Ticker}
 import stockschecker.repositories.CompanyProfileRepository
 
 trait CompanyProfileService[F[_]]:
-  def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
+  def get(ticker: Ticker): F[CompanyProfile]
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
@@ -33,9 +33,8 @@ final private class LiveCompanyProfileService[F[_]](
         )
       )
 
-  override def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile] =
-    if (fetchLatest) fetchCompanyProfile(ticker)
-    else repository.find(ticker).flatMap(unfoldOpt(F.pure, fetchCompanyProfile(ticker)))
+  override def get(ticker: Ticker): F[CompanyProfile] =
+    repository.find(ticker).flatMap(unfoldOpt(F.pure, fetchCompanyProfile(ticker)))
 }
 
 object CompanyProfileService:
