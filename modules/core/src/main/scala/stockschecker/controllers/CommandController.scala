@@ -7,6 +7,7 @@ import stockschecker.actions.Action
 import stockschecker.controllers.CommandController.CreateCommandResponse
 import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule}
 import stockschecker.services.CommandService
+import sttp.model.StatusCode
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
 import sttp.tapir.json.circe.TapirJsonCirce
@@ -22,7 +23,6 @@ final private class CommandController[F[_]: Async](
         .mapResponse(identity)
     }
 
-  //TODO: Write tests for happy path + error cases
   private val createCommand = CommandController.createCommandEndpoint
     .serverLogic { req =>
       service
@@ -41,8 +41,10 @@ final private class CommandController[F[_]: Async](
 
 object CommandController extends TapirJsonCirce with SchemaDerivation {
   given Schema[CommandId] = Schema.string
-  given Schema[Action]   = Schema.string
-  given Schema[Schedule]   = Schema.string
+
+  given Schema[Action] = Schema.string
+
+  given Schema[Schedule] = Schema.string
 
   private val basePath = "commands"
 
@@ -64,7 +66,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
   private val createCommandEndpoint = Controller.publicEndpoint.post
     .in(basePath)
     .in(jsonBody[CreateCommandRequest])
-    .out(jsonBody[CreateCommandResponse])
+    .out(jsonBody[CreateCommandResponse].and(statusCode(StatusCode.Created)))
     .description("Create new command")
 
   def make[F[_]: Async](service: CommandService[F]): F[Controller[F]] =
