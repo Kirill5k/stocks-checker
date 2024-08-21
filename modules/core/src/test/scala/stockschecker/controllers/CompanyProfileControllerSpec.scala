@@ -33,7 +33,6 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "website" : "https://www.apple.com",
                               |  "ipoDate" : "1980-12-12",
                               |  "currency" : "USD",
-                              |  "stockPrice" : 224.31,
                               |  "marketCap" : 3439591971000,
                               |  "averageTradedVolume" : 68274858,
                               |  "isEtf" : false,
