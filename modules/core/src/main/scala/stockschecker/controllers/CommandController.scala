@@ -29,24 +29,34 @@ final private class CommandController[F[_]: Async](
         .create(CreateCommand(req.action, req.schedule, req.maxExecutions))
         .mapResponse(cmd => CreateCommandResponse(cmd.id))
     }
+  
+  private val activateCommand = CommandController.activateCommandEndpoint
+    .serverLogic { (cid, req) =>
+      service
+        .activate(cid, req.isActive)
+        .voidResponse
+    }
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
       List(
         getAllCommands,
-        createCommand
+        createCommand,
+        activateCommand
       )
     )
 }
 
 object CommandController extends TapirJsonCirce with SchemaDerivation {
   given Schema[CommandId] = Schema.string
-
-  given Schema[Action] = Schema.string
-
-  given Schema[Schedule] = Schema.string
+  given Schema[Action]    = Schema.string
+  given Schema[Schedule]  = Schema.string
 
   private val basePath = "commands"
+  private val commandIdPath = basePath / path[String]
+    .validate(Controller.validId)
+    .map((s: String) => CommandId(s))(_.value)
+    .name("command-id")
 
   private val getAllCommandsEndpoint = Controller.publicEndpoint.get
     .in(basePath)
@@ -68,6 +78,16 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .in(jsonBody[CreateCommandRequest])
     .out(jsonBody[CreateCommandResponse].and(statusCode(StatusCode.Created)))
     .description("Create new command")
+
+  final case class ActivateCommandRequest(
+      isActive: Boolean
+  ) derives Codec.AsObject
+
+  private val activateCommandEndpoint = Controller.publicEndpoint.put
+    .in(commandIdPath / "active")
+    .in(jsonBody[ActivateCommandRequest])
+    .out(statusCode(StatusCode.NoContent))
+    .description("Change active status of a command")
 
   def make[F[_]: Async](service: CommandService[F]): F[Controller[F]] =
     Async[F].pure(CommandController[F](service))

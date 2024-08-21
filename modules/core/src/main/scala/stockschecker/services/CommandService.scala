@@ -14,6 +14,7 @@ trait CommandService[F[_]]:
   def create(cc: CreateCommand): F[Command]
   def execute(cid: CommandId): F[Unit]
   def getAll: F[List[Command]]
+  def activate(cid: CommandId, isActive: Boolean): F[Unit]
 
 final private class LiveCommandService[F[_]](
     private val actionDispatcher: ActionDispatcher[F],
@@ -52,6 +53,9 @@ final private class LiveCommandService[F[_]](
 
   override def getAll: F[List[Command]] =
     repo.all
+
+  override def activate(cid: CommandId, isActive: Boolean): F[Unit] =
+    repo.setActive(cid, isActive)
 }
 
 object CommandService:

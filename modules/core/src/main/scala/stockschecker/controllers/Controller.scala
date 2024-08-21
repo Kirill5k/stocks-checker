@@ -6,6 +6,7 @@ import cats.syntax.either.*
 import cats.syntax.functor.*
 import cats.syntax.applicativeError.*
 import io.circe.Codec
+import mongo4cats.bson.ObjectId
 import org.http4s.HttpRoutes
 import stockschecker.domain.errors.AppError
 import sttp.tapir.*
@@ -35,6 +36,9 @@ trait Controller[F[_]] extends TapirJsonCirce with SchemaDerivation {
 }
 
 object Controller extends TapirJsonCirce with SchemaDerivation {
+  val validId: Validator[String] = Validator.custom { id =>
+    if ObjectId.isValid(id) then ValidationResult.Valid else ValidationResult.Invalid(s"Invalid hexadecimal representation of an id: $id")
+  }
 
   private val error = statusCode.and(jsonBody[ErrorResponse])
 
