@@ -7,11 +7,11 @@ object Dependencies {
     val pureConfig  = "0.17.7"
     val circe       = "0.14.9"
     val circeFs2    = "0.14.1"
-    val sttp        = "3.9.7"
+    val sttp        = "3.9.8"
     val http4s      = "0.23.27"
-    val logback     = "1.5.6"
+    val logback     = "1.5.7"
     val log4cats    = "2.7.0"
-    val tapir       = "1.10.15"
+    val tapir       = "1.11.1"
     val cronUtils   = "9.2.1"
   }
 
