@@ -93,6 +93,7 @@ class CommandServiceSpec extends IOWordSpec {
           verify(repo).find(FetchLatestStocksCommand.id)
           verify(ad).dispatch(FetchLatestStocksCommand.action)
           verify(repo).update(FetchLatestStocksCommand.copy(lastExecutedAt = Some(now), executionCount = 2))
+          verify(ad).dispatch(Action.Schedule(FetchLatestStocksCommand.id, 20.minutes))
           r mustBe ()
         }
       }
@@ -100,6 +101,7 @@ class CommandServiceSpec extends IOWordSpec {
       "not execute command when maxExecutions is equal to executionCount" in {
         val (ad, repo) = mocks
         when(repo.find(any[CommandId])).thenReturnIO(FetchLatestStocksCommand.copy(executionCount = 2, maxExecutions = Some(2)))
+        when(ad.dispatch(any[Action])).thenReturnUnit
 
         val res = for
           svc <- CommandService.make(repo, ad)
@@ -108,7 +110,7 @@ class CommandServiceSpec extends IOWordSpec {
 
         res.asserting { r =>
           verify(repo).find(FetchLatestStocksCommand.id)
-          verifyNoInteractions(ad)
+          verify(ad).dispatch(Action.Schedule(FetchLatestStocksCommand.id, 20.minutes))
           verifyNoMoreInteractions(repo)
           r mustBe ()
         }
@@ -117,6 +119,7 @@ class CommandServiceSpec extends IOWordSpec {
       "not execute command when is it inactive" in {
         val (ad, repo) = mocks
         when(repo.find(any[CommandId])).thenReturnIO(FetchLatestStocksCommand.copy(isActive = false))
+        when(ad.dispatch(any[Action])).thenReturnUnit
 
         val res = for
           svc <- CommandService.make(repo, ad)
@@ -125,7 +128,7 @@ class CommandServiceSpec extends IOWordSpec {
 
         res.asserting { r =>
           verify(repo).find(FetchLatestStocksCommand.id)
-          verifyNoInteractions(ad)
+          verify(ad).dispatch(Action.Schedule(FetchLatestStocksCommand.id, 20.minutes))
           verifyNoMoreInteractions(repo)
           r mustBe ()
         }

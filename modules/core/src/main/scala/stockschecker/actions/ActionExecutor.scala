@@ -26,7 +26,9 @@ final private class LiveActionExecutor[F[_]](
       case Action.FetchLatestStocks =>
         logger.info(s"Executing ${action.kind}") >> services.stock.fetchLatest
       case Action.Schedule(cid, waiting) =>
-        logger.info(s"Executing ${action.kind} for $cid to wait for ${waiting}") >> F.sleep(waiting) >> services.command.execute(cid)
+        logger.info(s"Executing ${action.kind} for $cid to wait for ${waiting}") >> 
+          F.sleep(waiting) >> 
+          services.command.execute(cid)
 }
 
 object ActionExecutor:

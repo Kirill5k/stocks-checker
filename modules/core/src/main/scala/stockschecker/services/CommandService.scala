@@ -4,6 +4,7 @@ import cats.effect.kernel.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
+import kirill5k.common.syntax.time.*
 import stockschecker.actions.Action
 import stockschecker.actions.ActionDispatcher
 import stockschecker.domain.{Command, CommandId, CreateCommand}
@@ -49,6 +50,8 @@ final private class LiveCommandService[F[_]](
         actionDispatcher.dispatch(cmd.action) >>
           repo.update(cmd.incExecutionCount(now))
       }
+      nextExecTime = cmd.schedule.nextExecutionTime(now)
+      _ <- actionDispatcher.dispatch(Action.Schedule(cid, nextExecTime.durationBetween(now)))
     yield ()
 
   override def getAll: F[List[Command]] =
