@@ -37,7 +37,7 @@ object Resources {
 
   def make[F[_]](config: AppConfig)(using F: Async[F]): Resource[F, Resources[F]] =
     for
-      hb <- mkHttpClientBackend(1.minute)
+      hb <- mkHttpClientBackend(10.minutes)
       md <- mkMongoDatabase(config.mongo)
     yield new Resources[F]:
       def httpBackend: SttpBackend[F, Fs2Streams[F] & WebSockets] = hb
