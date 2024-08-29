@@ -15,14 +15,13 @@ import sttp.client3.circe.asJson
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.model.StatusCode
 import fs2.Stream
-import sttp.capabilities.WebSockets
 
 import java.time.{Instant, LocalDate}
 import scala.concurrent.duration.*
 
 final private class FinancialModelingPrepClient[F[_]](
     private val config: FinancialModelingPrepConfig,
-    private val backend: SttpBackend[F, Fs2Streams[F] & WebSockets]
+    private val backend: SttpBackend[F, Fs2Streams[F]]
 )(using
     F: Async[F],
     C: Clock[F]
@@ -136,7 +135,7 @@ object FinancialModelingPrepClient {
 
   def make[F[_]: Clock: Async](
       config: FinancialModelingPrepConfig,
-      backend: SttpBackend[F, Fs2Streams[F] & WebSockets]
+      backend: SttpBackend[F, Fs2Streams[F]]
   ): F[MarketDataClient[F]] =
     Async[F].pure(FinancialModelingPrepClient[F](config, backend))
 }
