@@ -21,7 +21,7 @@ final private class LiveStockService[F[_]](
     marketDataClient
       .getAllTradedStocks
       .chunkN(1024)
-      .mapAsync(4)(chunk => repository.save(chunk.toList))
+      .evalTap(chunk => repository.save(chunk.toList))
       .compile
       .drain
 
