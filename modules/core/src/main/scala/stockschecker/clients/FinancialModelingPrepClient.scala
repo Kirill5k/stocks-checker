@@ -18,6 +18,7 @@ import fs2.Stream
 import sttp.capabilities.WebSockets
 
 import java.time.{Instant, LocalDate}
+import scala.concurrent.duration.*
 
 final private class FinancialModelingPrepClient[F[_]](
     private val config: FinancialModelingPrepConfig,
@@ -31,6 +32,7 @@ final private class FinancialModelingPrepClient[F[_]](
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v3/available-traded/list?apikey=${config.apiKey}")
       .response(asStreamUnsafe(Fs2Streams[F]))
+      .readTimeout(10.minutes)
 
     for
       time <- Stream.eval(C.now)
