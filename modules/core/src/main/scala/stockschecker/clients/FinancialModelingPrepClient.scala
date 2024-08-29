@@ -27,13 +27,13 @@ final private class FinancialModelingPrepClient[F[_]](
     C: Clock[F]
 ) extends MarketDataClient[F] {
 
-  override def getAllTradedStocks: Stream[F, Stock] =
+  override def getAllTradedStocks: Stream[F, Stock] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v3/available-traded/list?apikey=${config.apiKey}")
       .response(asStreamUnsafe(Fs2Streams[F]))
 
     for
-      time     <- Stream.eval(C.now)
+      time <- Stream.eval(C.now)
       response <- Stream.eval(backend.send(request))
       data <- response.body match
         case Right(stream) =>
@@ -45,6 +45,7 @@ final private class FinancialModelingPrepClient[F[_]](
         case Left(err) =>
           Stream.raiseError(AppError.Http(response.code.code, s"Error retrieving traded stocks from financial modeling prep: $err"))
     yield data
+  }
 
   override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
     val request = emptyRequest

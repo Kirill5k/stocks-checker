@@ -20,7 +20,7 @@ final private class LiveStockService[F[_]](
   override def fetchLatest: F[Unit] =
     marketDataClient
       .getAllTradedStocks
-      .chunkN(4096)
+      .chunkN(512)
       .evalTap(chunk => repository.save(chunk.toList))
       .compile
       .drain
