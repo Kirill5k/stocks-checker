@@ -16,6 +16,7 @@ object Application extends IOApp.Simple {
 
   override val run: IO[Unit] =
     for
+      _      <- logger.info(s"starting stocks-checker-core ${sys.env.getOrElse("VERSION", "")}")
       config <- AppConfig.loadDefault[IO]
       _ <- Resources
         .make[IO](config)
