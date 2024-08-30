@@ -22,21 +22,22 @@ final private class LiveActionExecutor[F[_]](
     dispatcher.pendingActions.map(a => Stream.eval(handleAction(a))).parJoinUnbounded
 
   private def handleAction(action: Action): F[Unit] =
-    (action match
-      case Action.RescheduleAll =>
-        logger.info(s"Executing ${action.kind}") >> services.command.rescheduleAll
-      case Action.FetchLatestStocks =>
-        logger.info(s"Executing ${action.kind}") >> services.stock.fetchLatest
-      case Action.Schedule(cid, waiting) =>
-        logger.info(s"Executing ${action.kind} for $cid to wait for ${waiting}") >>
-          F.sleep(waiting) >>
-          services.command.execute(cid)
-    ).handleErrorWith {
-      case error: AppError =>
-        logger.warn(error)(s"domain error while processing action $action")
-      case error =>
-        logger.error(error)(s"unexpected error while processing action $action")
-    }
+    logger.info(s"Processing $action") >>
+      (action match
+        case Action.RescheduleAll =>
+          services.command.rescheduleAll
+        case Action.FetchLatestStocks =>
+          services.stock.fetchLatest
+        case Action.Schedule(cid, waiting) =>
+          F.sleep(waiting) >> services.command.execute(cid)
+      ).handleErrorWith {
+        case error: AppError =>
+          logger.warn(error)(s"Domain error while processing action $action")
+        case error =>
+          logger.error(error)(s"Unexpected error while processing action $action")
+          // TODO: add retry logic
+      } >>
+      logger.info(s"Finished processing $action")
 }
 
 object ActionExecutor:
