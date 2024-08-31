@@ -17,7 +17,7 @@ jobs:
         uses: docker/login-action@v1
         with:
           registry: "registry.hub.docker.com"
-          username: "kirill1"
+          username: ${{ env.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_API_KEY }}
 
       - uses: olafurpg/setup-scala@v11

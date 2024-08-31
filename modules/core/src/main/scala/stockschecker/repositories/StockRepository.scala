@@ -30,9 +30,6 @@ final private class LiveStockRepository[F[_]: Concurrent](
         Update
           .setOnInsert("_id", id)
           .setOnInsert("ticker", stock.ticker)
-          .setOnInsert("name", stock.name)
-          .setOnInsert("exchange", stock.exchange)
-          .setOnInsert("exchangeShortName", stock.exchangeShortName)
           .setOnInsert("stockType", stock.stockType)
           .set("price", stock.price)
           .set("lastUpdatedAt", stock.lastUpdatedAt),

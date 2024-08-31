@@ -17,20 +17,14 @@ object fixtures {
 
   val AAPLStock = Stock(
     ticker = AAPL,
-    name = "Apple Inc.",
     price = BigDecimal(234.4),
-    exchange = "NASDAQ Global Select",
-    exchangeShortName = "NASDAQ",
     stockType = "stock",
     lastUpdatedAt = ts
   )
 
   val MSFTStock = Stock(
     ticker = MSFT,
-    name = "Microsoft Corporation",
     price = BigDecimal(449.52),
-    exchange = "NASDAQ Global Select",
-    exchangeShortName = "NASDAQ",
     stockType = "stock",
     lastUpdatedAt = ts
   )

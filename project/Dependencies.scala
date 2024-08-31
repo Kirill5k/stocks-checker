@@ -8,15 +8,16 @@ object Dependencies {
     val circe       = "0.14.9"
     val circeFs2    = "0.14.1"
     val sttp        = "3.9.8"
-    val http4s      = "0.23.27"
     val logback     = "1.5.7"
     val log4cats    = "2.7.0"
     val tapir       = "1.11.1"
     val cronUtils   = "9.2.1"
+    val http4s      = "0.23.16"
   }
 
   private object Libraries {
-    val cronUtils = "com.cronutils" % "cron-utils" % Versions.cronUtils
+    val cronUtils   = "com.cronutils" % "cron-utils"          % Versions.cronUtils
+    val blazeClient = "org.http4s"   %% "http4s-blaze-client" % Versions.http4s
 
     object commonScala {
       val cats       = "io.github.kirill5k" %% "common-cats"        % Versions.commonScala
@@ -53,11 +54,12 @@ object Dependencies {
     }
 
     object sttp {
-      val core        = "com.softwaremill.sttp.client3" %% "core"  % Versions.sttp
-      val circe       = "com.softwaremill.sttp.client3" %% "circe" % Versions.sttp
-      val catsBackend = "com.softwaremill.sttp.client3" %% "fs2"   % Versions.sttp
+      val core          = "com.softwaremill.sttp.client3" %% "core"           % Versions.sttp
+      val circe         = "com.softwaremill.sttp.client3" %% "circe"          % Versions.sttp
+      val catsBackend   = "com.softwaremill.sttp.client3" %% "fs2"            % Versions.sttp
+      val http4sBackend = "com.softwaremill.sttp.client3" %% "http4s-backend" % Versions.sttp
 
-      val all = Seq(core, circe, catsBackend)
+      val all = Seq(core, circe, catsBackend, http4sBackend)
     }
 
     object tapir {
@@ -71,6 +73,7 @@ object Dependencies {
 
   val core = Seq(
     Libraries.cronUtils,
+    Libraries.blazeClient,
     Libraries.mongo4cats.core,
     Libraries.mongo4cats.circe,
     Libraries.commonScala.cats,

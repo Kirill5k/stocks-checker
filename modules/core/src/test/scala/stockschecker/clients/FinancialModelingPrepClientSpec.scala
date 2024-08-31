@@ -33,14 +33,11 @@ class FinancialModelingPrepClientSpec extends SttpWordSpec {
         yield stocks
 
         result.asserting { s =>
-          s must have size 4
+          s must have size 3
           s.head mustBe Stock(
-            ticker = Ticker("PMGOLD.AX"),
-            name = "Perth Mint Gold",
-            price = BigDecimal(17.94),
-            exchange = "Australian Securities Exchange",
-            exchangeShortName = "ASX",
-            stockType = "etf",
+            ticker = Ticker("IREDA"),
+            price = BigDecimal(239.5),
+            stockType = "stock",
             lastUpdatedAt = time
           )
         }

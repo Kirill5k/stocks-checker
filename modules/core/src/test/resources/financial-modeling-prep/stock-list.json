@@ -8,7 +8,7 @@
     "type": "etf"
   },
   {
-    "symbol": "IREDA.NS",
+    "symbol": "IREDA",
     "name": "Indian Renewable Energy Development Agency Limited",
     "price": 239.5,
     "exchange": "National Stock Exchange of India",
@@ -16,7 +16,7 @@
     "type": "stock"
   },
   {
-    "symbol": "GMDCLTD.NS",
+    "symbol": "GMDCLTD",
     "name": "Gujarat Mineral Development Corporation Limited",
     "price": 419.2,
     "exchange": "National Stock Exchange of India",
@@ -24,7 +24,7 @@
     "type": "stock"
   },
   {
-    "symbol": "SAKUMA.NS",
+    "symbol": "SAKUMA",
     "name": "Sakuma Exports Limited",
     "price": 30.22,
     "exchange": "National Stock Exchange of India",

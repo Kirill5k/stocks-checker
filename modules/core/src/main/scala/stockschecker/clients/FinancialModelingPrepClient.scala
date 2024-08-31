@@ -15,36 +15,38 @@ import sttp.client3.circe.asJson
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.model.StatusCode
 import fs2.Stream
-import sttp.capabilities.WebSockets
 
 import java.time.{Instant, LocalDate}
+import scala.concurrent.duration.*
 
 final private class FinancialModelingPrepClient[F[_]](
     private val config: FinancialModelingPrepConfig,
-    private val backend: SttpBackend[F, Fs2Streams[F] & WebSockets]
+    private val backend: SttpBackend[F, Fs2Streams[F]]
 )(using
     F: Async[F],
     C: Clock[F]
 ) extends MarketDataClient[F] {
 
-  override def getAllTradedStocks: Stream[F, Stock] =
+  override def getAllTradedStocks: Stream[F, Stock] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v3/available-traded/list?apikey=${config.apiKey}")
       .response(asStreamUnsafe(Fs2Streams[F]))
+      .readTimeout(10.minutes)
 
     for
-      time     <- Stream.eval(C.now)
+      time <- Stream.eval(C.now)
       response <- Stream.eval(backend.send(request))
       data <- response.body match
         case Right(stream) =>
           stream
             .through(byteArrayParser[F])
             .through(decoder[F, FinancialModelingPrepClient.StockResponse])
-            .filter(s => s.isValid && s.isRegularStock)
+            .filter(s => s.isRegularStock)
             .map(_.toDomain(time))
         case Left(err) =>
           Stream.raiseError(AppError.Http(response.code.code, s"Error retrieving traded stocks from financial modeling prep: $err"))
     yield data
+  }
 
   override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
     val request = emptyRequest
@@ -72,21 +74,14 @@ final private class FinancialModelingPrepClient[F[_]](
 object FinancialModelingPrepClient {
   final case class StockResponse(
       symbol: Ticker,
-      exchange: Option[String],
-      exchangeShortName: Option[String],
       price: BigDecimal,
-      name: Option[String],
       `type`: String
   ) derives Codec.AsObject {
-    def isValid: Boolean = exchange.isDefined && name.isDefined
-    def isRegularStock: Boolean = name.exists(n => !n.contains("."))
+    def isRegularStock: Boolean = !symbol.value.contains(".")
     def toDomain(lastUpdatedAt: Instant): Stock =
       Stock(
         ticker = symbol,
-        name = name.getOrElse(""),
         price = price,
-        exchange = exchange.getOrElse(""),
-        exchangeShortName = exchangeShortName.getOrElse(""),
         stockType = `type`,
         lastUpdatedAt = lastUpdatedAt
       )
@@ -133,7 +128,7 @@ object FinancialModelingPrepClient {
 
   def make[F[_]: Clock: Async](
       config: FinancialModelingPrepConfig,
-      backend: SttpBackend[F, Fs2Streams[F] & WebSockets]
+      backend: SttpBackend[F, Fs2Streams[F]]
   ): F[MarketDataClient[F]] =
     Async[F].pure(FinancialModelingPrepClient[F](config, backend))
 }

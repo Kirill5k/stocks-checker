@@ -14,20 +14,14 @@ private[repositories] object entities extends MongoJsonCodecs {
   final case class StockEntity(
       _id: String,
       ticker: Ticker,
-      name: String,
       price: BigDecimal,
-      exchange: String,
-      exchangeShortName: String,
       stockType: String,
       lastUpdatedAt: Instant
   ) derives Codec.AsObject:
     def toDomain: Stock =
       Stock(
         ticker = ticker,
-        name = name,
         price = price,
-        exchange = exchange,
-        exchangeShortName = exchangeShortName,
         stockType = stockType,
         lastUpdatedAt = lastUpdatedAt
       )
@@ -38,10 +32,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       StockEntity(
         _id = s"${stock.ticker}${stock.lastUpdatedAt.toString.substring(0, 10)}",
         ticker = stock.ticker,
-        name = stock.name,
         price = stock.price,
-        exchange = stock.exchange,
-        exchangeShortName = stock.exchangeShortName,
         stockType = stock.stockType,
         lastUpdatedAt = stock.lastUpdatedAt
       )

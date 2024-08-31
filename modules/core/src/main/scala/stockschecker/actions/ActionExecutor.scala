@@ -2,8 +2,10 @@ package stockschecker.actions
 
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
+import cats.syntax.applicativeError.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
+import stockschecker.domain.errors.AppError
 import stockschecker.services.Services
 
 trait ActionExecutor[F[_]]:
@@ -20,13 +22,22 @@ final private class LiveActionExecutor[F[_]](
     dispatcher.pendingActions.map(a => Stream.eval(handleAction(a))).parJoinUnbounded
 
   private def handleAction(action: Action): F[Unit] =
-    action match
-      case Action.RescheduleAll =>
-        logger.info(s"Executing ${action.kind}") >> services.command.rescheduleAll
-      case Action.FetchLatestStocks =>
-        logger.info(s"Executing ${action.kind}") >> services.stock.fetchLatest
-      case Action.Schedule(cid, waiting) =>
-        logger.info(s"Executing ${action.kind} for $cid") >> F.sleep(waiting) >> services.command.execute(cid)
+    logger.info(s"Processing $action") >>
+      (action match
+        case Action.RescheduleAll =>
+          services.command.rescheduleAll
+        case Action.FetchLatestStocks =>
+          services.stock.fetchLatest
+        case Action.Schedule(cid, waiting) =>
+          F.sleep(waiting) >> services.command.execute(cid)
+      ).handleErrorWith {
+        case error: AppError =>
+          logger.warn(error)(s"Domain error while processing action $action")
+        case error =>
+          logger.error(error)(s"Unexpected error while processing action $action")
+          // TODO: add retry logic
+      } >>
+      logger.info(s"Finished processing $action")
 }
 
 object ActionExecutor:
