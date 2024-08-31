@@ -16,10 +16,7 @@ package object domain {
 
   final case class Stock(
       ticker: Ticker,
-      name: String,
       price: BigDecimal,
-      exchange: String,
-      exchangeShortName: String,
       stockType: String,
       lastUpdatedAt: Instant
   ) derives CirceCodec.AsObject
