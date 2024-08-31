@@ -41,24 +41,18 @@ class StockRepositorySpec extends RepositorySpec {
     }
 
     "find" should {
-      "return empty option when stock is not found" in {
+      "find stocks by ticker and return them sorted by lastUpdatedAt in desc order" in {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- StockRepository.make(db)
-            s    <- repo.find(AAPL)
-          yield s mustBe None
-        }
-      }
-
-      "find latest stock by ticker" in {
-        withEmbeddedMongoDatabase { db =>
-          val ts = Instant.parse("2020-01-01T00:00:00Z")
-          for
-            repo <- StockRepository.make(db)
-            _    <- repo.save(AAPLStock.copy(lastUpdatedAt = ts))
-            _    <- repo.save(AAPLStock.copy(lastUpdatedAt = ts.plus(1.day)))
-            s    <- repo.find(AAPL)
-          yield s mustBe Some(AAPLStock.copy(lastUpdatedAt = ts.plus(1.day)))
+            s1 = AAPLStock.copy(lastUpdatedAt = ts)
+            s2 = AAPLStock.copy(lastUpdatedAt = ts.plus(1.day))
+            s3 = AAPLStock.copy(lastUpdatedAt = ts.minus(1.day))
+            _    <- repo.save(s1)
+            _    <- repo.save(s2)
+            _    <- repo.save(s3)
+            s    <- repo.find(AAPL, Some(1))
+          yield s mustBe List(s2)
         }
       }
     }

@@ -1,15 +1,13 @@
 package stockschecker.services
 
 import cats.effect.Concurrent
-import cats.syntax.flatMap.*
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.errors.AppError
 import stockschecker.domain.{Stock, Ticker}
 import stockschecker.repositories.StockRepository
 
 trait StockService[F[_]]:
   def fetchLatest: F[Unit]
-  def get(ticker: Ticker): F[Stock]
+  def get(ticker: Ticker, limit: Option[Int]): F[List[Stock]]
 
 final private class LiveStockService[F[_]](
     private val repository: StockRepository[F],
@@ -25,10 +23,8 @@ final private class LiveStockService[F[_]](
       .compile
       .drain
 
-  override def get(ticker: Ticker): F[Stock] =
-    repository
-      .find(ticker)
-      .flatMap(s => F.fromOption(s, AppError.StockNotFound(ticker)))
+  override def get(ticker: Ticker, limit: Option[Int]): F[List[Stock]] =
+    repository.find(ticker, limit)
 }
 
 object StockService:

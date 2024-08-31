@@ -15,7 +15,7 @@ trait StockRepository[F[_]]:
   def save(stock: Stock): F[Unit]
   def save(stocks: List[Stock]): F[Unit]
   def streamAll: Stream[F, Stock]
-  def find(ticker: Ticker): F[Option[Stock]]
+  def find(ticker: Ticker, limit: Option[Int]): F[List[Stock]]
 
 final private class LiveStockRepository[F[_]: Concurrent](
     private val collection: MongoCollection[F, StockEntity]
@@ -48,8 +48,13 @@ final private class LiveStockRepository[F[_]: Concurrent](
   override def streamAll: Stream[F, Stock] =
     collection.find.stream.map(_.toDomain)
 
-  override def find(ticker: Ticker): F[Option[Stock]] =
-    collection.find(Filter.eq("ticker", ticker)).sortByDesc("lastUpdatedAt").first.mapOpt(_.toDomain)
+  override def find(ticker: Ticker, limit: Option[Int]): F[List[Stock]] =
+    collection
+      .find(Filter.eq("ticker", ticker))
+      .sortByDesc("lastUpdatedAt")
+      .limit(limit.getOrElse(Int.MaxValue))
+      .all
+      .mapList(_.toDomain)
 }
 
 object StockRepository:

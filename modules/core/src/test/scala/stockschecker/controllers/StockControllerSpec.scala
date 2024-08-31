@@ -14,7 +14,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
     "GET /stocks/:ticker" should {
       "return 200 and company stock on success" in {
         val svc = mocks
-        when(svc.get(any[Ticker])).thenReturnIO(AAPLStock)
+        when(svc.get(any[Ticker], anyOpt[Int])).thenReturnIO(List(AAPLStock))
 
         val res = for
           controller <- StockController.make(svc)
@@ -22,7 +22,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
           res <- controller.routes.orNotFound.run(req)
         yield res
 
-        val resBody = s"""{
+        val resBody = s"""[{
                         |  "ticker" : "AAPL",
                         |  "name" : "Apple Inc.",
                         |  "price" : 234.4,
@@ -30,9 +30,9 @@ class StockControllerSpec extends HttpRoutesWordSpec {
                         |  "exchangeShortName" : "NASDAQ",
                         |  "stockType" : "stock",
                         |  "lastUpdatedAt" : "${ts}"
-                        |}""".stripMargin
+                        |}]""".stripMargin
         res mustHaveStatus(Status.Ok, Some(resBody))
-        verify(svc).get(AAPL)
+        verify(svc).get(AAPL, None)
       }
     }
   }
