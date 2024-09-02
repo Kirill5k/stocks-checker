@@ -24,7 +24,8 @@ private[repositories] object entities extends MongoJsonCodecs {
         ticker = ticker,
         price = price,
         stockType = stockType,
-        lastUpdatedAt = lastUpdatedAt
+        lastUpdatedAt = lastUpdatedAt,
+        priceDelta = priceDelta
       )
 
   object StockEntity:
