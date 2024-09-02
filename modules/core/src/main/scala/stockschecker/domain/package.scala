@@ -18,7 +18,8 @@ package object domain {
       ticker: Ticker,
       price: BigDecimal,
       stockType: String,
-      lastUpdatedAt: Instant
+      lastUpdatedAt: Instant,
+      priceDelta: Option[BigDecimal] = None
   ) derives CirceCodec.AsObject
 
   final case class CompanyProfile(

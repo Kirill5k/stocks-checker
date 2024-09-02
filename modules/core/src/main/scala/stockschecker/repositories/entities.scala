@@ -16,7 +16,8 @@ private[repositories] object entities extends MongoJsonCodecs {
       ticker: Ticker,
       price: BigDecimal,
       stockType: String,
-      lastUpdatedAt: Instant
+      lastUpdatedAt: Instant,
+      priceDelta: Option[BigDecimal] = None
   ) derives Codec.AsObject:
     def toDomain: Stock =
       Stock(

@@ -25,6 +25,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
         val resBody = s"""[{
                         |  "ticker" : "AAPL",
                         |  "price" : 234.4,
+                        |  "priceDelta" : null,
                         |  "stockType" : "stock",
                         |  "lastUpdatedAt" : "${ts}"
                         |}]""".stripMargin
