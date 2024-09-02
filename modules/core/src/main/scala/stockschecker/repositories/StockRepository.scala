@@ -2,24 +2,24 @@ package stockschecker.repositories
 
 import cats.effect.Concurrent
 import cats.syntax.functor.*
-import com.mongodb.client.model.UnwindOptions
-import mongo4cats.collection.MongoCollection
-import mongo4cats.database.MongoDatabase
-import mongo4cats.operations.{Accumulator, Aggregate, Filter, Projection, Sort, Update}
-import stockschecker.domain.{Stock, Ticker}
-import stockschecker.repositories.entities.StockEntity
+import com.mongodb.client.model.WindowOutputFields
 import fs2.Stream
 import kirill5k.common.cats.syntax.applicative.*
-import mongo4cats.bson.{BsonValue, Document}
 import mongo4cats.bson.syntax.*
+import mongo4cats.bson.{BsonValue, Document}
+import mongo4cats.collection.MongoCollection
+import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
+import mongo4cats.operations.{Aggregate, Filter, Sort, Update}
+import stockschecker.domain.{Stock, Ticker}
+import stockschecker.repositories.entities.StockEntity
 
 trait StockRepository[F[_]]:
   def save(stock: Stock): F[Unit]
   def save(stocks: List[Stock]): F[Unit]
   def streamAll: Stream[F, Stock]
   def find(ticker: Ticker, limit: Option[Int]): F[List[Stock]]
-  def withPriceDeltas(ticker: Ticker, limit: Option[Int]): F[List[Stock]]
+  def findWithPriceDeltas(ticker: Ticker, limit: Option[Int]): F[List[Stock]]
 
 final private class LiveStockRepository[F[_]: Concurrent](
     private val collection: MongoCollection[F, StockEntity]
@@ -65,45 +65,28 @@ final private class LiveStockRepository[F[_]: Concurrent](
       .all
       .mapList(_.toDomain)
 
-  override def withPriceDeltas(ticker: Ticker, limit: Option[Int]): F[List[Stock]] =
+  override def findWithPriceDeltas(ticker: Ticker, limit: Option[Int]): F[List[Stock]] =
     collection
-      .aggregate[Stock](
+      .aggregate[StockEntity](
         Aggregate
           .matchBy(Filter.eq(Field.Ticker, ticker))
-          .sort(Sort.asc(Field.Ticker).asc(Field.LastUpdatedAt))
-          .group(
+          .setWindowFields(
             "$" + Field.Ticker,
-            Accumulator
-              .first(Field.StockType, "$" + Field.StockType)
-              .push("prices", Document(Field.Price := "$" + Field.Price, Field.LastUpdatedAt := "$" + Field.LastUpdatedAt))
+            Sort.asc(Field.LastUpdatedAt),
+            List(WindowOutputFields.shift("prevPrice", "$" + Field.Price, null, -1))
           )
-          .unwind(
-            "$prices",
-            new UnwindOptions().includeArrayIndex("$" + Field.LastUpdatedAt)
-          )
-          .set(Field.PriceDelta -> Document("$subtract" := List(
-            BsonValue.string("$prices.price"),
-            BsonValue.document("$arrayElemAt" := List(
-              BsonValue.string("$prices.price"),
-              BsonValue.document("$subtract" := List(BsonValue.string("$index"), BsonValue.int(1)))
-            ))
-          )))
-          .set(Field.PriceDelta -> Document("$cond" := BsonValue.document(
-            "if" := BsonValue.document("$eq" := BsonValue.array(BsonValue.string("$index"), BsonValue.int(0))),
-            "then" -> BsonValue.BNull,
-            "else" := "$" + Field.PriceDelta
-          )))
-          .project(
-            Projection
-              .computed(Field.Ticker, "$" + "_id")
-              .computed(Field.Price, "$" + "prices.price")
-              .computed(Field.LastUpdatedAt, "$" + "prices.lastUpdatedDate")
-              .include(Field.StockType)
-              .include(Field.PriceDelta)
-              .excludeId
+          .set(
+            Field.PriceDelta -> Document(
+              "$cond" := BsonValue.document(
+                "if"   -> BsonValue.document("$eq" := List(BsonValue.string("$prevPrice"), BsonValue.BNull)),
+                "then" -> BsonValue.BNull,
+                "else" -> BsonValue.document("$subtract" := List("$price", "$prevPrice"))
+              )
+            )
           )
       )
-      .all.map(_.toList)
+      .all
+      .mapList(_.toDomain)
 }
 
 object StockRepository:

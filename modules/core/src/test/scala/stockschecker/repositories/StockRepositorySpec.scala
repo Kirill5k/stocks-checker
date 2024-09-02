@@ -12,7 +12,7 @@ import scala.concurrent.duration.*
 class StockRepositorySpec extends RepositorySpec {
 
   override def port: Int = 12148
-  
+
   "A StockRepository" when {
     "save" should {
       "store only 1 stock per day" in {
@@ -48,11 +48,32 @@ class StockRepositorySpec extends RepositorySpec {
             s1 = AAPLStock.copy(lastUpdatedAt = ts)
             s2 = AAPLStock.copy(lastUpdatedAt = ts.plus(1.day))
             s3 = AAPLStock.copy(lastUpdatedAt = ts.minus(1.day))
-            _    <- repo.save(s1)
-            _    <- repo.save(s2)
-            _    <- repo.save(s3)
-            s    <- repo.find(AAPL, Some(1))
+            _ <- repo.save(s1)
+            _ <- repo.save(s2)
+            _ <- repo.save(s3)
+            s <- repo.find(AAPL, Some(1))
           yield s mustBe List(s2)
+        }
+      }
+    }
+
+    "withPriceDeltas" should {
+      "return empty list when there are no matching stocks" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- StockRepository.make(db)
+            s    <- repo.findWithPriceDeltas(AAPL, Some(1))
+          yield s mustBe Nil
+        }
+      }
+
+      "return stock with priceDelta=null when there are no previous stocks" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- StockRepository.make(db)
+            _    <- repo.save(AAPLStock)
+            s    <- repo.findWithPriceDeltas(AAPL, Some(1))
+          yield s mustBe List(AAPLStock)
         }
       }
     }
