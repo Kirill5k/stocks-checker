@@ -69,6 +69,7 @@ final private class LiveStockRepository[F[_]: Concurrent](
     collection
       .aggregate[Stock](
         Aggregate
+          .matchBy(Filter.eq(Field.Ticker, ticker))
           .sort(Sort.asc(Field.Ticker).asc(Field.LastUpdatedAt))
           .group(
             "$" + Field.Ticker,
