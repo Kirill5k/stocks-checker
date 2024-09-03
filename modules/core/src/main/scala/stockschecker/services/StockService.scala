@@ -24,7 +24,7 @@ final private class LiveStockService[F[_]](
       .drain
 
   override def get(ticker: Ticker, limit: Option[Int]): F[List[Stock]] =
-    repository.find(ticker, limit)
+    repository.findWithPriceDeltas(ticker, limit)
 }
 
 object StockService:
