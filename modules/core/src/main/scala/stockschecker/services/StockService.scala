@@ -16,8 +16,7 @@ final private class LiveStockService[F[_]](
     F: Concurrent[F]
 ) extends StockService[F] {
   override def fetchLatest: F[Unit] =
-    marketDataClient
-      .getAllTradedStocks
+    marketDataClient.getAllTradedStocks
       .chunkN(4096)
       .evalTap(chunk => repository.save(chunk.toList))
       .compile

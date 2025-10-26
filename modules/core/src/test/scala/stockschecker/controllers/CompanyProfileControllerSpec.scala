@@ -55,7 +55,7 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
           res <- controller.routes.orNotFound.run(req)
         yield res
 
-        res mustHaveStatus(Status.NotFound, Some("""{"message":"Couldn't not find company profile for AAPL"}"""))
+        res mustHaveStatus (Status.NotFound, Some("""{"message":"Couldn't not find company profile for AAPL"}"""))
         verify(svc).get(AAPL, false)
       }
     }

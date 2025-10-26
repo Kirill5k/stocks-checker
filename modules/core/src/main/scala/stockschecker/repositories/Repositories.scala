@@ -13,10 +13,10 @@ trait Repositories[F[_]]:
 object Repositories:
   def make[F[_]](db: MongoDatabase[F])(using F: Concurrent[F]): F[Repositories[F]] =
     for
-      s <- StockRepository.make(db)
+      s  <- StockRepository.make(db)
       cp <- CompanyProfileRepository.make(db)
-      c <- CommandRepository.make(db)
+      c  <- CommandRepository.make(db)
     yield new Repositories[F]:
-      override def stock: StockRepository[F] = s
+      override def stock: StockRepository[F]                   = s
       override def companyProfile: CompanyProfileRepository[F] = cp
-      override def command: CommandRepository[F] = c
+      override def command: CommandRepository[F]               = c

@@ -23,7 +23,7 @@ class ScheduleSpec extends AnyWordSpec with Matchers with EitherValues {
 
       "encode and decode into json" in {
         val schedule: Schedule = Schedule.Periodic(5.hours)
-        val json = schedule.asJson.noSpaces
+        val json               = schedule.asJson.noSpaces
 
         decode[Schedule](json) mustBe Right(schedule)
         json mustBe """{"kind":"periodic","period":"5hours"}"""
@@ -39,7 +39,7 @@ class ScheduleSpec extends AnyWordSpec with Matchers with EitherValues {
 
       "encode and decode into json" in {
         val schedule: Schedule = Schedule.Cron("0 7,20 * * 1-5").value
-        val json = schedule.asJson.noSpaces
+        val json               = schedule.asJson.noSpaces
 
         decode[Schedule](json) mustBe a[Right[?, ?]]
         json mustBe """{"kind":"cron","cron":"0 7,20 * * 1-5"}"""
@@ -47,4 +47,3 @@ class ScheduleSpec extends AnyWordSpec with Matchers with EitherValues {
     }
   }
 }
-

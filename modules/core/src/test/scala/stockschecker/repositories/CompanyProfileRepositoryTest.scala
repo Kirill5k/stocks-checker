@@ -26,10 +26,10 @@ class CompanyProfileRepositoryTest extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
-            _ <- repo.save(AAPLCompanyProfile)
-            _ <- repo.save(AAPLCompanyProfile)
-            _ <- repo.save(AAPLCompanyProfile.copy(marketCap = 1L))
-            res <- repo.find(AAPL)
+            _    <- repo.save(AAPLCompanyProfile)
+            _    <- repo.save(AAPLCompanyProfile)
+            _    <- repo.save(AAPLCompanyProfile.copy(marketCap = 1L))
+            res  <- repo.find(AAPL)
           yield res.map(_.marketCap) mustBe Some(1L)
         }
       }

@@ -10,10 +10,10 @@ import org.scalatest.wordspec.AsyncWordSpec
 
 import scala.concurrent.Future
 
-trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo  {
+trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
 
   def port: Int
-  
+
   protected def withEmbeddedMongoDatabase[A](test: MongoDatabase[IO] => IO[A]): Future[A] =
     withRunningEmbeddedMongo(port) {
       MongoClient

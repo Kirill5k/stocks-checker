@@ -81,10 +81,10 @@ class StockRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- StockRepository.make(db)
-            _ <- repo.save(AAPLStock)
-            _ <- repo.save(AAPLStock.copy(price = AAPLStock.price + 5, lastUpdatedAt = ts.plus(1.day)))
-            _ <- repo.save(AAPLStock.copy(price = AAPLStock.price + 5, lastUpdatedAt = ts.minus(1.day)))
-            s <- repo.findWithPriceDeltas(AAPL, Some(1))
+            _    <- repo.save(AAPLStock)
+            _    <- repo.save(AAPLStock.copy(price = AAPLStock.price + 5, lastUpdatedAt = ts.plus(1.day)))
+            _    <- repo.save(AAPLStock.copy(price = AAPLStock.price + 5, lastUpdatedAt = ts.minus(1.day)))
+            s    <- repo.findWithPriceDeltas(AAPL, Some(1))
           yield s mustBe List(
             AAPLStock.copy(price = AAPLStock.price + 5, lastUpdatedAt = ts.plus(1.day), priceDelta = Some(5.0)),
             AAPLStock.copy(priceDelta = Some(-5.0)),
@@ -99,8 +99,8 @@ class StockRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- StockRepository.make(db)
-            _ <- repo.save(AAPLStock)
-            s <- repo.getAllTickers
+            _    <- repo.save(AAPLStock)
+            s    <- repo.getAllTickers
           yield s mustBe List(AAPL)
         }
       }

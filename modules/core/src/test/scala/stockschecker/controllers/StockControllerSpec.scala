@@ -29,7 +29,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
                         |  "stockType" : "stock",
                         |  "lastUpdatedAt" : "${ts}"
                         |}]""".stripMargin
-        res mustHaveStatus(Status.Ok, Some(resBody))
+        res mustHaveStatus (Status.Ok, Some(resBody))
         verify(svc).get(AAPL, None)
       }
     }

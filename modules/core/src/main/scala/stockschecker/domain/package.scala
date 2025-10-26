@@ -11,7 +11,7 @@ package object domain {
   opaque type Ticker = String
   object Ticker extends StringType[Ticker] {
     inline given Codec.PlainCodec[Ticker] = Codec.string.mapDecode[Ticker](s => DecodeResult.Value(Ticker(s)))(_.value)
-    given Schema[Ticker] = Schema.string
+    given Schema[Ticker]                  = Schema.string
   }
 
   final case class Stock(

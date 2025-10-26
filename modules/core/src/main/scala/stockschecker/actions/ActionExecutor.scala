@@ -35,7 +35,7 @@ final private class LiveActionExecutor[F[_]](
           logger.warn(error)(s"Domain error while processing action $action")
         case error =>
           logger.error(error)(s"Unexpected error while processing action $action")
-          // TODO: add retry logic
+        // TODO: add retry logic
       } >>
       logger.info(s"Finished processing $action")
 }

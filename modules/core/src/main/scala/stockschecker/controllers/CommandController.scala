@@ -29,7 +29,7 @@ final private class CommandController[F[_]: Async](
         .create(CreateCommand(req.action, req.schedule, req.maxExecutions))
         .mapResponse(cmd => CreateCommandResponse(cmd.id))
     }
-  
+
   private val activateCommand = CommandController.activateCommandEndpoint
     .serverLogic { (cid, req) =>
       service

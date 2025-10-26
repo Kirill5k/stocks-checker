@@ -36,6 +36,6 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
     .out(jsonBody[List[Stock]])
     .description("Get company stock by ticker")
 
-  def make[F[_] : Async](service: StockService[F]): F[Controller[F]] =
+  def make[F[_]: Async](service: StockService[F]): F[Controller[F]] =
     Async[F].pure(StockController[F](service))
 }

@@ -120,11 +120,11 @@ class CommandRepositorySpec extends RepositorySpec {
       "return all commands from repo" in {
         withEmbeddedMongoDatabase { db =>
           for
-            repo           <- CommandRepository.make(db)
-            cmd            <- repo.create(newCmd)
-            _              <- repo.setActive(cmd.id, false)
-            activeCmd      <- repo.create(newCmd)
-            cmds <- repo.all
+            repo      <- CommandRepository.make(db)
+            cmd       <- repo.create(newCmd)
+            _         <- repo.setActive(cmd.id, false)
+            activeCmd <- repo.create(newCmd)
+            cmds      <- repo.all
           yield cmds mustBe List(cmd.copy(isActive = false), activeCmd)
         }
       }

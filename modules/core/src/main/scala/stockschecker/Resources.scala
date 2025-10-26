@@ -21,7 +21,7 @@ trait Resources[F[_]]:
 
 object Resources {
 
-  private def mkBlazeClientBackend[F[_] : Async](timeout: FiniteDuration): Resource[F, SttpBackend[F, Fs2Streams[F]]] =
+  private def mkBlazeClientBackend[F[_]: Async](timeout: FiniteDuration): Resource[F, SttpBackend[F, Fs2Streams[F]]] =
     BlazeClientBuilder[F]
       .withIdleTimeout(Duration.Inf)
       .withConnectTimeout(timeout)
@@ -51,5 +51,5 @@ object Resources {
       md <- mkMongoDatabase(config.mongo)
     yield new Resources[F]:
       def httpBackend: SttpBackend[F, Fs2Streams[F]] = hb
-      def mongoDatabase: MongoDatabase[F]  = md
+      def mongoDatabase: MongoDatabase[F]            = md
 }

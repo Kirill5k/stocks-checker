@@ -55,4 +55,3 @@ object Schedule {
     case periodic: Periodic => Json.obj(discriminatorField -> Json.fromString(periodic.kind), "period" -> periodic.period.asJson)
   }
 }
-

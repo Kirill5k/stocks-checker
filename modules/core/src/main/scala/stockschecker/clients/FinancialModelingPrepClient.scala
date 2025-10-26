@@ -34,7 +34,7 @@ final private class FinancialModelingPrepClient[F[_]](
       .readTimeout(10.minutes)
 
     for
-      time <- Stream.eval(C.now)
+      time     <- Stream.eval(C.now)
       response <- Stream.eval(backend.send(request))
       data <- response.body match
         case Right(stream) =>
