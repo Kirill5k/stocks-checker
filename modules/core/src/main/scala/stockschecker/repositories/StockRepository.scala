@@ -15,6 +15,7 @@ import stockschecker.domain.{Stock, Ticker}
 import stockschecker.repositories.entities.StockEntity
 
 trait StockRepository[F[_]]:
+  def getAllTickers: F[List[Ticker]]
   def save(stock: Stock): F[Unit]
   def save(stocks: List[Stock]): F[Unit]
   def streamAll: Stream[F, Stock]
@@ -77,9 +78,9 @@ final private class LiveStockRepository[F[_]: Concurrent](
           )
           .set(
             Field.PriceDelta -> Document(
-              "$cond" := BsonValue.document(
-                "if"   -> BsonValue.document("$eq" := List(BsonValue.string("$prevPrice"), BsonValue.BNull)),
-                "then" -> BsonValue.BNull,
+              "$cond" -> BsonValue.document(
+                "if"   -> BsonValue.document("$eq" := List(BsonValue.string("$prevPrice"), BsonValue.Null)),
+                "then" -> BsonValue.Null,
                 "else" -> BsonValue.document("$subtract" := List("$price", "$prevPrice"))
               )
             )
@@ -88,6 +89,9 @@ final private class LiveStockRepository[F[_]: Concurrent](
       )
       .all
       .mapList(_.toDomain)
+
+  override def getAllTickers: F[List[Ticker]] =
+    collection.distinct[Ticker](Field.Ticker).all.map(_.toList)
 }
 
 object StockRepository:

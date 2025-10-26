@@ -93,5 +93,17 @@ class StockRepositorySpec extends RepositorySpec {
         }
       }
     }
+
+    "getAllTickers" should {
+      "return tickers of all stocks stored in db" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- StockRepository.make(db)
+            _ <- repo.save(AAPLStock)
+            s <- repo.getAllTickers
+          yield s mustBe List(AAPL)
+        }
+      }
+    }
   }
 }

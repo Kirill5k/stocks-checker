@@ -85,7 +85,7 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
           res <- controller.routes.orNotFound.run(req)
         yield res
 
-        res mustHaveStatus(Status.UnprocessableEntity, Some("""{"message" : "Missing required field: action"}"""))
+        res mustHaveStatus(Status.UnprocessableContent, Some("""{"message" : "Missing required field: action"}"""))
       }
     }
   }

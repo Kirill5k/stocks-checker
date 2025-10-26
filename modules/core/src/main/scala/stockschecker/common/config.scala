@@ -2,7 +2,6 @@ package stockschecker.common
 
 import cats.effect.Async
 import pureconfig.*
-import pureconfig.generic.derivation.default.*
 import kirill5k.common.http4s.*
 
 object config {
