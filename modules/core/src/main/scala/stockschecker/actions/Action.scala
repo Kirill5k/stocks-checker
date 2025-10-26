@@ -2,7 +2,7 @@ package stockschecker.actions
 
 import io.circe.{Codec, CursorOp, Decoder, DecodingFailure, Encoder, Json, JsonObject}
 import io.circe.syntax.given
-import stockschecker.common.json.given
+import stockschecker.common.JsonCodecs
 import stockschecker.domain.CommandId
 
 import scala.concurrent.duration.FiniteDuration
@@ -14,7 +14,7 @@ import scala.concurrent.duration.FiniteDuration
 
 sealed trait Action(val kind: String)
 
-object Action {
+object Action extends JsonCodecs {
   case object FetchLatestStocks                                      extends Action("fetch-latest-stocks")
   case object RescheduleAll                                          extends Action("reschedule-all")
   final case class Schedule(cid: CommandId, waiting: FiniteDuration) extends Action("schedule") derives Codec.AsObject

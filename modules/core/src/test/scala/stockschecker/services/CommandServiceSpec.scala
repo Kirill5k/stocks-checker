@@ -8,7 +8,6 @@ import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.fixtures.*
 import stockschecker.repositories.CommandRepository
 import fs2.Stream
-import stockschecker.actions.Action.Schedule
 import stockschecker.domain.{Command, CommandId, CreateCommand}
 
 import scala.concurrent.duration.*

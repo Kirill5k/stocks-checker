@@ -20,5 +20,5 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo  {
         .fromConnectionString[IO](s"mongodb://localhost:${port}")
         .evalMap(_.getDatabase("stock-checker"))
         .use(test)
-    }.unsafeToFuture()(IORuntime.global)
+    }.unsafeToFuture()(using IORuntime.global)
 }

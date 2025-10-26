@@ -63,7 +63,7 @@ final private class FinancialModelingPrepClient[F[_]](
           F.pure(Some(companyProfile.toDomain(time)))
         case Left(DeserializationException(body, error)) =>
           F.raiseError(AppError.JsonParsingFailure(body, s"Failed to deserialize company profile response: ${error}"))
-        case Left(HttpError(b, s)) if s == StatusCode.NotFound =>
+        case Left(HttpError(_, s)) if s == StatusCode.NotFound =>
           F.pure(None)
         case Left(HttpError(b, s)) =>
           F.raiseError(AppError.Http(s.code, s"Error retrieving company profile: $b"))

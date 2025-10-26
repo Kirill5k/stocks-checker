@@ -7,7 +7,7 @@ import scala.util.Try
 
 object json extends JsonCodecs
 
-trait JsonCodecs {
+transparent trait JsonCodecs {
   inline given Encoder[FiniteDuration] = Encoder.encodeString.contramap { fd =>
     fd.toString().replaceFirst(" ", "")
   }
