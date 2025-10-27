@@ -63,7 +63,8 @@ package object domain {
       ticker: Ticker,
       exchange: Exchange,
       name: String,
-      kind: SecurityKind
+      kind: SecurityKind,
+      isActive: Boolean = true
   ) derives CirceCodec.AsObject
 
   final case class CompanyProfile(

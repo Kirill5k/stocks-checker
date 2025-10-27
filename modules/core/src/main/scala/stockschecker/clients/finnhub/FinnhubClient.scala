@@ -3,7 +3,9 @@ package stockschecker.clients.finnhub
 import cats.effect.Async
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
+import fs2.Stream
 import io.circe.Codec
+import io.circe.fs2.{byteArrayParser, decoder}
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{Exchange, Security, SecurityKind, Ticker}
@@ -11,8 +13,10 @@ import sttp.capabilities.fs2.Fs2Streams
 import sttp.client3.*
 import sttp.client3.circe.asJson
 
+import scala.concurrent.duration.*
+
 trait FinnhubClient[F[_]]:
-  def getTradedSecurities(exchange: Exchange): F[List[Security]]
+  def getTradedSecurities(exchange: Exchange): Stream[F, Security]
 
 final private class LiveFinnhubClient[F[_]](
     private val config: FinnhubClientConfig,
@@ -21,22 +25,25 @@ final private class LiveFinnhubClient[F[_]](
     F: Async[F]
 ) extends FinnhubClient[F] {
 
-  override def getTradedSecurities(exchange: Exchange): F[List[Security]] = {
+  override def getTradedSecurities(exchange: Exchange): Stream[F, Security] = {
     val mic  = mapExchangeToFinnhubMic(exchange)
     val code = mapExchangeToFinnhubCode(exchange)
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v1/stock/symbol?apikey=${config.apiKey}&exchange=$code&mic=$mic")
-      .response(asJson[List[FinnhubClient.StockSymbol]])
+      .response(asStreamUnsafe(Fs2Streams[F]))
+      .readTimeout(10.minutes)
 
     for
-      response <- backend.send(request)
-      res <- response.body match
-        case Right(stockSymbols) => F.pure(stockSymbols.map(mapToSecurity(exchange)))
-        case Left(DeserializationException(body, error)) =>
-          F.raiseError(AppError.JsonParsingFailure(body, s"Failed to deserialize stock symbol response: ${error}"))
-        case Left(HttpError(b, s)) =>
-          F.raiseError(AppError.Http(s.code, s"Error retrieving stock symbols: $b"))
-    yield res
+      response <- Stream.eval(backend.send(request))
+      data <- response.body match
+        case Right(stream) =>
+          stream
+            .through(byteArrayParser[F])
+            .through(decoder[F, FinnhubClient.StockSymbol])
+            .map(_.toDomain(exchange))
+        case Left(err) =>
+          Stream.raiseError(AppError.Http(response.code.code, s"Error retrieving traded stocks from finnhub: $err"))
+    yield data
   }
 
   private def mapExchangeToFinnhubCode(exchange: Exchange): String =
@@ -51,22 +58,6 @@ final private class LiveFinnhubClient[F[_]](
       case Exchange.NYSE   => "XNYS"
     }
 
-  private def mapTypeToSecurityKind(stockType: String): SecurityKind =
-    stockType match {
-      case "Common Stock" | "Public" => SecurityKind.Stock
-      case "ETP"                     => SecurityKind.ETF
-      case "REIT"                    => SecurityKind.REIT
-      case "ADR"                     => SecurityKind.ADR
-      case _                         => SecurityKind.Other
-    }
-
-  private def mapToSecurity(exchange: Exchange)(stockSymbol: FinnhubClient.StockSymbol): Security =
-    Security(
-      ticker = stockSymbol.symbol,
-      name = stockSymbol.description,
-      kind = mapTypeToSecurityKind(stockSymbol.`type`),
-      exchange = exchange
-    )
 }
 
 object FinnhubClient {
@@ -78,7 +69,23 @@ object FinnhubClient {
       mic: String,
       symbol: Ticker,
       `type`: String
-  ) derives Codec.AsObject
+  ) derives Codec.AsObject {
+    def toDomain(exchange: Exchange): Security = {
+      def mapTypeToSecurityKind(stockType: String): SecurityKind = stockType match
+        case "Common Stock" | "Public" => SecurityKind.Stock
+        case "ETP"                     => SecurityKind.ETF
+        case "REIT"                    => SecurityKind.REIT
+        case "ADR"                     => SecurityKind.ADR
+        case _                         => SecurityKind.Other
+
+      Security(
+        ticker = symbol,
+        name = description,
+        kind = mapTypeToSecurityKind(`type`),
+        exchange = exchange
+      )
+    }
+  }
 
   def make[F[_]: Async](
       config: FinnhubClientConfig,
