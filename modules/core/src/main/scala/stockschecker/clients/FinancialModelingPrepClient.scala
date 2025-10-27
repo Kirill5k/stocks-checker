@@ -9,7 +9,7 @@ import kirill5k.common.cats.Clock
 import stockschecker.clients.FinancialModelingPrepClient.CompanyProfileResponse
 import stockschecker.common.config.FinancialModelingPrepConfig
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{CompanyProfile, Stock, Ticker}
+import stockschecker.domain.{CompanyProfile, SecurityType, StockQuote, Ticker}
 import sttp.client3.*
 import sttp.client3.circe.asJson
 import sttp.capabilities.fs2.Fs2Streams
@@ -27,7 +27,7 @@ final private class FinancialModelingPrepClient[F[_]](
     C: Clock[F]
 ) extends MarketDataClient[F] {
 
-  override def getAllTradedStocks: Stream[F, Stock] = {
+  override def getAllTradedStocks: Stream[F, StockQuote] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v3/available-traded/list?apikey=${config.apiKey}")
       .response(asStreamUnsafe(Fs2Streams[F]))
@@ -75,15 +75,16 @@ object FinancialModelingPrepClient {
   final case class StockResponse(
       symbol: Ticker,
       price: BigDecimal,
-      `type`: String
+      `type`: String,
+      exchangeShortName: Option[String] = None
   ) derives Codec.AsObject {
     def isRegularStock: Boolean = !symbol.value.contains(".")
-    def toDomain(lastUpdatedAt: Instant): Stock =
-      Stock(
+    def toDomain(quotedAt: Instant): StockQuote =
+      StockQuote(
         ticker = symbol,
         price = price,
-        stockType = `type`,
-        lastUpdatedAt = lastUpdatedAt
+        quotedAt = quotedAt,
+        createdAt = quotedAt
       )
   }
 
@@ -95,35 +96,67 @@ object FinancialModelingPrepClient {
       industry: String,
       description: String,
       website: String,
-      ipoDate: LocalDate,
+      exchangeShortName: Option[String],
+      ipoDate: Option[LocalDate],
       currency: String,
       price: BigDecimal,
-      mktCap: Long,
-      volAvg: Long,
+      mktCap: Option[Long],
+      volAvg: Option[Long],
+      range: Option[String],
+      ceo: Option[String],
+      fullTimeEmployees: Option[String],
       isEtf: Boolean,
       isActivelyTrading: Boolean,
       isFund: Boolean,
       isAdr: Boolean
   ) derives Codec.AsObject {
-    def toDomain(time: Instant): CompanyProfile =
+
+    private def parse52WeekRange: (Option[BigDecimal], Option[BigDecimal]) =
+      range.flatMap { r =>
+        r.split("-").toList match {
+          case low :: high :: Nil =>
+            for {
+              l <- scala.util.Try(BigDecimal(low.trim)).toOption
+              h <- scala.util.Try(BigDecimal(high.trim)).toOption
+            } yield (Some(l), Some(h))
+          case _ => None
+        }
+      }.getOrElse((None, None))
+
+    private def parseEmployees: Option[Long] =
+      fullTimeEmployees.flatMap(s => scala.util.Try(s.toLong).toOption)
+
+    private def determineSecurityType: SecurityType =
+      if (isEtf) SecurityType.ETF
+      else if (isFund) SecurityType.Fund
+      else if (isAdr) SecurityType.ADR
+      else SecurityType.CommonStock
+
+    def toDomain(time: Instant): CompanyProfile = {
+      val (week52Low, week52High) = parse52WeekRange
       CompanyProfile(
         ticker = symbol,
         name = companyName,
-        country = country,
-        sector = sector,
-        industry = industry,
-        description = description,
-        website = website,
-        ipoDate = ipoDate,
+        securityType = determineSecurityType,
+        exchange = exchangeShortName,
         currency = currency,
+        country = Some(country).filter(_.nonEmpty),
+        sector = Some(sector).filter(_.nonEmpty),
+        industry = Some(industry).filter(_.nonEmpty),
+        description = Some(description).filter(_.nonEmpty),
+        website = Some(website).filter(_.nonEmpty),
+        ipoDate = ipoDate,
+        ceo = ceo.filter(_.nonEmpty),
+        employees = parseEmployees,
         marketCap = mktCap,
-        averageTradedVolume = volAvg,
-        isEtf = isEtf,
+        averageVolume = volAvg,
+        week52High = week52High,
+        week52Low = week52Low,
         isActivelyTrading = isActivelyTrading,
-        isFund = isFund,
-        isAdr = isAdr,
-        lastUpdatedAt = time
+        createdAt = time,
+        updatedAt = time
       )
+    }
   }
 
   def make[F[_]: Clock: Async](

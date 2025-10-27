@@ -22,10 +22,10 @@ object errors {
       override val message: String = s"$entityName with id $id does not exist"
 
     final case class StockNotFound(ticker: Ticker) extends NotFound:
-      override val message: String = s"Couldn't not find stock for $ticker"
+      override val message: String = s"Could not find stock quote for $ticker"
 
     final case class CompanyProfileNotFound(ticker: Ticker) extends NotFound:
-      override val message: String = s"Couldn't not find company profile for $ticker"
+      override val message: String = s"Could not find company profile for $ticker"
 
     final case class JsonParsingFailure(original: String, error: String) extends AppError:
       override val message: String = s"Failed to parse json response: $error\n$original"

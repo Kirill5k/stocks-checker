@@ -2,7 +2,7 @@ package stockschecker.controllers
 
 import cats.effect.kernel.Async
 import org.http4s.HttpRoutes
-import stockschecker.domain.{Stock, Ticker}
+import stockschecker.domain.{StockQuote, Ticker}
 import stockschecker.services.StockService
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
@@ -33,8 +33,8 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
   private val getStockEndpoint = Controller.publicEndpoint.get
     .in(basePath / path[Ticker])
     .in(query[Option[Int]]("limit"))
-    .out(jsonBody[List[Stock]])
-    .description("Get company stock by ticker")
+    .out(jsonBody[List[StockQuote]])
+    .description("Get stock quotes by ticker")
 
   def make[F[_]: Async](service: StockService[F]): F[Controller[F]] =
     Async[F].pure(StockController[F](service))

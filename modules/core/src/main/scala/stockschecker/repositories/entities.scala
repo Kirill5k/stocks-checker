@@ -5,76 +5,100 @@ import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Schedule, Stock, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Schedule, SecurityType, StockQuote, Ticker}
 
 import java.time.{Instant, LocalDate}
 
 private[repositories] object entities extends MongoJsonCodecs {
 
-  final case class StockEntity(
+  final case class StockQuoteEntity(
       _id: String,
       ticker: Ticker,
       price: BigDecimal,
-      stockType: String,
-      lastUpdatedAt: Instant,
-      priceDelta: Option[BigDecimal] = None
+      quotedAt: Instant,
+      previousClose: Option[BigDecimal] = None,
+      changeAmount: Option[BigDecimal] = None,
+      changePercent: Option[BigDecimal] = None,
+      volume: Option[Long] = None,
+      dayHigh: Option[BigDecimal] = None,
+      dayLow: Option[BigDecimal] = None,
+      createdAt: Instant
   ) derives Codec.AsObject:
-    def toDomain: Stock =
-      Stock(
+    def toDomain: StockQuote =
+      StockQuote(
         ticker = ticker,
         price = price,
-        stockType = stockType,
-        lastUpdatedAt = lastUpdatedAt,
-        priceDelta = priceDelta
+        quotedAt = quotedAt,
+        previousClose = previousClose,
+        changeAmount = changeAmount,
+        changePercent = changePercent,
+        volume = volume,
+        dayHigh = dayHigh,
+        dayLow = dayLow,
+        createdAt = createdAt
       )
 
-  object StockEntity:
-    given MongoCodecProvider[StockEntity] = deriveCirceCodecProvider[StockEntity]
-    def from(stock: Stock): StockEntity =
-      StockEntity(
-        _id = s"${stock.ticker}${stock.lastUpdatedAt.toString.substring(0, 10)}",
-        ticker = stock.ticker,
-        price = stock.price,
-        stockType = stock.stockType,
-        lastUpdatedAt = stock.lastUpdatedAt
+  object StockQuoteEntity:
+    given MongoCodecProvider[StockQuoteEntity] = deriveCirceCodecProvider[StockQuoteEntity]
+    def from(quote: StockQuote): StockQuoteEntity =
+      StockQuoteEntity(
+        _id = s"${quote.ticker}.${quote.quotedAt.toString.substring(0, 10)}",
+        ticker = quote.ticker,
+        price = quote.price,
+        quotedAt = quote.quotedAt,
+        previousClose = quote.previousClose,
+        changeAmount = quote.changeAmount,
+        changePercent = quote.changePercent,
+        volume = quote.volume,
+        dayHigh = quote.dayHigh,
+        dayLow = quote.dayLow,
+        createdAt = quote.createdAt
       )
 
   final case class CompanyProfileEntity(
       _id: Ticker,
       name: String,
-      country: String,
-      sector: String,
-      industry: String,
-      description: String,
-      website: String,
-      ipoDate: LocalDate,
+      securityType: String,
+      exchange: Option[String],
       currency: String,
-      marketCap: Long,
-      averageTradedVolume: Long,
-      isEtf: Boolean,
+      country: Option[String],
+      sector: Option[String],
+      industry: Option[String],
+      description: Option[String],
+      website: Option[String],
+      ipoDate: Option[LocalDate],
+      ceo: Option[String],
+      employees: Option[Long],
+      marketCap: Option[Long],
+      averageVolume: Option[Long],
+      week52High: Option[BigDecimal],
+      week52Low: Option[BigDecimal],
       isActivelyTrading: Boolean,
-      isFund: Boolean,
-      isAdr: Boolean,
-      lastUpdatedAt: Instant
+      createdAt: Instant,
+      updatedAt: Instant
   ) derives Codec.AsObject:
     def toDomain: CompanyProfile =
       CompanyProfile(
         ticker = _id,
         name = name,
+        securityType = SecurityType.fromString(securityType),
+        exchange = exchange,
+        currency = currency,
         country = country,
         sector = sector,
         industry = industry,
         description = description,
         website = website,
         ipoDate = ipoDate,
-        currency = currency,
+        ceo = ceo,
+        employees = employees,
         marketCap = marketCap,
-        averageTradedVolume = averageTradedVolume,
-        isEtf = isEtf,
+        averageVolume = averageVolume,
+        week52High = week52High,
+        week52Low = week52Low,
         isActivelyTrading = isActivelyTrading,
-        isFund = isFund,
-        isAdr = isAdr,
-        lastUpdatedAt = lastUpdatedAt
+        createdAt = createdAt,
+        updatedAt = updatedAt
       )
 
   object CompanyProfileEntity:
@@ -83,20 +107,24 @@ private[repositories] object entities extends MongoJsonCodecs {
       CompanyProfileEntity(
         _id = profile.ticker,
         name = profile.name,
+        securityType = profile.securityType.value,
+        exchange = profile.exchange,
+        currency = profile.currency,
         country = profile.country,
         sector = profile.sector,
         industry = profile.industry,
         description = profile.description,
         website = profile.website,
         ipoDate = profile.ipoDate,
-        currency = profile.currency,
+        ceo = profile.ceo,
+        employees = profile.employees,
         marketCap = profile.marketCap,
-        averageTradedVolume = profile.averageTradedVolume,
-        isEtf = profile.isEtf,
+        averageVolume = profile.averageVolume,
+        week52High = profile.week52High,
+        week52Low = profile.week52Low,
         isActivelyTrading = profile.isActivelyTrading,
-        isFund = profile.isFund,
-        isAdr = profile.isAdr,
-        lastUpdatedAt = profile.lastUpdatedAt
+        createdAt = profile.createdAt,
+        updatedAt = profile.updatedAt
       )
 
   final case class CommandEntity(

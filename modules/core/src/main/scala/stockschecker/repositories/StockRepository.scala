@@ -7,85 +7,115 @@ import fs2.Stream
 import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.bson.syntax.*
 import mongo4cats.bson.{BsonValue, Document}
+import mongo4cats.circe.deriveJsonBsonValueEncoder
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Aggregate, Filter, Sort, Update}
-import stockschecker.domain.{Stock, Ticker}
-import stockschecker.repositories.entities.StockEntity
+import stockschecker.domain.{StockQuote, Ticker}
+import stockschecker.repositories.entities.StockQuoteEntity
 
 trait StockRepository[F[_]]:
   def getAllTickers: F[List[Ticker]]
-  def save(stock: Stock): F[Unit]
-  def save(stocks: List[Stock]): F[Unit]
-  def streamAll: Stream[F, Stock]
-  def find(ticker: Ticker, limit: Option[Int]): F[List[Stock]]
-  def findWithPriceDeltas(ticker: Ticker, limit: Option[Int]): F[List[Stock]]
+  def save(quote: StockQuote): F[Unit]
+  def save(quotes: List[StockQuote]): F[Unit]
+  def streamAll: Stream[F, StockQuote]
+  def find(ticker: Ticker, limit: Option[Int]): F[List[StockQuote]]
+  def findWithPriceDeltas(ticker: Ticker, limit: Option[Int]): F[List[StockQuote]]
 
 final private class LiveStockRepository[F[_]: Concurrent](
-    private val collection: MongoCollection[F, StockEntity]
+    private val collection: MongoCollection[F, StockQuoteEntity]
 ) extends StockRepository[F] {
 
   private object Field:
     val Id            = "_id"
-    val StockType     = "stockType"
     val Ticker        = "ticker"
-    val LastUpdatedAt = "lastUpdatedAt"
+    val QuotedAt      = "quotedAt"
     val Price         = "price"
-    val PriceDelta    = "priceDelta"
+    val PreviousClose = "previousClose"
+    val ChangeAmount  = "changeAmount"
+    val ChangePercent = "changePercent"
+    val Volume        = "volume"
+    val DayHigh       = "dayHigh"
+    val DayLow        = "dayLow"
+    val CreatedAt     = "createdAt"
 
-  extension (stock: Stock)
-    private def id: String = s"${stock.ticker}.${stock.lastUpdatedAt.toString.substring(0, 10)}"
+  extension (quote: StockQuote)
+    private def id: String = s"${quote.ticker}.${quote.quotedAt.toString.substring(0, 10)}"
     private def toUpdateCommand: WriteCommand[Nothing] =
-      val id = stock.id
+      val id = quote.id
       WriteCommand.UpdateOne(
         Filter.idEq(id),
         Update
           .setOnInsert(Field.Id, id)
-          .setOnInsert(Field.Ticker, stock.ticker)
-          .setOnInsert(Field.StockType, stock.stockType)
-          .set(Field.Price, stock.price)
-          .set(Field.LastUpdatedAt, stock.lastUpdatedAt),
+          .setOnInsert(Field.Ticker, quote.ticker)
+          .setOnInsert(Field.CreatedAt, quote.createdAt)
+          .set(Field.Price, quote.price)
+          .set(Field.QuotedAt, quote.quotedAt)
+          .set(Field.PreviousClose, quote.previousClose)
+          .set(Field.ChangeAmount, quote.changeAmount)
+          .set(Field.ChangePercent, quote.changePercent)
+          .set(Field.Volume, quote.volume)
+          .set(Field.DayHigh, quote.dayHigh)
+          .set(Field.DayLow, quote.dayLow),
         UpdateOptions(upsert = true)
       )
 
-  override def save(stocks: List[Stock]): F[Unit] =
-    collection.bulkWrite(stocks.map(_.toUpdateCommand)).void
+  override def save(quotes: List[StockQuote]): F[Unit] =
+    collection.bulkWrite(quotes.map(_.toUpdateCommand)).void
 
-  override def save(stock: Stock): F[Unit] =
-    collection.bulkWrite(List(stock.toUpdateCommand)).void
+  override def save(quote: StockQuote): F[Unit] =
+    collection.bulkWrite(List(quote.toUpdateCommand)).void
 
-  override def streamAll: Stream[F, Stock] =
+  override def streamAll: Stream[F, StockQuote] =
     collection.find.stream.map(_.toDomain)
 
-  override def find(ticker: Ticker, limit: Option[Int]): F[List[Stock]] =
+  override def find(ticker: Ticker, limit: Option[Int]): F[List[StockQuote]] =
     collection
       .find(Filter.eq(Field.Ticker, ticker))
-      .sortByDesc(Field.LastUpdatedAt)
+      .sortByDesc(Field.QuotedAt)
       .limit(limit.getOrElse(Int.MaxValue))
       .all
       .mapList(_.toDomain)
 
-  override def findWithPriceDeltas(ticker: Ticker, limit: Option[Int]): F[List[Stock]] =
+  override def findWithPriceDeltas(ticker: Ticker, limit: Option[Int]): F[List[StockQuote]] =
+    val prevPriceStr = BsonValue.string("$prevPrice")
+    val priceStr = BsonValue.string("$price")
+    val nullVal = BsonValue.Null
+
+    val subtractPrices: BsonValue = Document("$subtract" -> List[BsonValue](priceStr, prevPriceStr))
+    val dividePrices: BsonValue = Document("$divide" -> List[BsonValue](subtractPrices, prevPriceStr))
+    val multiplyBy100: BsonValue = Document("$multiply" -> List[BsonValue](dividePrices, BsonValue.int(100)))
+
     collection
-      .aggregate[StockEntity](
+      .aggregate[StockQuoteEntity](
         Aggregate
           .matchBy(Filter.eq(Field.Ticker, ticker))
           .setWindowFields(
             "$" + Field.Ticker,
-            Sort.asc(Field.LastUpdatedAt),
+            Sort.asc(Field.QuotedAt),
             List(WindowOutputFields.shift("prevPrice", "$" + Field.Price, null, -1))
           )
           .set(
-            Field.PriceDelta -> Document(
-              "$cond" -> BsonValue.document(
-                "if"   -> BsonValue.document("$eq" := List(BsonValue.string("$prevPrice"), BsonValue.Null)),
-                "then" -> BsonValue.Null,
-                "else" -> BsonValue.document("$subtract" := List("$price", "$prevPrice"))
+            Field.ChangeAmount -> Document(
+              "$cond" -> Document(
+                "if"   -> Document("$eq" -> List[BsonValue](prevPriceStr, nullVal)),
+                "then" -> nullVal,
+                "else" -> subtractPrices
               )
             )
           )
-          .sort(Sort.desc(Field.LastUpdatedAt))
+          .set(
+            Field.ChangePercent -> Document(
+              "$cond" -> Document(
+                "if" -> Document("$eq" -> List[BsonValue](prevPriceStr, nullVal)),
+                "then" -> nullVal,
+                "else" -> multiplyBy100
+              )
+            )
+          )
+          .set(Field.PreviousClose -> "$prevPrice")
+          .sort(Sort.desc(Field.QuotedAt))
       )
       .all
       .mapList(_.toDomain)
@@ -97,5 +127,5 @@ final private class LiveStockRepository[F[_]: Concurrent](
 object StockRepository:
   def make[F[_]: Concurrent](database: MongoDatabase[F]): F[StockRepository[F]] =
     database
-      .getCollectionWithCodec[StockEntity]("stocks")
+      .getCollectionWithCodec[StockQuoteEntity]("stock_quotes")
       .map(LiveStockRepository[F](_))

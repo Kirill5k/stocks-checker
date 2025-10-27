@@ -2,12 +2,12 @@ package stockschecker.services
 
 import cats.effect.Concurrent
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{Stock, Ticker}
+import stockschecker.domain.{StockQuote, Ticker}
 import stockschecker.repositories.StockRepository
 
 trait StockService[F[_]]:
   def fetchLatest: F[Unit]
-  def get(ticker: Ticker, limit: Option[Int]): F[List[Stock]]
+  def get(ticker: Ticker, limit: Option[Int]): F[List[StockQuote]]
 
 final private class LiveStockService[F[_]](
     private val repository: StockRepository[F],
@@ -22,7 +22,7 @@ final private class LiveStockService[F[_]](
       .compile
       .drain
 
-  override def get(ticker: Ticker, limit: Option[Int]): F[List[Stock]] =
+  override def get(ticker: Ticker, limit: Option[Int]): F[List[StockQuote]] =
     repository.findWithPriceDeltas(ticker, limit)
 }
 

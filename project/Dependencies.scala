@@ -2,22 +2,24 @@ import sbt.*
 
 object Dependencies {
   private object Versions {
-    val mongo4cats  = "0.7.13"
-    val commonScala = "0.1.26"
-    val pureConfig  = "0.17.9"
-    val circe       = "0.14.15"
-    val circeFs2    = "0.14.1"
-    val sttp        = "3.11.0"
-    val logback     = "1.5.20"
-    val log4cats    = "2.7.1"
-    val tapir       = "1.11.50"
-    val cronUtils   = "9.2.1"
-    val http4s      = "0.23.17"
+    val mongo4cats     = "0.7.13"
+    val commonScala    = "0.1.26"
+    val pureConfig     = "0.17.9"
+    val circe          = "0.14.15"
+    val circeFs2       = "0.14.1"
+    val sttp           = "3.11.0"
+    val logback        = "1.5.20"
+    val log4cats       = "2.7.1"
+    val tapir          = "1.11.50"
+    val cronUtils      = "9.2.1"
+    val http4s         = "0.23.17"
+    val taggedAdtCodec = "0.11.0"
   }
 
   private object Libraries {
-    val cronUtils   = "com.cronutils" % "cron-utils"          % Versions.cronUtils
-    val blazeClient = "org.http4s"   %% "http4s-blaze-client" % Versions.http4s
+    val cronUtils      = "com.cronutils"  % "cron-utils"             % Versions.cronUtils
+    val blazeClient    = "org.http4s"    %% "http4s-blaze-client"    % Versions.http4s
+    val taggedAdtCodec = "org.latestbit" %% "circe-tagged-adt-codec" % Versions.taggedAdtCodec
 
     object commonScala {
       val cats       = "io.github.kirill5k" %% "common-cats"        % Versions.commonScala
@@ -74,6 +76,7 @@ object Dependencies {
   val core = Seq(
     Libraries.cronUtils,
     Libraries.blazeClient,
+    Libraries.taggedAdtCodec,
     Libraries.mongo4cats.core,
     Libraries.mongo4cats.circe,
     Libraries.commonScala.cats,

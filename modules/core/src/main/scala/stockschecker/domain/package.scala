@@ -1,10 +1,11 @@
 package stockschecker
 
 import io.circe.Codec as CirceCodec
-import stockschecker.common.types.StringType
+import org.latestbit.circe.adt.codec.*
+import stockschecker.common.types.{EnumType, StringType}
 import sttp.tapir.{Codec, DecodeResult, Schema}
 
-import java.time.{Instant, LocalDate}
+import java.time.LocalDate
 
 package object domain {
 
@@ -14,30 +15,44 @@ package object domain {
     given Schema[Ticker]                  = Schema.string
   }
 
-  final case class Stock(
+  enum Exchange(val code: String, val fullName: String) derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
+    case NASDAQ extends Exchange("NSQ", "NASDAQ Stock Exchange")
+    case NYSE   extends Exchange("NYS", "New York Stock Exchange")
+
+  object Exchange {
+    given JsonTaggedAdt.Config[Exchange] = JsonTaggedAdt.Config.Values[Exchange](
+      mappings = Map(
+        "NSQ" -> JsonTaggedAdt.tagged[Exchange.NASDAQ.type],
+        "NYS" -> JsonTaggedAdt.tagged[Exchange.NYSE.type]
+      ),
+      strict = true,
+      typeFieldName = "code"
+    )
+  }
+
+  object SecurityKind extends EnumType[SecurityKind](() => SecurityKind.values)
+  enum SecurityKind:
+    case Stock
+    case ETF
+    case MutualFund
+    case REIT
+    case ADR
+
+  final case class Security(
       ticker: Ticker,
-      price: BigDecimal,
-      stockType: String,
-      lastUpdatedAt: Instant,
-      priceDelta: Option[BigDecimal] = None
+      exchange: Exchange,
+      name: String,
+      kind: SecurityKind,
+      isActive: Boolean
   ) derives CirceCodec.AsObject
 
   final case class CompanyProfile(
-      ticker: Ticker,
       name: String,
       country: String,
       sector: String,
       industry: String,
       description: String,
       website: String,
-      ipoDate: LocalDate,
-      currency: String,
-      marketCap: Long,
-      averageTradedVolume: Long,
-      isEtf: Boolean,
-      isActivelyTrading: Boolean,
-      isFund: Boolean,
-      isAdr: Boolean,
-      lastUpdatedAt: Instant
+      ipoDate: LocalDate
   ) derives CirceCodec.AsObject
 }
