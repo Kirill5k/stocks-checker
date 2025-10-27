@@ -1,19 +1,20 @@
-package stockschecker.clients
+package stockschecker.clients.fmp
 
 import cats.effect.Async
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
+import fs2.Stream
 import io.circe.Codec
 import io.circe.fs2.*
 import stockschecker.clients.FinancialModelingPrepClient.CompanyProfileResponse
+import stockschecker.clients.{FinancialModelingPrepClient, MarketDataClient}
 import stockschecker.common.config.FinancialModelingPrepConfig
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{CompanyProfile, Exchange, Security, SecurityKind, Ticker}
+import stockschecker.domain.*
+import sttp.capabilities.fs2.Fs2Streams
 import sttp.client3.*
 import sttp.client3.circe.asJson
-import sttp.capabilities.fs2.Fs2Streams
 import sttp.model.StatusCode
-import fs2.Stream
 
 import java.time.LocalDate
 import scala.concurrent.duration.*

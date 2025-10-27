@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import io.circe.Codec
-import stockschecker.common.config.{FinancialModelingPrepConfig, FinnhubClientConfig}
+import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{Exchange, Security, SecurityKind, Ticker}
 import sttp.capabilities.fs2.Fs2Streams
@@ -79,4 +79,10 @@ object FinnhubClient {
       symbol: Ticker,
       `type`: String
   ) derives Codec.AsObject
+
+  def make[F[_]: Async](
+      config: FinnhubClientConfig,
+      backend: SttpBackend[F, Fs2Streams[F]]
+  ): F[FinnhubClient[F]] =
+    Async[F].pure(LiveFinnhubClient[F](config, backend))
 }
