@@ -1,8 +1,8 @@
 package stockschecker.clients
 
-import stockschecker.domain.{CompanyProfile, StockQuote, Ticker}
+import stockschecker.domain.{CompanyProfile, Security, Ticker}
 import fs2.Stream
 
 trait MarketDataClient[F[_]]:
-  def getAllTradedStocks: Stream[F, StockQuote]
-  def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]]]
+  def getAllTradedSecurities: Stream[F, Security]
+  def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]]

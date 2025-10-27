@@ -53,6 +53,13 @@ package object domain {
       industry: String,
       description: String,
       website: String,
-      ipoDate: LocalDate
+      ipoDate: LocalDate,
+      currency: String,
+      marketCap: Long
+  ) derives CirceCodec.AsObject
+
+  final case class Stock(
+      security: Security,
+      profile: CompanyProfile
   ) derives CirceCodec.AsObject
 }

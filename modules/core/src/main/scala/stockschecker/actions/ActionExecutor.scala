@@ -27,7 +27,8 @@ final private class LiveActionExecutor[F[_]](
         case Action.RescheduleAll =>
           services.command.rescheduleAll
         case Action.FetchLatestStocks =>
-          services.stock.fetchLatest
+          // services.stock.fetchLatest // Disabled until Security model is implemented
+          logger.warn(s"FetchLatestStocks action is disabled - stock service not available")
         case Action.Schedule(cid, waiting) =>
           F.sleep(waiting) >> services.command.execute(cid)
       ).handleErrorWith {

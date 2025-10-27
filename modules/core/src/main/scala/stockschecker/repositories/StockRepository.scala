@@ -1,5 +1,8 @@
 package stockschecker.repositories
 
+// StockQuote has been removed from the domain model
+// This repository needs to be refactored to work with Security model instead
+/*
 import cats.effect.Concurrent
 import cats.syntax.functor.*
 import com.mongodb.client.model.WindowOutputFields
@@ -22,7 +25,12 @@ trait StockRepository[F[_]]:
   def streamAll: Stream[F, StockQuote]
   def find(ticker: Ticker, limit: Option[Int]): F[List[StockQuote]]
   def findWithPriceDeltas(ticker: Ticker, limit: Option[Int]): F[List[StockQuote]]
+*/
 
+// Placeholder trait until Security repository is implemented
+trait StockRepository[F[_]]
+
+/*
 final private class LiveStockRepository[F[_]: Concurrent](
     private val collection: MongoCollection[F, StockQuoteEntity]
 ) extends StockRepository[F] {
@@ -129,3 +137,4 @@ object StockRepository:
     database
       .getCollectionWithCodec[StockQuoteEntity]("stock_quotes")
       .map(LiveStockRepository[F](_))
+*/
