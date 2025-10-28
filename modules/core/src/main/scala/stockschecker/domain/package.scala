@@ -32,31 +32,25 @@ package object domain {
 
   object SecurityKind extends EnumType[SecurityKind](() => SecurityKind.values)
   enum SecurityKind:
-    /**
-     * Represents ownership in a single company (e.g., Apple, Microsoft).
-     * This is the most common type of security.
-     */
+    /** Represents ownership in a single company (e.g., Apple, Microsoft). This is the most common type of security.
+      */
     case Stock
-    /**
-     * A basket of securities (like stocks or bonds) that tracks an index or sector.
-     * Trades on an exchange like a stock (e.g., SPY, QQQ).
-     */
+
+    /** A basket of securities (like stocks or bonds) that tracks an index or sector. Trades on an exchange like a stock (e.g., SPY, QQQ).
+      */
     case ETF
-    /**
-     * A company that owns and typically operates income-producing real estate.
-     * Trades on an exchange like a stock.
-     */
+
+    /** A company that owns and typically operates income-producing real estate. Trades on an exchange like a stock.
+      */
     case REIT
-    /**
-     * A security that allows U.S. investors to trade shares of foreign companies
-     * on U.S. exchanges.
-     */
+
+    /** A security that allows U.S. investors to trade shares of foreign companies on U.S. exchanges.
+      */
     case ADR
-    /**
-     * A catch-all for any other security type that is traded on an exchange but
-     * falls outside the common categories (e.g., Warrants, Rights, Units).
-     * We acknowledge its existence but don't give it special status in our domain.
-     */
+
+    /** A catch-all for any other security type that is traded on an exchange but falls outside the common categories (e.g., Warrants,
+      * Rights, Units). We acknowledge its existence but don't give it special status in our domain.
+      */
     case Other
 
   final case class Security(
@@ -70,7 +64,6 @@ package object domain {
   final case class CompanyProfile(
       name: String,
       country: String,
-      sector: String,
       industry: String,
       description: String,
       website: String,
@@ -82,5 +75,14 @@ package object domain {
   final case class Stock(
       security: Security,
       profile: CompanyProfile
+  ) derives CirceCodec.AsObject
+
+  final case class PriceCandle(
+      date: LocalDate,
+      open: BigDecimal,
+      high: BigDecimal,
+      low: BigDecimal,
+      close: BigDecimal,
+      volume: Long
   ) derives CirceCodec.AsObject
 }

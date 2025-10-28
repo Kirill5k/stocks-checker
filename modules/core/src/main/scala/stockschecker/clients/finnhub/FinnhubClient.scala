@@ -5,10 +5,12 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import fs2.Stream
 import io.circe.Codec
+import io.circe.Encoder.encodeJsonObject
+import io.circe.syntax.*
 import io.circe.fs2.{byteArrayParser, decoder}
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{Exchange, Security, SecurityKind, Ticker}
+import stockschecker.domain.{CompanyProfile, Exchange, Security, SecurityKind, Ticker}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client3.*
 import sttp.client3.circe.asJson
@@ -16,7 +18,8 @@ import sttp.client3.circe.asJson
 import scala.concurrent.duration.*
 
 trait FinnhubClient[F[_]]:
-  def getTradedSecurities(exchange: Exchange): Stream[F, Security]
+  def getListedSecurities(exchange: Exchange): Stream[F, Security]
+  def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]]
 
 final private class LiveFinnhubClient[F[_]](
     private val config: FinnhubClientConfig,
@@ -25,7 +28,27 @@ final private class LiveFinnhubClient[F[_]](
     F: Async[F]
 ) extends FinnhubClient[F] {
 
-  override def getTradedSecurities(exchange: Exchange): Stream[F, Security] = {
+  override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
+    val request = emptyRequest
+      .get(uri"${config.baseUri}/api/v1/stock/symbol?apikey=${config.apiKey}&symbol=$ticker")
+      .response(asJson[io.circe.JsonObject])
+
+    backend.send(request).flatMap { response =>
+      response.body match
+        case Right(jsonObj) if jsonObj.isEmpty =>
+          F.pure(None) // Empty object returned - no profile found
+        case Right(jsonObj) =>
+          jsonObj.toJson.as[FinnhubClient.CompanyProfileResponse] match
+            case Right(profile) =>
+              F.pure(Some(profile.toDomain))
+            case Left(err) =>
+              F.raiseError(AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile: ${err.getMessage}"))
+        case Left(err) =>
+          F.raiseError(AppError.Http(response.code.code, s"Error retrieving company profile: ${err.getMessage}"))
+    }
+  }
+
+  override def getListedSecurities(exchange: Exchange): Stream[F, Security] = {
     val mic  = mapExchangeToFinnhubMic(exchange)
     val code = mapExchangeToFinnhubCode(exchange)
     val request = emptyRequest
@@ -46,17 +69,13 @@ final private class LiveFinnhubClient[F[_]](
     yield data
   }
 
-  private def mapExchangeToFinnhubCode(exchange: Exchange): String =
-    exchange match {
-      case Exchange.NASDAQ => "US"
-      case Exchange.NYSE   => "US"
-    }
+  private def mapExchangeToFinnhubCode(exchange: Exchange): String = exchange match
+    case Exchange.NASDAQ => "US"
+    case Exchange.NYSE   => "US"
 
-  private def mapExchangeToFinnhubMic(exchange: Exchange): String =
-    exchange match {
-      case Exchange.NASDAQ => "XNAS"
-      case Exchange.NYSE   => "XNYS"
-    }
+  private def mapExchangeToFinnhubMic(exchange: Exchange): String = exchange match
+    case Exchange.NASDAQ => "XNAS"
+    case Exchange.NYSE   => "XNYS"
 
 }
 
@@ -85,6 +104,29 @@ object FinnhubClient {
         exchange = exchange
       )
     }
+  }
+
+  final case class CompanyProfileResponse(
+      name: String,
+      country: String,
+      finnhubIndustry: String,
+      description: String,
+      weburl: String,
+      ipo: String,
+      estimateCurrency: String,
+      marketCapitalization: BigDecimal
+  ) derives Codec.AsObject {
+    def toDomain: CompanyProfile =
+      CompanyProfile(
+        name = name.toUpperCase,
+        country = country,
+        industry = finnhubIndustry,
+        description = description,
+        website = weburl,
+        ipoDate = java.time.LocalDate.parse(ipo),
+        currency = estimateCurrency,
+        marketCap = (marketCapitalization * 1000).longValue
+      )
   }
 
   def make[F[_]: Async](

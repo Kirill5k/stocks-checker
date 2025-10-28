@@ -2,6 +2,7 @@ package stockschecker.clients
 
 import cats.effect.Async
 import cats.syntax.functor.*
+import stockschecker.clients.fmp.FinancialModelingPrepClient
 import stockschecker.common.config.ClientsConfig
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client3.SttpBackend

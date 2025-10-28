@@ -6,8 +6,7 @@ import cats.syntax.functor.*
 import fs2.Stream
 import io.circe.Codec
 import io.circe.fs2.*
-import stockschecker.clients.FinancialModelingPrepClient.CompanyProfileResponse
-import stockschecker.clients.{FinancialModelingPrepClient, MarketDataClient}
+import stockschecker.clients.MarketDataClient
 import stockschecker.common.config.FinancialModelingPrepConfig
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.*
@@ -49,7 +48,7 @@ final private class FinancialModelingPrepClient[F[_]](
   override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v3/profile/$ticker?apikey=${config.apiKey}")
-      .response(asJson[List[CompanyProfileResponse]])
+      .response(asJson[List[FinancialModelingPrepClient.CompanyProfileResponse]])
 
     for
       response <- backend.send(request)

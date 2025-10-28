@@ -15,7 +15,7 @@ trait CompanyProfileRepository[F[_]]:
   def save(ticker: Ticker, cp: CompanyProfile): F[Unit]
   def find(ticker: Ticker): F[Option[CompanyProfile]]
 
-final private class LiveCompanyProfileRepository[F[_]: Monad: Clock](
+final private class LiveCompanyProfileRepository[F[_]: {Monad, Clock}](
     private val collection: MongoCollection[F, CompanyProfileEntity]
 ) extends CompanyProfileRepository[F] {
 
@@ -51,7 +51,7 @@ final private class LiveCompanyProfileRepository[F[_]: Monad: Clock](
 }
 
 object CompanyProfileRepository:
-  def make[F[_]: Monad: Clock](database: MongoDatabase[F]): F[CompanyProfileRepository[F]] =
+  def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[CompanyProfileRepository[F]] =
     database
       .getCollectionWithCodec[CompanyProfileEntity]("company-profiles")
       .map(LiveCompanyProfileRepository[F](_))

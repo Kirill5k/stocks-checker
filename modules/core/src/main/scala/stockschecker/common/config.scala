@@ -24,9 +24,15 @@ object config {
       apiKey: String
   ) derives ConfigReader
 
+  final case class AlphaVantageClientConfig(
+      baseUri: String,
+      apiKey: String
+  ) derives ConfigReader
+
   final case class ClientsConfig(
       financialModelingPrep: FinancialModelingPrepConfig,
-      finnhub: FinnhubClientConfig
+      finnhub: FinnhubClientConfig,
+      alphaVantage: AlphaVantageClientConfig,
   ) derives ConfigReader
 
   final case class MongoConfig(
