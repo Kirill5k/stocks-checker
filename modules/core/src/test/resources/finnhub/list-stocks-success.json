@@ -1,0 +1,26 @@
+[
+  {
+    "currency": "USD",
+    "description": "REAL MESSENGER CORP-28",
+    "displaySymbol": "RMSGW",
+    "figi": "BBG01J348569",
+    "isin": null,
+    "mic": "XNAS",
+    "shareClassFIGI": "",
+    "symbol": "RMSGW",
+    "symbol2": "",
+    "type": "Equity WRT"
+  },
+  {
+    "currency": "USD",
+    "description": "FOXX DEVELOPMENT HOLDINGS IN",
+    "displaySymbol": "FOXX",
+    "figi": "BBG01Q1W39Q8",
+    "isin": null,
+    "mic": "XNAS",
+    "shareClassFIGI": "BBG01Q1W39T5",
+    "symbol": "FOXX",
+    "symbol2": "",
+    "type": "Common Stock"
+  }
+]
