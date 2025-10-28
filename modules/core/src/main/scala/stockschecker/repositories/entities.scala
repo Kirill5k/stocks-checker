@@ -12,7 +12,8 @@ import java.time.{Instant, LocalDate}
 private[repositories] object entities extends MongoJsonCodecs {
 
   final case class SecurityEntity(
-      _id: String,
+      _id: Ticker,
+      ticker: Ticker,
       exchange: Exchange,
       name: String,
       kind: SecurityKind,
@@ -22,7 +23,7 @@ private[repositories] object entities extends MongoJsonCodecs {
   ) derives Codec.AsObject:
     def toDomain: Security =
       Security(
-        ticker = Ticker(_id),
+        ticker = _id,
         exchange = exchange,
         name = name,
         kind = kind,
@@ -33,7 +34,8 @@ private[repositories] object entities extends MongoJsonCodecs {
     given MongoCodecProvider[SecurityEntity] = deriveCirceCodecProvider[SecurityEntity]
     def from(security: Security, now: Instant): SecurityEntity =
       SecurityEntity(
-        _id = security.ticker.value,
+        _id = security.ticker,
+        ticker = security.ticker,
         exchange = security.exchange,
         name = security.name,
         kind = security.kind,

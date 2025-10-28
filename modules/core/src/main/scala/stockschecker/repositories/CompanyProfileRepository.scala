@@ -10,6 +10,7 @@ import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.{CompanyProfile, Ticker}
 import stockschecker.repositories.entities.CompanyProfileEntity
 import kirill5k.common.cats.syntax.applicative.*
+import mongo4cats.circe.MongoJsonCodecs
 
 trait CompanyProfileRepository[F[_]]:
   def save(cp: CompanyProfile): F[Unit]
@@ -49,8 +50,9 @@ final private class LiveCompanyProfileRepository[F[_]: {Monad, Clock}](
     collection.find(Filter.idEq(ticker)).first.mapOpt(_.toDomain)
 }
 
-object CompanyProfileRepository:
+object CompanyProfileRepository extends MongoJsonCodecs:
   def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[CompanyProfileRepository[F]] =
     database
       .getCollectionWithCodec[CompanyProfileEntity]("company-profiles")
+      .map(_.withAddedCodec[Ticker])
       .map(LiveCompanyProfileRepository[F](_))

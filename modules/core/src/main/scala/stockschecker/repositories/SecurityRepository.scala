@@ -6,6 +6,7 @@ import cats.syntax.flatMap.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.syntax.applicative.*
+import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
@@ -26,18 +27,19 @@ trait SecurityRepository[F[_]]:
 final private class LiveSecurityRepository[F[_]](
     private val collection: MongoCollection[F, SecurityEntity]
 )(using
-  F: Concurrent[F],
-  clock: Clock[F]
+    F: Concurrent[F],
+    clock: Clock[F]
 ) extends SecurityRepository[F] {
 
   private object Field:
-    val Id       = "_id"
-    val Exchange = "exchange"
-    val Name     = "name"
-    val Kind     = "kind"
-    val IsActive = "isActive"
-    val createdAt = "createdAt"
-    val updatedAt = "updatedAt"
+    val Id        = "_id"
+    val Exchange  = "exchange"
+    val Ticker    = "ticker"
+    val Name      = "name"
+    val Kind      = "kind"
+    val IsActive  = "isActive"
+    val CreatedAt = "createdAt"
+    val UpdatedAt = "updatedAt"
 
   extension (security: Security)
     private def toUpdateCommand(now: Instant): WriteCommand[Nothing] =
@@ -46,8 +48,9 @@ final private class LiveSecurityRepository[F[_]](
         Filter.idEq(id),
         Update
           .setOnInsert(Field.Id, id)
-          .setOnInsert(Field.createdAt, now)
-          .set(Field.updatedAt, now)
+          .setOnInsert(Field.CreatedAt, now)
+          .set(Field.UpdatedAt, now)
+          .set(Field.Ticker, now)
           .set(Field.Exchange, security.exchange)
           .set(Field.Name, security.name)
           .set(Field.Kind, security.kind)
@@ -78,11 +81,12 @@ final private class LiveSecurityRepository[F[_]](
       .mapList(_.toDomain)
 
   override def getAllTickers: F[List[Ticker]] =
-    collection.find.all.mapList(_.toDomain.ticker)
+    collection.distinct[Ticker]("ticker").all.map(_.toList)
 }
 
-object SecurityRepository:
-  def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[SecurityRepository[F]] =
+object SecurityRepository extends MongoJsonCodecs:
+  def make[F[_]](database: MongoDatabase[F])(using Concurrent[F], Clock[F]): F[SecurityRepository[F]] =
     database
       .getCollectionWithCodec[SecurityEntity]("securities")
+      .map(_.withAddedCodec[Ticker])
       .map(LiveSecurityRepository[F](_))

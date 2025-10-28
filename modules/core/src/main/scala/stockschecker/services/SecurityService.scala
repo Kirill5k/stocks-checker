@@ -37,7 +37,7 @@ final private class LiveSecurityService[F[_]: {Concurrent, Logger}](
     Logger[F].info(s"Fetching latest securities for ${exchange.fullName}") >>
       marketDataClient
         .getTradedSecurities(exchange)
-        .chunkN(100)
+        .chunkN(512)
         .evalMap { chunk =>
           Logger[F].info(s"Saving batch of ${chunk.size} securities") >>
             repository.save(chunk.toList)
