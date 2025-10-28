@@ -13,10 +13,10 @@ trait Services[F[_]]:
   def command: CommandService[F]
 
 object Services:
-  def make[F[_]](clients: Clients[F], repos: Repositories[F], ad: ActionDispatcher[F])(using F: Temporal[F]): F[Services[F]] =
+  def make[F[_]: Temporal](clients: Clients[F], repos: Repositories[F], ad: ActionDispatcher[F]): F[Services[F]] =
     for
       // s  <- StockService.make(repos.stock, clients.financialModelingPrep) // Disabled
-      cp <- CompanyProfileService.make(repos.companyProfile, clients.financialModelingPrep)
+      cp <- CompanyProfileService.make(repos.companyProfile, clients.marketData)
       c  <- CommandService.make(repos.command, ad)
     yield new Services[F]:
       override def companyProfile: CompanyProfileService[F] = cp

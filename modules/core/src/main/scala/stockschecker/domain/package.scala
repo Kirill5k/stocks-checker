@@ -62,6 +62,7 @@ package object domain {
   ) derives CirceCodec.AsObject
 
   final case class CompanyProfile(
+      ticker: Ticker,
       name: String,
       country: String,
       industry: String,

@@ -2,9 +2,7 @@ package stockschecker.clients.alphavantage
 
 import cats.effect.kernel.Async
 import cats.syntax.flatMap.*
-import cats.syntax.functor.*
-import cats.syntax.either.*
-import io.circe.{Codec, Decoder, HCursor}
+import io.circe.{Decoder, HCursor}
 import stockschecker.common.config.AlphaVantageClientConfig
 import stockschecker.domain.{PriceCandle, Ticker}
 import stockschecker.domain.errors.AppError

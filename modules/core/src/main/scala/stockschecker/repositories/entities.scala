@@ -57,13 +57,12 @@ private[repositories] object entities extends MongoJsonCodecs {
         dayLow = quote.dayLow,
         createdAt = quote.createdAt
       )
-  */
+   */
 
   final case class CompanyProfileEntity(
       _id: Ticker,
       name: String,
       country: String,
-      sector: String,
       industry: String,
       description: String,
       website: String,
@@ -75,9 +74,9 @@ private[repositories] object entities extends MongoJsonCodecs {
   ) derives Codec.AsObject:
     def toDomain: CompanyProfile =
       CompanyProfile(
+        ticker = _id,
         name = name,
         country = country,
-        sector = sector,
         industry = industry,
         description = description,
         website = website,
@@ -88,20 +87,19 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   object CompanyProfileEntity:
     given MongoCodecProvider[CompanyProfileEntity] = deriveCirceCodecProvider[CompanyProfileEntity]
-    def from(profile: CompanyProfile, ticker: Ticker, time: Instant): CompanyProfileEntity =
+    def from(profile: CompanyProfile, now: Instant): CompanyProfileEntity =
       CompanyProfileEntity(
-        _id = ticker,
+        _id = profile.ticker,
         name = profile.name,
         country = profile.country,
-        sector = profile.sector,
         industry = profile.industry,
         description = profile.description,
         website = profile.website,
         ipoDate = profile.ipoDate,
         currency = profile.currency,
         marketCap = profile.marketCap,
-        createdAt = time,
-        updatedAt = time
+        createdAt = now,
+        updatedAt = now
       )
 
   final case class CommandEntity(

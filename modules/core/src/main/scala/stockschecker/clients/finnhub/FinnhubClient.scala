@@ -2,11 +2,8 @@ package stockschecker.clients.finnhub
 
 import cats.effect.Async
 import cats.syntax.flatMap.*
-import cats.syntax.functor.*
 import fs2.Stream
 import io.circe.Codec
-import io.circe.Encoder.encodeJsonObject
-import io.circe.syntax.*
 import io.circe.fs2.{byteArrayParser, decoder}
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
@@ -107,6 +104,7 @@ object FinnhubClient {
   }
 
   final case class CompanyProfileResponse(
+      ticker: Ticker,
       name: String,
       country: String,
       finnhubIndustry: String,
@@ -118,6 +116,7 @@ object FinnhubClient {
   ) derives Codec.AsObject {
     def toDomain: CompanyProfile =
       CompanyProfile(
+        ticker = ticker,
         name = name.toUpperCase,
         country = country,
         industry = finnhubIndustry,

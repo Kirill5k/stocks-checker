@@ -12,28 +12,27 @@ import stockschecker.repositories.entities.CompanyProfileEntity
 import kirill5k.common.cats.syntax.applicative.*
 
 trait CompanyProfileRepository[F[_]]:
-  def save(ticker: Ticker, cp: CompanyProfile): F[Unit]
+  def save(cp: CompanyProfile): F[Unit]
   def find(ticker: Ticker): F[Option[CompanyProfile]]
 
 final private class LiveCompanyProfileRepository[F[_]: {Monad, Clock}](
     private val collection: MongoCollection[F, CompanyProfileEntity]
 ) extends CompanyProfileRepository[F] {
 
-  override def save(ticker: Ticker, cp: CompanyProfile): F[Unit] =
+  override def save(cp: CompanyProfile): F[Unit] =
     Clock[F].now.flatMap { time =>
       collection
-        .count(Filter.idEq(ticker))
+        .count(Filter.idEq(cp.ticker))
         .flatMap {
           case 0 =>
-            collection.insertOne(CompanyProfileEntity.from(cp, ticker, time)).void
+            collection.insertOne(CompanyProfileEntity.from(cp, time)).void
           case _ =>
             collection
               .updateOne(
-                Filter.idEq(ticker),
+                Filter.idEq(cp.ticker),
                 Update
                   .set("name", cp.name)
                   .set("country", cp.country)
-                  .set("sector", cp.sector)
                   .set("industry", cp.industry)
                   .set("description", cp.description)
                   .set("website", cp.website)
