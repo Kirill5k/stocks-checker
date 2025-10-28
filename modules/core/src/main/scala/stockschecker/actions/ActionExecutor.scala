@@ -3,9 +3,11 @@ package stockschecker.actions
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.applicativeError.*
+import cats.syntax.foldable.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
 import stockschecker.domain.errors.AppError
+import stockschecker.domain.Exchange
 import stockschecker.services.Services
 
 trait ActionExecutor[F[_]]:
@@ -27,8 +29,9 @@ final private class LiveActionExecutor[F[_]](
         case Action.RescheduleAll =>
           services.command.rescheduleAll
         case Action.FetchLatestStocks =>
-          // services.stock.fetchLatest // Disabled until Security model is implemented
-          logger.warn(s"FetchLatestStocks action is disabled - stock service not available")
+          List(Exchange.NASDAQ, Exchange.NYSE).traverse_ { exchange =>
+            services.security.fetchLatestSecurities(exchange)
+          }
         case Action.Schedule(cid, waiting) =>
           F.sleep(waiting) >> services.command.execute(cid)
       ).handleErrorWith {

@@ -5,59 +5,42 @@ import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Schedule, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, Schedule, Security, SecurityKind, Ticker}
 
 import java.time.{Instant, LocalDate}
 
 private[repositories] object entities extends MongoJsonCodecs {
 
-  // StockQuote has been removed from domain model
-  // Keeping entity definition commented for reference if needed later
-  /*
-  final case class StockQuoteEntity(
+  final case class SecurityEntity(
       _id: String,
-      ticker: Ticker,
-      price: BigDecimal,
-      quotedAt: Instant,
-      previousClose: Option[BigDecimal] = None,
-      changeAmount: Option[BigDecimal] = None,
-      changePercent: Option[BigDecimal] = None,
-      volume: Option[Long] = None,
-      dayHigh: Option[BigDecimal] = None,
-      dayLow: Option[BigDecimal] = None,
-      createdAt: Instant
+      exchange: Exchange,
+      name: String,
+      kind: SecurityKind,
+      isActive: Boolean,
+      createdAt: Instant,
+      updatedAt: Instant
   ) derives Codec.AsObject:
-    def toDomain: StockQuote =
-      StockQuote(
-        ticker = ticker,
-        price = price,
-        quotedAt = quotedAt,
-        previousClose = previousClose,
-        changeAmount = changeAmount,
-        changePercent = changePercent,
-        volume = volume,
-        dayHigh = dayHigh,
-        dayLow = dayLow,
-        createdAt = createdAt
+    def toDomain: Security =
+      Security(
+        ticker = Ticker(_id),
+        exchange = exchange,
+        name = name,
+        kind = kind,
+        isActive = isActive
       )
 
-  object StockQuoteEntity:
-    given MongoCodecProvider[StockQuoteEntity] = deriveCirceCodecProvider[StockQuoteEntity]
-    def from(quote: StockQuote): StockQuoteEntity =
-      StockQuoteEntity(
-        _id = s"${quote.ticker}.${quote.quotedAt.toString.substring(0, 10)}",
-        ticker = quote.ticker,
-        price = quote.price,
-        quotedAt = quote.quotedAt,
-        previousClose = quote.previousClose,
-        changeAmount = quote.changeAmount,
-        changePercent = quote.changePercent,
-        volume = quote.volume,
-        dayHigh = quote.dayHigh,
-        dayLow = quote.dayLow,
-        createdAt = quote.createdAt
+  object SecurityEntity:
+    given MongoCodecProvider[SecurityEntity] = deriveCirceCodecProvider[SecurityEntity]
+    def from(security: Security, now: Instant): SecurityEntity =
+      SecurityEntity(
+        _id = security.ticker.value,
+        exchange = security.exchange,
+        name = security.name,
+        kind = security.kind,
+        isActive = security.isActive,
+        createdAt = now,
+        updatedAt = now
       )
-   */
 
   final case class CompanyProfileEntity(
       _id: Ticker,

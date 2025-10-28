@@ -2,7 +2,7 @@ package stockschecker
 
 import mongo4cats.bson.ObjectId
 import stockschecker.actions.Action.FetchLatestStocks
-import stockschecker.domain.{Command, CommandId, CompanyProfile, Schedule, Stock, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, Exchange, Schedule, Security, SecurityKind, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
 import java.time.temporal.ChronoUnit
@@ -15,18 +15,20 @@ object fixtures {
   val AAPL = Ticker("AAPL")
   val MSFT = Ticker("MSFT")
 
-  val AAPLStock = Stock(
+  val AAPLSecurity = Security(
     ticker = AAPL,
-    price = BigDecimal(234.4),
-    stockType = "stock",
-    lastUpdatedAt = ts
+    exchange = Exchange.NASDAQ,
+    name = "Apple Inc.",
+    kind = SecurityKind.Stock,
+    isActive = true
   )
 
-  val MSFTStock = Stock(
+  val MSFTSecurity = Security(
     ticker = MSFT,
-    price = BigDecimal(449.52),
-    stockType = "stock",
-    lastUpdatedAt = ts
+    exchange = Exchange.NASDAQ,
+    name = "Microsoft Corporation",
+    kind = SecurityKind.Stock,
+    isActive = true
   )
 
   val AAPLCompanyProfile = CompanyProfile(

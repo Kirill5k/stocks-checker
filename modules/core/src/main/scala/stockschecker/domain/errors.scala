@@ -21,8 +21,8 @@ object errors {
     final case class EntityDoesNotExist(entityName: String, id: String) extends NotFound:
       override val message: String = s"$entityName with id $id does not exist"
 
-    final case class StockNotFound(ticker: Ticker) extends NotFound:
-      override val message: String = s"Could not find stock quote for $ticker"
+    final case class SecurityNotFound(ticker: Ticker) extends NotFound:
+      override val message: String = s"Could not find security for $ticker"
 
     final case class CompanyProfileNotFound(ticker: Ticker) extends NotFound:
       override val message: String = s"Could not find company profile for $ticker"
