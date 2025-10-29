@@ -1,6 +1,5 @@
 package stockschecker.repositories
 
-import cats.data.NonEmptyList
 import org.scalatest.wordspec.AsyncWordSpec
 import stockschecker.actions.Action
 import stockschecker.domain.errors.AppError
@@ -13,7 +12,7 @@ class CommandRepositorySpec extends RepositorySpec {
 
   override def port: Int = 12146
 
-  val action = Action.FetchLatestSecurities(NonEmptyList.of(Exchange.NASDAQ))
+  val action = Action.FetchLatestSecurities(Exchange.NASDAQ)
   val newCmd = CreateCommand(action, Schedule.Periodic(5.minutes), None)
 
   "A  CommandRepository" when {

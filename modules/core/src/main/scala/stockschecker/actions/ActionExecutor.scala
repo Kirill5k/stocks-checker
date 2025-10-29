@@ -3,11 +3,9 @@ package stockschecker.actions
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.applicativeError.*
-import cats.syntax.foldable.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.Exchange
 import stockschecker.services.Services
 
 trait ActionExecutor[F[_]]:
@@ -30,8 +28,8 @@ final private class LiveActionExecutor[F[_]](
           services.command.rescheduleAll
         case Action.Schedule(cid, waiting) =>
           F.sleep(waiting) >> services.command.execute(cid)
-        case Action.FetchLatestSecurities(exchanges) =>
-          exchanges.traverse_(services.security.fetchLatest)
+        case Action.FetchLatestSecurities(exchange) =>
+          services.security.fetchLatest(exchange)
         case Action.FetchCompanyProfile(ticker) =>
           services.companyProfile.fetchLatest(ticker)
         case Action.FetchLatestPricePerformanceSummary(ticker) =>

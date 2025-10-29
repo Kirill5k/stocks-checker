@@ -1,6 +1,5 @@
 package stockschecker.actions
 
-import cats.data.NonEmptyList
 import cats.effect.IO
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.domain.Exchange
@@ -8,8 +7,8 @@ import stockschecker.domain.Exchange
 class ActionDispatcherSpec extends IOWordSpec {
   "An ActionDispatcher" should {
     "add an action to the queue of dispatched actions" in {
-      val a1 = Action.FetchLatestSecurities(NonEmptyList.of(Exchange.NYSE))
-      val a2 = Action.FetchLatestSecurities(NonEmptyList.of(Exchange.NASDAQ))
+      val a1 = Action.FetchLatestSecurities(Exchange.NYSE)
+      val a2 = Action.FetchLatestSecurities(Exchange.NASDAQ)
       (for
         ad      <- ActionDispatcher.make[IO]
         _       <- ad.dispatch(a1)
