@@ -12,7 +12,7 @@ import stockschecker.repositories.CompanyProfileRepository
 trait CompanyProfileService[F[_]]:
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
   def fetchLatest(ticker: Ticker): F[Unit]
-  def getTickersBy(filter: CompanyProfileFilter): Stream[F, Ticker]
+  def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): Stream[F, Ticker]
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
@@ -27,7 +27,7 @@ final private class LiveCompanyProfileService[F[_]](
 
   override def fetchLatest(ticker: Ticker): F[Unit] =
     fetchCompanyProfile(ticker).void
-  
+
   private def unfoldOpt[A](ifPresent: A => F[A], ifMissing: => F[A])(opt: Option[A]): F[A] =
     opt match
       case Some(value) => ifPresent(value)
@@ -43,7 +43,8 @@ final private class LiveCompanyProfileService[F[_]](
         )
       )
 
-  override def getTickersBy(filter: CompanyProfileFilter): Stream[F, Ticker] = ???
+  override def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): Stream[F, Ticker] =
+    repository.streamTickersBy(filter, limit)
 }
 
 object CompanyProfileService:
