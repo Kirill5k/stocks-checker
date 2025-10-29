@@ -11,7 +11,7 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Filter, Update}
-import stockschecker.domain.{Exchange, Security, Ticker}
+import stockschecker.domain.{Exchange, Security, SecurityKind, Ticker}
 import stockschecker.repositories.entities.SecurityEntity
 
 import java.time.Instant
@@ -50,7 +50,7 @@ final private class LiveSecurityRepository[F[_]](
           .setOnInsert(Field.Id, id)
           .setOnInsert(Field.CreatedAt, now)
           .set(Field.UpdatedAt, now)
-          .set(Field.Ticker, now)
+          .set(Field.Ticker, security.ticker)
           .set(Field.Exchange, security.exchange)
           .set(Field.Name, security.name)
           .set(Field.Kind, security.kind)
@@ -88,5 +88,5 @@ object SecurityRepository extends MongoJsonCodecs:
   def make[F[_]](database: MongoDatabase[F])(using Concurrent[F], Clock[F]): F[SecurityRepository[F]] =
     database
       .getCollectionWithCodec[SecurityEntity]("securities")
-      .map(_.withAddedCodec[Ticker])
+      .map(_.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind])
       .map(LiveSecurityRepository[F](_))
