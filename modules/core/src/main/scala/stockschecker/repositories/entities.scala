@@ -5,7 +5,7 @@ import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, Schedule, Security, SecurityKind, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, PricePerformanceSummary, Schedule, Security, SecurityKind, Ticker}
 
 import java.time.{Instant, LocalDate}
 
@@ -83,6 +83,57 @@ private[repositories] object entities extends MongoJsonCodecs {
         ipoDate = profile.ipoDate,
         currency = profile.currency,
         marketCap = profile.marketCap,
+        createdAt = now,
+        updatedAt = now
+      )
+
+  final case class PricePerformanceSummaryEntity(
+      _id: Ticker,
+      ticker: Ticker,
+      latestPrice: BigDecimal,
+      latestPriceDate: LocalDate,
+      oneMonthChange: Option[BigDecimal],
+      threeMonthChange: Option[BigDecimal],
+      sixMonthChange: Option[BigDecimal],
+      oneYearChange: Option[BigDecimal],
+      threeYearChange: Option[BigDecimal],
+      fiveYearChange: Option[BigDecimal],
+      tenYearChange: Option[BigDecimal],
+      maxChange: Option[BigDecimal],
+      createdAt: Instant,
+      updatedAt: Instant
+  ) derives Codec.AsObject:
+    def toDomain: PricePerformanceSummary =
+      PricePerformanceSummary(
+        ticker = ticker,
+        latestPrice = latestPrice,
+        latestPriceDate = latestPriceDate,
+        oneMonthChange = oneMonthChange,
+        threeMonthChange = threeMonthChange,
+        sixMonthChange = sixMonthChange,
+        oneYearChange = oneYearChange,
+        threeYearChange = threeYearChange,
+        fiveYearChange = fiveYearChange,
+        tenYearChange = tenYearChange,
+        maxChange = maxChange
+      )
+
+  object PricePerformanceSummaryEntity:
+    given MongoCodecProvider[PricePerformanceSummaryEntity] = deriveCirceCodecProvider[PricePerformanceSummaryEntity]
+    def from(summary: PricePerformanceSummary, now: Instant): PricePerformanceSummaryEntity =
+      PricePerformanceSummaryEntity(
+        _id = summary.ticker,
+        ticker = summary.ticker,
+        latestPrice = summary.latestPrice,
+        latestPriceDate = summary.latestPriceDate,
+        oneMonthChange = summary.oneMonthChange,
+        threeMonthChange = summary.threeMonthChange,
+        sixMonthChange = summary.sixMonthChange,
+        oneYearChange = summary.oneYearChange,
+        threeYearChange = summary.threeYearChange,
+        fiveYearChange = summary.fiveYearChange,
+        tenYearChange = summary.tenYearChange,
+        maxChange = summary.maxChange,
         createdAt = now,
         updatedAt = now
       )

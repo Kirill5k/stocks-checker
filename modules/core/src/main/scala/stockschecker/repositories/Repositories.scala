@@ -9,6 +9,7 @@ import mongo4cats.database.MongoDatabase
 trait Repositories[F[_]]:
   def security: SecurityRepository[F]
   def companyProfile: CompanyProfileRepository[F]
+  def pricePerformanceSummary: PricePerformanceSummaryRepository[F]
   def command: CommandRepository[F]
 
 object Repositories:
@@ -16,8 +17,10 @@ object Repositories:
     for
       s  <- SecurityRepository.make(db)
       cp <- CompanyProfileRepository.make(db)
+      pps <- PricePerformanceSummaryRepository.make(db)
       c  <- CommandRepository.make(db)
     yield new Repositories[F]:
       override def security: SecurityRepository[F]                 = s
       override def companyProfile: CompanyProfileRepository[F] = cp
+      override def pricePerformanceSummary: PricePerformanceSummaryRepository[F] = pps
       override def command: CommandRepository[F]               = c

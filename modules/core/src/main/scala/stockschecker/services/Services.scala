@@ -11,6 +11,7 @@ import stockschecker.repositories.Repositories
 trait Services[F[_]]:
   def security: SecurityService[F]
   def companyProfile: CompanyProfileService[F]
+  def price: PriceService[F]
   def command: CommandService[F]
 
 object Services:
@@ -18,8 +19,10 @@ object Services:
     for
       s  <- SecurityService.make(repos.security, clients.marketData)
       cp <- CompanyProfileService.make(repos.companyProfile, clients.marketData)
+      p  <- PriceService.make(repos.pricePerformanceSummary, clients.marketData)
       c  <- CommandService.make(repos.command, ad)
     yield new Services[F]:
       override def security: SecurityService[F]                 = s
       override def companyProfile: CompanyProfileService[F] = cp
+      override def price: PriceService[F]                   = p
       override def command: CommandService[F]               = c

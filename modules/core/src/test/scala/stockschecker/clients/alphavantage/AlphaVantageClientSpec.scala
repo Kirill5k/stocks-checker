@@ -39,7 +39,7 @@ class AlphaVantageClientSpec extends SttpWordSpec {
             close = BigDecimal("268.8100"),
             volume = 848467207L
           )
-          candles(1) mustBe PriceCandle(
+          candles.toList(1) mustBe PriceCandle(
             date = LocalDate.parse("2025-09-30"),
             open = BigDecimal("229.2500"),
             high = BigDecimal("257.6000"),
@@ -69,6 +69,50 @@ class AlphaVantageClientSpec extends SttpWordSpec {
             msg must include("API rate limit")
           case other =>
             fail(s"Expected AppError.Http with 429 status, got: $other")
+        }
+      }
+
+      "return error when no time series data is returned" in {
+        val expectedParams = Map("function" -> "TIME_SERIES_MONTHLY", "symbol" -> "INVALID", "apikey" -> "api-key")
+        val testingBackend = backendStub
+          .whenRequestMatchesPartial {
+            case r if r.isGet && r.hasPath("/query") && r.hasParams(expectedParams) =>
+              Response.ok("""{}""")
+            case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
+          }
+
+        val result = for
+          client  <- AlphaVantageClient.make[IO](config, testingBackend)
+          candles <- client.getMonthlyPriceCandles(Ticker("INVALID"))
+        yield candles
+
+        result.attempt.asserting {
+          case Left(AppError.Http(200, msg)) =>
+            msg must include("No time series data returned for ticker INVALID")
+          case other =>
+            fail(s"Expected AppError.Http with message about no time series data, got: $other")
+        }
+      }
+
+      "return error when empty candle data is returned" in {
+        val expectedParams = Map("function" -> "TIME_SERIES_MONTHLY", "symbol" -> "EMPTY", "apikey" -> "api-key")
+        val testingBackend = backendStub
+          .whenRequestMatchesPartial {
+            case r if r.isGet && r.hasPath("/query") && r.hasParams(expectedParams) =>
+              Response.ok("""{"Monthly Time Series": {}}""")
+            case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
+          }
+
+        val result = for
+          client  <- AlphaVantageClient.make[IO](config, testingBackend)
+          candles <- client.getMonthlyPriceCandles(Ticker("EMPTY"))
+        yield candles
+
+        result.attempt.asserting {
+          case Left(AppError.Http(500, msg)) =>
+            msg must include("No price candle data returned for ticker EMPTY")
+          case other =>
+            fail(s"Expected AppError.Http with message about no candle data, got: $other")
         }
       }
     }

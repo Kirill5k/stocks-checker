@@ -1,5 +1,6 @@
 package stockschecker.clients.alphavantage
 
+import cats.data.NonEmptyList
 import cats.effect.kernel.Async
 import cats.syntax.flatMap.*
 import io.circe.{Decoder, HCursor}
@@ -14,7 +15,7 @@ import java.time.LocalDate
 import scala.collection.immutable.ListMap
 
 trait AlphaVantageClient[F[_]]:
-  def getMonthlyPriceCandles(ticker: Ticker): F[List[PriceCandle]]
+  def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]]
 
 final private class LiveAlphaVantageClient[F[_]](
     private val config: AlphaVantageClientConfig,
@@ -23,7 +24,7 @@ final private class LiveAlphaVantageClient[F[_]](
     F: Async[F]
 ) extends AlphaVantageClient[F] {
 
-  override def getMonthlyPriceCandles(ticker: Ticker): F[List[PriceCandle]] = {
+  override def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/query?function=TIME_SERIES_MONTHLY&symbol=$ticker&apikey=${config.apiKey}")
       .response(asJson[AlphaVantageClient.MonthlyTimeSeriesResponse])
@@ -32,14 +33,17 @@ final private class LiveAlphaVantageClient[F[_]](
       response.body match
         case Right(data) =>
           data.timeSeries match
+            case Some(series) if series.isEmpty =>
+              F.raiseError(AppError.Http(500, s"No price candle data returned for ticker ${ticker.value}"))
             case Some(series) =>
-              F.pure(series.map { case (dateStr, candle) => candle.toDomain(LocalDate.parse(dateStr)) }.toList)
+              val candles = series.map { case (dateStr, candle) => candle.toDomain(LocalDate.parse(dateStr)) }.toList
+              F.pure(NonEmptyList.fromListUnsafe(candles))
             case None =>
               data.information match
                 case Some(info) =>
                   F.raiseError(AppError.Http(429, s"AlphaVantage API error: $info"))
                 case None =>
-                  F.raiseError(AppError.Http(response.code.code, "No time series data returned"))
+                  F.raiseError(AppError.Http(response.code.code, s"No time series data returned for ticker ${ticker.value}"))
         case Left(err) =>
           F.raiseError(AppError.Http(response.code.code, s"Error retrieving monthly price candles: ${err.getMessage}"))
     }
