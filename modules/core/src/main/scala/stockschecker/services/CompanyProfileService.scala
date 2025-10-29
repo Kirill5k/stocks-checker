@@ -10,6 +10,7 @@ import stockschecker.repositories.CompanyProfileRepository
 
 trait CompanyProfileService[F[_]]:
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
+  def fetchLatest(ticker: Ticker): F[Unit]
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
@@ -18,6 +19,13 @@ final private class LiveCompanyProfileService[F[_]](
     F: MonadThrow[F]
 ) extends CompanyProfileService[F] {
 
+  override def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile] =
+    if (fetchLatest) fetchCompanyProfile(ticker)
+    else repository.find(ticker).flatMap(unfoldOpt(F.pure, fetchCompanyProfile(ticker)))
+
+  override def fetchLatest(ticker: Ticker): F[Unit] =
+    fetchCompanyProfile(ticker).void
+  
   private def unfoldOpt[A](ifPresent: A => F[A], ifMissing: => F[A])(opt: Option[A]): F[A] =
     opt match
       case Some(value) => ifPresent(value)
@@ -32,10 +40,6 @@ final private class LiveCompanyProfileService[F[_]](
           F.raiseError(AppError.CompanyProfileNotFound(ticker))
         )
       )
-
-  override def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile] =
-    if (fetchLatest) fetchCompanyProfile(ticker)
-    else repository.find(ticker).flatMap(unfoldOpt(F.pure, fetchCompanyProfile(ticker)))
 }
 
 object CompanyProfileService:

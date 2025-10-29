@@ -28,12 +28,14 @@ final private class LiveActionExecutor[F[_]](
       (action match
         case Action.RescheduleAll =>
           services.command.rescheduleAll
-        case Action.FetchLatestStocks =>
-          List(Exchange.NASDAQ, Exchange.NYSE).traverse_ { exchange =>
-            services.security.fetchLatestSecurities(exchange)
-          }
         case Action.Schedule(cid, waiting) =>
           F.sleep(waiting) >> services.command.execute(cid)
+        case Action.FetchLatestSecurities(exchanges) =>
+          exchanges.traverse_(services.security.fetchLatest)
+        case Action.FetchCompanyProfile(ticker) =>
+          services.companyProfile.fetchLatest(ticker)
+        case Action.FetchMonthlyStockData(ticker) => 
+          ??? // TODO: add later
       ).handleErrorWith {
         case error: AppError =>
           logger.warn(error)(s"Domain error while processing action $action")
@@ -45,5 +47,5 @@ final private class LiveActionExecutor[F[_]](
 }
 
 object ActionExecutor:
-  def make[F[_]: Temporal: Logger](dispatcher: ActionDispatcher[F], services: Services[F]): F[ActionExecutor[F]] =
+  def make[F[_]: {Temporal, Logger}](dispatcher: ActionDispatcher[F], services: Services[F]): F[ActionExecutor[F]] =
     Temporal[F].pure(LiveActionExecutor(dispatcher, services))

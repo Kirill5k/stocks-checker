@@ -14,7 +14,7 @@ trait Services[F[_]]:
   def command: CommandService[F]
 
 object Services:
-  def make[F[_]: Temporal: Logger](clients: Clients[F], repos: Repositories[F], ad: ActionDispatcher[F]): F[Services[F]] =
+  def make[F[_]: {Temporal, Logger}](clients: Clients[F], repos: Repositories[F], ad: ActionDispatcher[F]): F[Services[F]] =
     for
       s  <- SecurityService.make(repos.security, clients.marketData)
       cp <- CompanyProfileService.make(repos.companyProfile, clients.marketData)

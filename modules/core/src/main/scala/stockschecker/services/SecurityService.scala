@@ -14,7 +14,7 @@ trait SecurityService[F[_]]:
   def findByExchange(exchange: Exchange): F[List[Security]]
   def getAllTickers: F[List[Ticker]]
   def streamAll: Stream[F, Security]
-  def fetchLatestSecurities(exchange: Exchange): F[Unit]
+  def fetchLatest(exchange: Exchange): F[Unit]
 
 final private class LiveSecurityService[F[_]: {Concurrent, Logger}](
     private val repository: SecurityRepository[F],
@@ -33,7 +33,7 @@ final private class LiveSecurityService[F[_]: {Concurrent, Logger}](
   override def streamAll: Stream[F, Security] =
     repository.streamAll
 
-  override def fetchLatestSecurities(exchange: Exchange): F[Unit] =
+  override def fetchLatest(exchange: Exchange): F[Unit] =
     Logger[F].info(s"Fetching latest securities for ${exchange.fullName}") >>
       marketDataClient
         .getTradedSecurities(exchange)

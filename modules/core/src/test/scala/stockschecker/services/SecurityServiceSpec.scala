@@ -20,7 +20,7 @@ class SecurityServiceSpec extends IOWordSpec {
         when(repo.save(anyList[Security])).thenReturnUnit
         val res = for
           svc <- SecurityService.make(repo, client)
-          _   <- svc.fetchLatestSecurities(Exchange.NASDAQ)
+          _   <- svc.fetchLatest(Exchange.NASDAQ)
         yield ()
 
         res.asserting { r =>
