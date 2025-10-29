@@ -34,8 +34,8 @@ final private class LiveActionExecutor[F[_]](
           exchanges.traverse_(services.security.fetchLatest)
         case Action.FetchCompanyProfile(ticker) =>
           services.companyProfile.fetchLatest(ticker)
-        case Action.FetchMonthlyStockData(ticker) => 
-          ??? // TODO: add later
+        case Action.FetchLatestPricePerformanceSummary(ticker) =>
+          services.price.fetchLatestPerformanceSummary(ticker)
       ).handleErrorWith {
         case error: AppError =>
           logger.warn(error)(s"Domain error while processing action $action")
@@ -47,5 +47,5 @@ final private class LiveActionExecutor[F[_]](
 }
 
 object ActionExecutor:
-  def make[F[_]: {Temporal, Logger}](dispatcher: ActionDispatcher[F], services: Services[F]): F[ActionExecutor[F]] =
+  def make[F[_]](dispatcher: ActionDispatcher[F], services: Services[F])(using Temporal[F], Logger[F]): F[ActionExecutor[F]] =
     Temporal[F].pure(LiveActionExecutor(dispatcher, services))

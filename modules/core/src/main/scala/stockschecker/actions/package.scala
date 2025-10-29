@@ -14,16 +14,16 @@ package object actions extends JsonCodecs {
     case Schedule(cid: CommandId, duration: FiniteDuration)
     case FetchLatestSecurities(exchanges: NonEmptyList[Exchange])
     case FetchCompanyProfile(ticker: Ticker)
-    case FetchMonthlyStockData(ticker: Ticker)
+    case FetchLatestPricePerformanceSummary(ticker: Ticker)
 
   object Action {
     given JsonTaggedAdt.Config[Action] = JsonTaggedAdt.Config.Values[Action](
       mappings = Map(
-        "fetch-latest-securities"  -> JsonTaggedAdt.tagged[Action.FetchLatestSecurities],
-        "fetch-company-profile"    -> JsonTaggedAdt.tagged[Action.FetchCompanyProfile],
-        "fetch-monthly-stock-data" -> JsonTaggedAdt.tagged[Action.FetchMonthlyStockData],
-        "schedule"                 -> JsonTaggedAdt.tagged[Action.Schedule],
-        "reschedule-all"           -> JsonTaggedAdt.tagged[Action.RescheduleAll.type]
+        "fetch-latest-securities"                -> JsonTaggedAdt.tagged[Action.FetchLatestSecurities],
+        "fetch-company-profile"                  -> JsonTaggedAdt.tagged[Action.FetchCompanyProfile],
+        "fetch-latest-price-performance-summary" -> JsonTaggedAdt.tagged[Action.FetchLatestPricePerformanceSummary],
+        "schedule"                               -> JsonTaggedAdt.tagged[Action.Schedule],
+        "reschedule-all"                         -> JsonTaggedAdt.tagged[Action.RescheduleAll.type]
       ),
       strict = true,
       typeFieldName = "kind"
