@@ -9,7 +9,7 @@ import scala.concurrent.Future
 
 class SecurityRepositorySpec extends RepositorySpec {
 
-  override def port: Int = 12148
+  override def port: Int = 12149
 
   "A SecurityRepository" when {
     "save" should {
