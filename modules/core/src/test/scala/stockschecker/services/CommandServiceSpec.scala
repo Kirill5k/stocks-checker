@@ -21,8 +21,8 @@ class CommandServiceSpec extends IOWordSpec {
   "A CommandService" when {
     "create" should {
       "create new command and schedule it for execution" in {
-        val cc     = CreateCommand(FetchLatestStocksCommand.action, FetchLatestStocksCommand.schedule, None)
-        val newCmd = FetchLatestStocksCommand.copy(lastExecutedAt = None)
+        val cc     = CreateCommand(FetchLatestSecuritiesCommand.action, FetchLatestSecuritiesCommand.schedule, None)
+        val newCmd = FetchLatestSecuritiesCommand.copy(lastExecutedAt = None)
 
         val (ad, repo) = mocks
         when(repo.create(any[CreateCommand])).thenReturnIO(newCmd)
@@ -35,7 +35,7 @@ class CommandServiceSpec extends IOWordSpec {
 
         res.asserting { r =>
           verify(repo).create(cc)
-          verify(ad).dispatch(Action.Schedule(FetchLatestStocksCommand.id, 0.minutes))
+          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 0.minutes))
           r mustBe newCmd
         }
       }
@@ -60,7 +60,7 @@ class CommandServiceSpec extends IOWordSpec {
 
       "reschedule command that needs to be executed" in {
         val (ad, repo) = mocks
-        when(repo.streamActive).thenStream(FetchLatestStocksCommand)
+        when(repo.streamActive).thenStream(FetchLatestSecuritiesCommand)
         when(ad.dispatch(any[Action])).thenReturnUnit
 
         val res = for
@@ -70,7 +70,7 @@ class CommandServiceSpec extends IOWordSpec {
 
         res.asserting { r =>
           verify(repo).streamActive
-          verify(ad).dispatch(Action.Schedule(FetchLatestStocksCommand.id, 10.minutes))
+          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 10.minutes))
           r mustBe ()
         }
       }
@@ -79,37 +79,37 @@ class CommandServiceSpec extends IOWordSpec {
     "execute" should {
       "dispatch an action from command" in {
         val (ad, repo) = mocks
-        when(repo.find(any[CommandId])).thenReturnIO(FetchLatestStocksCommand)
-        when(repo.update(any[Command])).thenReturnIO(FetchLatestStocksCommand)
+        when(repo.find(any[CommandId])).thenReturnIO(FetchLatestSecuritiesCommand)
+        when(repo.update(any[Command])).thenReturnIO(FetchLatestSecuritiesCommand)
         when(ad.dispatch(any[Action])).thenReturnUnit
 
         val res = for
           svc <- CommandService.make(repo, ad)
-          _   <- svc.execute(FetchLatestStocksCommand.id)
+          _   <- svc.execute(FetchLatestSecuritiesCommand.id)
         yield ()
 
         res.asserting { r =>
-          verify(repo).find(FetchLatestStocksCommand.id)
-          verify(ad).dispatch(FetchLatestStocksCommand.action)
-          verify(repo).update(FetchLatestStocksCommand.copy(lastExecutedAt = Some(now), executionCount = 2))
-          verify(ad).dispatch(Action.Schedule(FetchLatestStocksCommand.id, 20.minutes))
+          verify(repo).find(FetchLatestSecuritiesCommand.id)
+          verify(ad).dispatch(FetchLatestSecuritiesCommand.action)
+          verify(repo).update(FetchLatestSecuritiesCommand.copy(lastExecutedAt = Some(now), executionCount = 2))
+          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 20.minutes))
           r mustBe ()
         }
       }
 
       "not execute command when maxExecutions is equal to executionCount" in {
         val (ad, repo) = mocks
-        when(repo.find(any[CommandId])).thenReturnIO(FetchLatestStocksCommand.copy(executionCount = 2, maxExecutions = Some(2)))
+        when(repo.find(any[CommandId])).thenReturnIO(FetchLatestSecuritiesCommand.copy(executionCount = 2, maxExecutions = Some(2)))
         when(ad.dispatch(any[Action])).thenReturnUnit
 
         val res = for
           svc <- CommandService.make(repo, ad)
-          _   <- svc.execute(FetchLatestStocksCommand.id)
+          _   <- svc.execute(FetchLatestSecuritiesCommand.id)
         yield ()
 
         res.asserting { r =>
-          verify(repo).find(FetchLatestStocksCommand.id)
-          verify(ad).dispatch(Action.Schedule(FetchLatestStocksCommand.id, 20.minutes))
+          verify(repo).find(FetchLatestSecuritiesCommand.id)
+          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 20.minutes))
           verifyNoMoreInteractions(repo)
           r mustBe ()
         }
@@ -117,17 +117,17 @@ class CommandServiceSpec extends IOWordSpec {
 
       "not execute command when is it inactive" in {
         val (ad, repo) = mocks
-        when(repo.find(any[CommandId])).thenReturnIO(FetchLatestStocksCommand.copy(isActive = false))
+        when(repo.find(any[CommandId])).thenReturnIO(FetchLatestSecuritiesCommand.copy(isActive = false))
         when(ad.dispatch(any[Action])).thenReturnUnit
 
         val res = for
           svc <- CommandService.make(repo, ad)
-          _   <- svc.execute(FetchLatestStocksCommand.id)
+          _   <- svc.execute(FetchLatestSecuritiesCommand.id)
         yield ()
 
         res.asserting { r =>
-          verify(repo).find(FetchLatestStocksCommand.id)
-          verify(ad).dispatch(Action.Schedule(FetchLatestStocksCommand.id, 20.minutes))
+          verify(repo).find(FetchLatestSecuritiesCommand.id)
+          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 20.minutes))
           verifyNoMoreInteractions(repo)
           r mustBe ()
         }

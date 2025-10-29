@@ -1,9 +1,10 @@
 package stockschecker.repositories
 
+import cats.data.NonEmptyList
 import org.scalatest.wordspec.AsyncWordSpec
 import stockschecker.actions.Action
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{CreateCommand, Schedule}
+import stockschecker.domain.{CreateCommand, Exchange, Schedule}
 import stockschecker.fixtures.*
 
 import scala.concurrent.duration.*
@@ -12,7 +13,8 @@ class CommandRepositorySpec extends RepositorySpec {
 
   override def port: Int = 12146
 
-  val newCmd = CreateCommand(Action.FetchLatestStocks, Schedule.Periodic(5.minutes), None)
+  val action = Action.FetchLatestSecurities(NonEmptyList.of(Exchange.NASDAQ))
+  val newCmd = CreateCommand(action, Schedule.Periodic(5.minutes), None)
 
   "A  CommandRepository" when {
     "create" should {
@@ -27,7 +29,7 @@ class CommandRepositorySpec extends RepositorySpec {
             cmd.isActive mustBe true
             cmd.lastExecutedAt mustBe None
             cmd.schedule mustBe Schedule.Periodic(5.minutes)
-            cmd.action mustBe Action.FetchLatestStocks
+            cmd.action mustBe action
           }
         }
       }
@@ -38,8 +40,8 @@ class CommandRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CommandRepository.make(db)
-            res  <- repo.find(FetchLatestStocksCommand.id).attempt
-          yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestStocksCommand.id.value))
+            res  <- repo.find(FetchLatestSecuritiesCommand.id).attempt
+          yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestSecuritiesCommand.id.value))
         }
       }
     }
@@ -49,8 +51,8 @@ class CommandRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CommandRepository.make(db)
-            res  <- repo.update(FetchLatestStocksCommand).attempt
-          yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestStocksCommand.id.value))
+            res  <- repo.update(FetchLatestSecuritiesCommand).attempt
+          yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestSecuritiesCommand.id.value))
         }
       }
 
@@ -76,8 +78,8 @@ class CommandRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CommandRepository.make(db)
-            res  <- repo.setActive(FetchLatestStocksCommand.id, false).attempt
-          yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestStocksCommand.id.value))
+            res  <- repo.setActive(FetchLatestSecuritiesCommand.id, false).attempt
+          yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestSecuritiesCommand.id.value))
         }
       }
 

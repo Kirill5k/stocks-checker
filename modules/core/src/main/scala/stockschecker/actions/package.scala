@@ -1,8 +1,6 @@
 package stockschecker
 
 import cats.data.NonEmptyList
-import io.circe.{Codec, CursorOp, Decoder, DecodingFailure, Encoder, Json, JsonObject}
-import io.circe.syntax.given
 import stockschecker.common.JsonCodecs
 import stockschecker.domain.{CommandId, Exchange, Ticker}
 import org.latestbit.circe.adt.codec.*

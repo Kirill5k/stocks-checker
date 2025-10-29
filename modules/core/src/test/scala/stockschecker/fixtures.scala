@@ -1,7 +1,8 @@
 package stockschecker
 
+import cats.data.NonEmptyList
 import mongo4cats.bson.ObjectId
-import stockschecker.actions.Action.FetchLatestStocks
+import stockschecker.actions.Action
 import stockschecker.domain.{Command, CommandId, CompanyProfile, Exchange, Schedule, Security, SecurityKind, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
@@ -64,10 +65,10 @@ object fixtures {
     profile = MSFTCompanyProfile
   )
 
-  val FetchLatestStocksCommand: Command = Command(
+  val FetchLatestSecuritiesCommand: Command = Command(
     id = CommandId(ObjectId.gen),
     isActive = true,
-    action = FetchLatestStocks,
+    action = Action.FetchLatestSecurities(NonEmptyList.of(Exchange.NASDAQ)),
     schedule = Schedule.Periodic(20.minutes),
     lastExecutedAt = Some(ts),
     executionCount = 1,

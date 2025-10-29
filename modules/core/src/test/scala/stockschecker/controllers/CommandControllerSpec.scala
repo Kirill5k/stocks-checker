@@ -14,7 +14,7 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
     "GET /commands" should {
       "return 200 and all commands on success" in {
         val svc = mocks
-        when(svc.getAll).thenReturnIO(List(FetchLatestStocksCommand))
+        when(svc.getAll).thenReturnIO(List(FetchLatestSecuritiesCommand))
 
         val res = for
           controller <- CommandController.make(svc)
@@ -25,10 +25,13 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
         val responseBody =
           s"""[
              |  {
-             |    "id" : "${FetchLatestStocksCommand.id.value}",
+             |    "id" : "${FetchLatestSecuritiesCommand.id.value}",
              |    "isActive" : true,
              |    "action" : {
-             |      "kind" : "fetch-latest-stocks"
+             |      "exchanges" : [
+             |        "nasdaq"
+             |      ],
+             |      "kind" : "fetch-latest-securities"
              |    },
              |    "schedule" : {
              |      "kind" : "periodic",
@@ -47,30 +50,36 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
     "POST /commands" should {
       "return 201 and command id on success" in {
         val svc = mocks
-        when(svc.create(any[CreateCommand])).thenReturnIO(FetchLatestStocksCommand)
+        when(svc.create(any[CreateCommand])).thenReturnIO(FetchLatestSecuritiesCommand)
 
         val res = for
           controller <- CommandController.make(svc)
           body =
             """{
-              |    "action": {
-              |        "kind": "fetch-latest-stocks"
+              |    "action" : {
+              |      "exchanges" : [
+              |        "nasdaq"
+              |      ],
+              |      "kind" : "fetch-latest-securities"
               |    },
               |    "schedule": {
               |        "kind": "periodic",
               |        "period" : "20minutes"
-              |    }
+              |    },
+          |        "lastExecutedAt" : "2025-10-29T10:06:06.961Z",
+              |    "executionCount" : 1,
+              |    "maxExecutions" : 10
               |}""".stripMargin
           req = Request[IO](uri = uri"/commands", method = Method.POST).withBody(body)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
-        res mustHaveStatus (Status.Created, Some(s"""{"id" : "${FetchLatestStocksCommand.id.value}"}"""))
+        res mustHaveStatus (Status.Created, Some(s"""{"id" : "${FetchLatestSecuritiesCommand.id.value}"}"""))
       }
 
       "return 422 on invalid data" in {
         val svc = mocks
-        when(svc.create(any[CreateCommand])).thenReturnIO(FetchLatestStocksCommand)
+        when(svc.create(any[CreateCommand])).thenReturnIO(FetchLatestSecuritiesCommand)
 
         val res = for
           controller <- CommandController.make(svc)
