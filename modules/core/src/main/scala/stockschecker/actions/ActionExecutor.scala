@@ -34,6 +34,9 @@ final private class LiveActionExecutor[F[_]](
           services.companyProfile.fetchLatest(ticker)
         case Action.FetchLatestPricePerformanceSummary(ticker) =>
           services.price.fetchLatestPerformanceSummary(ticker)
+        case Action.DiscoverSecurities(_, _) => ???
+        case Action.EnrichCompanyProfiles(_) => ???
+        case Action.FetchPricePerformanceSummaries(_, _, _) => ???
       ).handleErrorWith {
         case error: AppError =>
           logger.warn(error)(s"Domain error while processing action $action")
