@@ -1,7 +1,6 @@
 package stockschecker
 
 import io.circe.Codec as CirceCodec
-import org.latestbit.circe.adt.codec.*
 import stockschecker.common.types.{EnumType, StringType}
 import sttp.tapir.{Codec, DecodeResult, Schema}
 
@@ -15,22 +14,12 @@ package object domain {
     given Schema[Ticker]                  = Schema.string
   }
 
-  enum Exchange(val code: String, val fullName: String) derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
+  object Exchange extends EnumType[Exchange](() => Exchange.values, e => EnumType.printLowerCase(e))
+  enum Exchange(val code: String, val fullName: String):
     case NASDAQ extends Exchange("NSQ", "NASDAQ Stock Exchange")
     case NYSE   extends Exchange("NYS", "New York Stock Exchange")
 
-  object Exchange {
-    given JsonTaggedAdt.Config[Exchange] = JsonTaggedAdt.Config.Values[Exchange](
-      mappings = Map(
-        "NSQ" -> JsonTaggedAdt.tagged[Exchange.NASDAQ.type],
-        "NYS" -> JsonTaggedAdt.tagged[Exchange.NYSE.type]
-      ),
-      strict = true,
-      typeFieldName = "code"
-    )
-  }
-
-  object SecurityKind extends EnumType[SecurityKind](() => SecurityKind.values)
+  object SecurityKind extends EnumType[SecurityKind](() => SecurityKind.values, e => EnumType.printLowerCase(e))
   enum SecurityKind:
     /** Represents ownership in a single company (e.g., Apple, Microsoft). This is the most common type of security.
       */

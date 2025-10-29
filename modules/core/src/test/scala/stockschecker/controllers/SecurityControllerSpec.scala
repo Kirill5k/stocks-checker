@@ -24,7 +24,7 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
 
         val resBody = s"""{
                         |  "ticker" : "AAPL",
-                        |  "exchange" : "NASDAQ",
+                        |  "exchange" : "nasdaq",
                         |  "name" : "Apple Inc.",
                         |  "kind" : "stock",
                         |  "isActive" : true
@@ -45,7 +45,23 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
           res <- controller.routes.orNotFound.run(req)
         yield res
 
-        val resBody = s"""[]""".stripMargin
+        val resBody =
+          s"""[
+             |  {
+             |    "ticker" : "AAPL",
+             |    "exchange" : "nasdaq",
+             |    "name" : "Apple Inc.",
+             |    "kind" : "stock",
+             |    "isActive" : true
+             |  },
+             |  {
+             |    "ticker" : "MSFT",
+             |    "exchange" : "nasdaq",
+             |    "name" : "Microsoft Corporation",
+             |    "kind" : "stock",
+             |    "isActive" : true
+             |  }
+             |]""".stripMargin
 
         res mustHaveStatus(Status.Ok, Some(resBody))
         verify(svc).findByExchange(Exchange.NASDAQ)
