@@ -8,14 +8,14 @@ import java.time.LocalDate
 import org.latestbit.circe.adt.codec.*
 
 enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
-  case MarketCapAbove(min: BigDecimal)
-  case MarketCapBelow(min: BigDecimal)
+  case MarketCapAbove(min: Long)
+  case MarketCapBelow(min: Long)
   case CountryIs(countryCode: String)
   case IpoDateAfter(date: LocalDate)
   case IpoDateBefore(date: LocalDate)
   case Composite(filters: NonEmptyList[CompanyProfileFilter])
-  case LastUpdatedAfter(date: LocalDate)
-  case LastUpdatedBefore(date: LocalDate)
+  case UpdatedAfter(date: LocalDate)
+  case UpdatedBefore(date: LocalDate)
 
 object CompanyProfileFilter {
   given JsonTaggedAdt.Config[CompanyProfileFilter] = JsonTaggedAdt.Config.Values[CompanyProfileFilter](
@@ -25,8 +25,8 @@ object CompanyProfileFilter {
       "country-is"          -> JsonTaggedAdt.tagged[CompanyProfileFilter.CountryIs],
       "ipo-date-after"      -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateAfter],
       "ipo-date-before"     -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateBefore],
-      "last-updated-after"  -> JsonTaggedAdt.tagged[CompanyProfileFilter.LastUpdatedAfter],
-      "last-updated-before" -> JsonTaggedAdt.tagged[CompanyProfileFilter.LastUpdatedBefore],
+      "updated-after"  -> JsonTaggedAdt.tagged[CompanyProfileFilter.UpdatedAfter],
+      "updated-before" -> JsonTaggedAdt.tagged[CompanyProfileFilter.UpdatedBefore],
       "composite"           -> JsonTaggedAdt.tagged[CompanyProfileFilter.Composite]
     ),
     strict = true,

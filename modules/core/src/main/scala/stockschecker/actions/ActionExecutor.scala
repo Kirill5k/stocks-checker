@@ -8,6 +8,8 @@ import org.typelevel.log4cats.Logger
 import stockschecker.domain.errors.AppError
 import stockschecker.services.Services
 
+import scala.concurrent.duration.*
+
 trait ActionExecutor[F[_]]:
   def run: Stream[F, Unit]
 
@@ -34,9 +36,15 @@ final private class LiveActionExecutor[F[_]](
           services.companyProfile.fetchLatest(ticker)
         case Action.FetchLatestPricePerformanceSummary(ticker) =>
           services.price.fetchLatestPerformanceSummary(ticker)
-        case Action.DiscoverSecurities(_, _) => ???
+        case Action.DiscoverSecurities(_) => ???
         case Action.EnrichCompanyProfiles(_) => ???
-        case Action.FetchPricePerformanceSummaries(_, _, _) => ???
+        case Action.FetchPricePerformanceSummaries(filter, limit) =>
+          services.companyProfile
+            .streamTickersBy(filter, limit)
+            .metered(1.second)
+            .evalTap(ticker => dispatcher.dispatch(Action.FetchLatestPricePerformanceSummary(ticker)))
+            .compile
+            .drain
       ).handleErrorWith {
         case error: AppError =>
           logger.warn(error)(s"Domain error while processing action $action")

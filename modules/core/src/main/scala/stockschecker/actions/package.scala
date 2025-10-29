@@ -9,35 +9,18 @@ import scala.concurrent.duration.FiniteDuration
 
 package object actions extends JsonCodecs {
 
-  enum RateLimitPolicy derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
-    case PerMinute(requests: Int)
-    case PerDay(requests: Int)
-    case Unrestricted
-
-  object RateLimitPolicy {
-    given JsonTaggedAdt.Config[RateLimitPolicy] = JsonTaggedAdt.Config.Values[RateLimitPolicy](
-      mappings = Map(
-        "per-minute"   -> JsonTaggedAdt.tagged[RateLimitPolicy.PerMinute],
-        "per-day"      -> JsonTaggedAdt.tagged[RateLimitPolicy.PerDay],
-        "unrestricted" -> JsonTaggedAdt.tagged[RateLimitPolicy.Unrestricted.type]
-      ),
-      strict = true,
-      typeFieldName = "kind"
-    )
-  }
-
   enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
     case RescheduleAll
     case Schedule(cid: CommandId, duration: FiniteDuration)
 
-    case DiscoverSecurities(exchanges: NonEmptyList[Exchange], policy: RateLimitPolicy)
+    case DiscoverSecurities(exchanges: NonEmptyList[Exchange])
 
     // can be executed after DiscoverSecurities is completed
     // can obtain stream of all tickers from security repository and then enrich profiles
-    case EnrichCompanyProfiles(policy: RateLimitPolicy)
+    case EnrichCompanyProfiles(limit: Option[Int] = None)
 
     // can be executed after EnrichCompanyProfiles is completed
-    case FetchPricePerformanceSummaries(filter: CompanyProfileFilter, policy: RateLimitPolicy, limit: Option[Int] = None)
+    case FetchPricePerformanceSummaries(filter: CompanyProfileFilter, limit: Option[Int] = None)
 
     case FetchLatestSecurities(exchange: Exchange)
     case FetchCompanyProfile(ticker: Ticker)

@@ -68,10 +68,10 @@ final private class LiveCompanyProfileRepository[F[_]: Monad](
         Filter.gt("ipoDate", date)
       case CompanyProfileFilter.IpoDateBefore(date) =>
         Filter.lt("ipoDate", date)
-      case CompanyProfileFilter.LastUpdatedAfter(date) =>
-        Filter.gt("lastUpdated", date)
-      case CompanyProfileFilter.LastUpdatedBefore(date) =>
-        Filter.lt("lastUpdated", date)
+      case CompanyProfileFilter.UpdatedAfter(date) =>
+        Filter.gt("updatedAt", date)
+      case CompanyProfileFilter.UpdatedBefore(date) =>
+        Filter.lt("updatedAt", date)
       case CompanyProfileFilter.Composite(filters) =>
         filters.map(_.toFilter).foldLeft(Filter.empty)(_ && _)
 }
