@@ -1,0 +1,76 @@
+package stockschecker.clients.alphavantage
+
+import cats.effect.IO
+import kirill5k.common.sttp.test.SttpWordSpec
+import stockschecker.common.config.AlphaVantageClientConfig
+import stockschecker.domain.{PriceCandle, Ticker}
+import stockschecker.domain.errors.AppError
+import sttp.client3.Response
+
+import java.time.LocalDate
+
+class AlphaVantageClientSpec extends SttpWordSpec {
+  "An AlphaVantageClient" when {
+
+    val config = AlphaVantageClientConfig("http://alphavantage.co", "api-key")
+
+    "getMonthlyPriceCandles" should {
+      "return list of price candles on success" in {
+        val expectedParams = Map("function" -> "TIME_SERIES_MONTHLY", "symbol" -> "AAPL", "apikey" -> "api-key")
+        val testingBackend = backendStub
+          .whenRequestMatchesPartial {
+            case r if r.isGet && r.hasPath("/query") && r.hasParams(expectedParams) =>
+              Response.ok(readJson("alpha-vantage/monthly-data-success.json"))
+            case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
+          }
+
+        val result = for
+          client  <- AlphaVantageClient.make[IO](config, testingBackend)
+          candles <- client.getMonthlyPriceCandles(Ticker("AAPL"))
+        yield candles
+
+        result.asserting { candles =>
+          candles.size must be > 0
+          candles.head mustBe PriceCandle(
+            date = LocalDate.parse("2025-10-27"),
+            open = BigDecimal("255.0400"),
+            high = BigDecimal("269.1200"),
+            low = BigDecimal("244.0000"),
+            close = BigDecimal("268.8100"),
+            volume = 848467207L
+          )
+          candles(1) mustBe PriceCandle(
+            date = LocalDate.parse("2025-09-30"),
+            open = BigDecimal("229.2500"),
+            high = BigDecimal("257.6000"),
+            low = BigDecimal("225.9500"),
+            close = BigDecimal("254.6300"),
+            volume = 1265170319L
+          )
+        }
+      }
+
+      "return error when API rate limit is exceeded" in {
+        val expectedParams = Map("function" -> "TIME_SERIES_MONTHLY", "symbol" -> "AAPL", "apikey" -> "api-key")
+        val testingBackend = backendStub
+          .whenRequestMatchesPartial {
+            case r if r.isGet && r.hasPath("/query") && r.hasParams(expectedParams) =>
+              Response.ok(readJson("alpha-vantage/monthly-data-error.json"))
+            case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
+          }
+
+        val result = for
+          client  <- AlphaVantageClient.make[IO](config, testingBackend)
+          candles <- client.getMonthlyPriceCandles(Ticker("AAPL"))
+        yield candles
+
+        result.attempt.asserting {
+          case Left(AppError.Http(429, msg)) =>
+            msg must include("API rate limit")
+          case other =>
+            fail(s"Expected AppError.Http with 429 status, got: $other")
+        }
+      }
+    }
+  }
+}

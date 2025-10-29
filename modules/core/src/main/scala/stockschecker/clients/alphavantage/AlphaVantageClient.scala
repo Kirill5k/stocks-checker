@@ -11,6 +11,7 @@ import sttp.client3.*
 import sttp.client3.circe.asJson
 
 import java.time.LocalDate
+import scala.collection.immutable.ListMap
 
 trait AlphaVantageClient[F[_]]:
   def getMonthlyPriceCandles(ticker: Ticker): F[List[PriceCandle]]
@@ -66,26 +67,26 @@ object AlphaVantageClient {
 
   object CandleData {
     given Decoder[CandleData] = (c: HCursor) =>
-      for {
+      for
         open   <- c.downField("1. open").as[String]
         high   <- c.downField("2. high").as[String]
         low    <- c.downField("3. low").as[String]
         close  <- c.downField("4. close").as[String]
         volume <- c.downField("5. volume").as[String]
-      } yield CandleData(open, high, low, close, volume)
+      yield CandleData(open, high, low, close, volume)
   }
 
   final case class MonthlyTimeSeriesResponse(
-      timeSeries: Option[Map[String, CandleData]], // "Monthly Time Series"
-      information: Option[String]                  // "Information" field for errors
+      timeSeries: Option[ListMap[String, CandleData]], // "Monthly Time Series"
+      information: Option[String]                      // "Information" field for errors
   )
 
   object MonthlyTimeSeriesResponse {
     given Decoder[MonthlyTimeSeriesResponse] = (c: HCursor) =>
-      for {
-        timeSeries  <- c.downField("Monthly Time Series").as[Option[Map[String, CandleData]]]
+      for
+        timeSeries  <- c.downField("Monthly Time Series").as[Option[ListMap[String, CandleData]]]
         information <- c.downField("Information").as[Option[String]]
-      } yield MonthlyTimeSeriesResponse(timeSeries, information)
+      yield MonthlyTimeSeriesResponse(timeSeries, information)
   }
 
   def make[F[_]: Async](config: AlphaVantageClientConfig, backend: SttpBackend[F, Fs2Streams[F]]): F[AlphaVantageClient[F]] =
