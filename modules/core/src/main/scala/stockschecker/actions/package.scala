@@ -2,10 +2,9 @@ package stockschecker
 
 import cats.data.NonEmptyList
 import stockschecker.common.JsonCodecs
-import stockschecker.domain.{CommandId, Exchange, Ticker}
+import stockschecker.domain.{CommandId, CompanyProfileFilter, Exchange, Ticker}
 import org.latestbit.circe.adt.codec.*
 
-import java.time.LocalDate
 import scala.concurrent.duration.FiniteDuration
 
 package object actions extends JsonCodecs {
@@ -21,33 +20,6 @@ package object actions extends JsonCodecs {
         "per-minute"   -> JsonTaggedAdt.tagged[RateLimitPolicy.PerMinute],
         "per-day"      -> JsonTaggedAdt.tagged[RateLimitPolicy.PerDay],
         "unrestricted" -> JsonTaggedAdt.tagged[RateLimitPolicy.Unrestricted.type]
-      ),
-      strict = true,
-      typeFieldName = "kind"
-    )
-  }
-
-  enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
-    case MarketCapAbove(min: BigDecimal)
-    case MarketCapBelow(min: BigDecimal)
-    case CountryIs(countryCode: String)
-    case IpoDateAfter(date: LocalDate)
-    case IpoDateBefore(date: LocalDate)
-    case Composite(filters: NonEmptyList[CompanyProfileFilter])
-    case LastUpdatedAfter(date: LocalDate)
-    case LastUpdatedBefore(date: LocalDate)
-
-  object CompanyProfileFilter {
-    given JsonTaggedAdt.Config[CompanyProfileFilter] = JsonTaggedAdt.Config.Values[CompanyProfileFilter](
-      mappings = Map(
-        "market-cap-above"    -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapAbove],
-        "market-cap-below"    -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapBelow],
-        "country-is"          -> JsonTaggedAdt.tagged[CompanyProfileFilter.CountryIs],
-        "ipo-date-after"      -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateAfter],
-        "ipo-date-before"     -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateBefore],
-        "last-updated-after"  -> JsonTaggedAdt.tagged[CompanyProfileFilter.LastUpdatedAfter],
-        "last-updated-before" -> JsonTaggedAdt.tagged[CompanyProfileFilter.LastUpdatedBefore],
-        "composite"           -> JsonTaggedAdt.tagged[CompanyProfileFilter.Composite]
       ),
       strict = true,
       typeFieldName = "kind"

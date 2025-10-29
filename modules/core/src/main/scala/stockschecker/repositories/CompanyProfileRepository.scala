@@ -3,18 +3,21 @@ package stockschecker.repositories
 import cats.Monad
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
+import fs2.Stream
 import kirill5k.common.cats.Clock
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Filter, Update}
-import stockschecker.domain.{CompanyProfile, Ticker}
+import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.entities.CompanyProfileEntity
 import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.circe.MongoJsonCodecs
 
+
 trait CompanyProfileRepository[F[_]]:
   def save(cp: CompanyProfile): F[Unit]
   def find(ticker: Ticker): F[Option[CompanyProfile]]
+  def streamTickersBy(filter: CompanyProfileFilter): Stream[F, Ticker]
 
 final private class LiveCompanyProfileRepository[F[_]: {Monad, Clock}](
     private val collection: MongoCollection[F, CompanyProfileEntity]
@@ -48,6 +51,8 @@ final private class LiveCompanyProfileRepository[F[_]: {Monad, Clock}](
 
   override def find(ticker: Ticker): F[Option[CompanyProfile]] =
     collection.find(Filter.idEq(ticker)).first.mapOpt(_.toDomain)
+
+  override def streamTickersBy(filter: CompanyProfileFilter): Stream[F, Ticker] = ???
 }
 
 object CompanyProfileRepository extends MongoJsonCodecs:

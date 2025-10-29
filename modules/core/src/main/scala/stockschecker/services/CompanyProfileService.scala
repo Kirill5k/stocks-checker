@@ -3,14 +3,16 @@ package stockschecker.services
 import cats.MonadThrow
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
+import fs2.Stream
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{CompanyProfile, Ticker}
+import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.CompanyProfileRepository
 
 trait CompanyProfileService[F[_]]:
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
   def fetchLatest(ticker: Ticker): F[Unit]
+  def getTickersBy(filter: CompanyProfileFilter): Stream[F, Ticker]
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
@@ -40,6 +42,8 @@ final private class LiveCompanyProfileService[F[_]](
           F.raiseError(AppError.CompanyProfileNotFound(ticker))
         )
       )
+
+  override def getTickersBy(filter: CompanyProfileFilter): Stream[F, Ticker] = ???
 }
 
 object CompanyProfileService:
