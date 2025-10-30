@@ -46,7 +46,7 @@ final private class LiveCommandService[F[_]](
     for
       now <- C.now
       cmd <- repo.find(cid)
-      _ <- F.whenA(cmd.canBeExecuted) {
+      _   <- F.whenA(cmd.canBeExecuted) {
         actionDispatcher.dispatch(cmd.action) >>
           repo.update(cmd.incExecutionCount(now))
       }
@@ -62,5 +62,5 @@ final private class LiveCommandService[F[_]](
 }
 
 object CommandService:
-  def make[F[_]: Temporal: Clock](repo: CommandRepository[F], ad: ActionDispatcher[F]): F[CommandService[F]] =
+  def make[F[_]: {Temporal, Clock}](repo: CommandRepository[F], ad: ActionDispatcher[F]): F[CommandService[F]] =
     Temporal[F].pure(LiveCommandService[F](ad, repo))
