@@ -21,6 +21,8 @@ package object actions extends JsonCodecs {
     case FetchCompanyProfile(ticker: Ticker)
     case FetchLatestPricePerformanceSummary(ticker: Ticker)
 
+    case Sequence(actions: NonEmptyList[Action])
+
   object Action {
     given JsonTaggedAdt.Config[Action] = JsonTaggedAdt.Config.Values[Action](
       mappings = Map(
@@ -31,7 +33,8 @@ package object actions extends JsonCodecs {
         "fetch-company-profile"                  -> JsonTaggedAdt.tagged[Action.FetchCompanyProfile],
         "fetch-latest-price-performance-summary" -> JsonTaggedAdt.tagged[Action.FetchLatestPricePerformanceSummary],
         "schedule"                               -> JsonTaggedAdt.tagged[Action.Schedule],
-        "reschedule-all"                         -> JsonTaggedAdt.tagged[Action.RescheduleAll.type]
+        "reschedule-all"                         -> JsonTaggedAdt.tagged[Action.RescheduleAll.type],
+        "sequence"                               -> JsonTaggedAdt.tagged[Action.Sequence]
       ),
       strict = true,
       typeFieldName = "kind"

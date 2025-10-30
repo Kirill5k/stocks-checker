@@ -3,6 +3,7 @@ package stockschecker.actions
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.applicativeError.*
+import cats.syntax.foldable.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
 import stockschecker.domain.errors.AppError
@@ -22,24 +23,21 @@ final private class LiveActionExecutor[F[_]](
 ) extends ActionExecutor[F] {
   override def run: Stream[F, Unit] =
     dispatcher.pendingActions.map(a => Stream.eval(handleAction(a))).parJoinUnbounded
-
+  
   private def handleAction(action: Action): F[Unit] =
     logger.info(s"Processing $action") >>
       (action match
-        case Action.RescheduleAll =>
-          services.command.rescheduleAll
-        case Action.Schedule(cid, waiting) =>
-          F.sleep(waiting) >> services.command.execute(cid)
-        case Action.FetchLatestSecurities(exchange) =>
-          services.security.fetchLatest(exchange)
-        case Action.FetchCompanyProfile(ticker) =>
-          services.companyProfile.fetchLatest(ticker)
-        case Action.FetchLatestPricePerformanceSummary(ticker) =>
-          services.price.fetchLatestPerformanceSummary(ticker)
-        case Action.DiscoverSecurities(exchanges) =>
-          Stream.emits(exchanges.toList)
+        case Action.RescheduleAll                              => services.command.rescheduleAll
+        case Action.Sequence(actions)                          => actions.toList.traverse_(handleAction)
+        case Action.Schedule(cid, waiting)                     => F.sleep(waiting) >> services.command.execute(cid)
+        case Action.FetchLatestSecurities(exchange)            => services.security.fetchLatest(exchange)
+        case Action.FetchCompanyProfile(ticker)                => services.companyProfile.fetchLatest(ticker)
+        case Action.FetchLatestPricePerformanceSummary(ticker) => services.price.fetchLatestPerformanceSummary(ticker)
+        case Action.DiscoverSecurities(exchanges)              =>
+          Stream
+            .emits(exchanges.toList)
             .metered(1.second)
-            .evalTap(e => dispatcher.dispatch(Action.FetchLatestSecurities(e)))
+            .evalTap(exchange => dispatcher.dispatch(Action.FetchLatestSecurities(exchange)))
             .compile
             .drain
         case Action.EnrichCompanyProfiles(filter, limit) =>
