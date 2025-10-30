@@ -23,7 +23,11 @@ final private class LiveActionExecutor[F[_]](
 ) extends ActionExecutor[F] {
   override def run: Stream[F, Unit] =
     dispatcher.pendingActions.map(a => Stream.eval(handleAction(a))).parJoinUnbounded
-  
+
+  extension [A](s: Stream[F, A])
+    def tapAndDrain(f: A => F[Unit]): F[Unit] =
+      s.metered(1.second).evalTap(f).compile.drain
+
   private def handleAction(action: Action): F[Unit] =
     logger.info(s"Processing $action") >>
       (action match
@@ -36,24 +40,16 @@ final private class LiveActionExecutor[F[_]](
         case Action.DiscoverSecurities(exchanges)              =>
           Stream
             .emits(exchanges.toList)
-            .metered(1.second)
-            .evalTap(exchange => dispatcher.dispatch(Action.FetchLatestSecurities(exchange)))
-            .compile
-            .drain
+            .tapAndDrain(exchange => dispatcher.dispatch(Action.FetchLatestSecurities(exchange)))
         case Action.EnrichCompanyProfiles(filter, limit) =>
           services.security
             .streamTickersBy(filter, limit)
-            .metered(1.second)
-            .evalTap(ticker => dispatcher.dispatch(Action.FetchCompanyProfile(ticker)))
-            .compile
-            .drain
+            .tapAndDrain(ticker => dispatcher.dispatch(Action.FetchCompanyProfile(ticker)))
         case Action.FetchPricePerformanceSummaries(filter, limit) =>
           services.companyProfile
             .streamTickersBy(filter, limit)
             .metered(1.second)
-            .evalTap(ticker => dispatcher.dispatch(Action.FetchLatestPricePerformanceSummary(ticker)))
-            .compile
-            .drain
+            .tapAndDrain(ticker => dispatcher.dispatch(Action.FetchLatestPricePerformanceSummary(ticker)))
       ).handleErrorWith {
         case error: AppError =>
           logger.warn(error)(s"Domain error while processing action $action")
