@@ -1,12 +1,10 @@
 package stockschecker.domain
 
 import cats.data.NonEmptyList
-import org.latestbit.circe.adt.codec.JsonTaggedAdt
-
-import java.time.LocalDate
 import org.latestbit.circe.adt.codec.*
 import stockschecker.common.JsonCodecs
 
+import java.time.LocalDate
 import scala.concurrent.duration.FiniteDuration
 
 enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
