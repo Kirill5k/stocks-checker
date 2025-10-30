@@ -36,8 +36,19 @@ final private class LiveActionExecutor[F[_]](
           services.companyProfile.fetchLatest(ticker)
         case Action.FetchLatestPricePerformanceSummary(ticker) =>
           services.price.fetchLatestPerformanceSummary(ticker)
-        case Action.DiscoverSecurities(_) => ???
-        case Action.EnrichCompanyProfiles(_) => ???
+        case Action.DiscoverSecurities(exchanges) =>
+          Stream.emits(exchanges.toList)
+            .metered(1.second)
+            .evalTap(e => dispatcher.dispatch(Action.FetchLatestSecurities(e)))
+            .compile
+            .drain
+        case Action.EnrichCompanyProfiles(filter, limit) =>
+          services.security
+            .streamTickersBy(filter, limit)
+            .metered(1.second)
+            .evalTap(ticker => dispatcher.dispatch(Action.FetchCompanyProfile(ticker)))
+            .compile
+            .drain
         case Action.FetchPricePerformanceSummaries(filter, limit) =>
           services.companyProfile
             .streamTickersBy(filter, limit)

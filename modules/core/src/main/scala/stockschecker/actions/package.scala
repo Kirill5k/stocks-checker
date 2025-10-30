@@ -2,7 +2,7 @@ package stockschecker
 
 import cats.data.NonEmptyList
 import stockschecker.common.JsonCodecs
-import stockschecker.domain.{CommandId, CompanyProfileFilter, Exchange, Ticker}
+import stockschecker.domain.{CommandId, CompanyProfileFilter, Exchange, SecurityFilter, Ticker}
 import org.latestbit.circe.adt.codec.*
 
 import scala.concurrent.duration.FiniteDuration
@@ -14,12 +14,7 @@ package object actions extends JsonCodecs {
     case Schedule(cid: CommandId, duration: FiniteDuration)
 
     case DiscoverSecurities(exchanges: NonEmptyList[Exchange])
-
-    // can be executed after DiscoverSecurities is completed
-    // can obtain stream of all tickers from security repository and then enrich profiles
-    case EnrichCompanyProfiles(limit: Option[Int] = None)
-
-    // can be executed after EnrichCompanyProfiles is completed
+    case EnrichCompanyProfiles(filter: SecurityFilter, limit: Option[Int] = None)
     case FetchPricePerformanceSummaries(filter: CompanyProfileFilter, limit: Option[Int] = None)
 
     case FetchLatestSecurities(exchange: Exchange)
@@ -29,6 +24,9 @@ package object actions extends JsonCodecs {
   object Action {
     given JsonTaggedAdt.Config[Action] = JsonTaggedAdt.Config.Values[Action](
       mappings = Map(
+        "discover-securities"                    -> JsonTaggedAdt.tagged[Action.DiscoverSecurities],
+        "enrich-company-profiles"                -> JsonTaggedAdt.tagged[Action.EnrichCompanyProfiles],
+        "fetch-price-performance-summaries"      -> JsonTaggedAdt.tagged[Action.FetchPricePerformanceSummaries],
         "fetch-latest-securities"                -> JsonTaggedAdt.tagged[Action.FetchLatestSecurities],
         "fetch-company-profile"                  -> JsonTaggedAdt.tagged[Action.FetchCompanyProfile],
         "fetch-latest-price-performance-summary" -> JsonTaggedAdt.tagged[Action.FetchLatestPricePerformanceSummary],

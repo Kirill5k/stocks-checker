@@ -6,7 +6,7 @@ import cats.syntax.flatMap.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{Exchange, Security, Ticker}
+import stockschecker.domain.{Exchange, Security, SecurityFilter, Ticker}
 import stockschecker.repositories.SecurityRepository
 
 trait SecurityService[F[_]]:
@@ -15,6 +15,7 @@ trait SecurityService[F[_]]:
   def getAllTickers: F[List[Ticker]]
   def streamAll: Stream[F, Security]
   def fetchLatest(exchange: Exchange): F[Unit]
+  def streamTickersBy(filter: SecurityFilter, limit: Option[Int]): Stream[F, Ticker]
 
 final private class LiveSecurityService[F[_]: {Concurrent, Logger}](
     private val repository: SecurityRepository[F],
@@ -45,6 +46,9 @@ final private class LiveSecurityService[F[_]: {Concurrent, Logger}](
         .compile
         .drain >>
       Logger[F].info(s"Finished fetching securities for ${exchange.fullName}")
+
+  override def streamTickersBy(filter: SecurityFilter, limit: Option[Int]): Stream[F, Ticker] =
+    repository.streamTickersBy(filter, limit)
 }
 
 object SecurityService:
@@ -53,4 +57,3 @@ object SecurityService:
       marketDataClient: MarketDataClient[F]
   )(using Concurrent[F], Logger[F]): F[SecurityService[F]] =
     Monad[F].pure(LiveSecurityService[F](repository, marketDataClient))
-
