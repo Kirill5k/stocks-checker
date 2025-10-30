@@ -3,15 +3,17 @@ package stockschecker.repositories
 import cats.effect.Concurrent
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
+import cats.syntax.applicative.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.syntax.applicative.*
+import kirill5k.common.syntax.time.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Filter, Update}
-import stockschecker.domain.{Exchange, Security, SecurityKind, Ticker}
+import stockschecker.domain.{Exchange, Security, SecurityFilter, SecurityKind, Ticker}
 import stockschecker.repositories.entities.SecurityEntity
 
 import java.time.Instant
@@ -23,6 +25,7 @@ trait SecurityRepository[F[_]]:
   def findByExchange(exchange: Exchange): F[List[Security]]
   def streamAll: Stream[F, Security]
   def getAllTickers: F[List[Ticker]]
+  def streamTickersBy(filter: SecurityFilter, limit: Option[Int]): Stream[F, Ticker]
 
 final private class LiveSecurityRepository[F[_]](
     private val collection: MongoCollection[F, SecurityEntity]
@@ -82,6 +85,30 @@ final private class LiveSecurityRepository[F[_]](
 
   override def getAllTickers: F[List[Ticker]] =
     collection.distinct[Ticker]("ticker").all.map(_.toList)
+
+  override def streamTickersBy(filter: SecurityFilter, limit: Option[Int]): Stream[F, Ticker] =
+    Stream.eval(filter.toFilter).flatMap { mongoFilter =>
+      collection
+        .find(mongoFilter)
+        .limit(limit.getOrElse(Int.MaxValue))
+        .stream
+        .map(_._id)
+    }
+
+  extension (f: SecurityFilter)
+    private def toFilter: F[Filter] = f match
+      case SecurityFilter.ExchangeIs(exchange) =>
+        Filter.eq(Field.Exchange, exchange).pure
+      case SecurityFilter.KindIs(kind) =>
+        Filter.eq(Field.Kind, kind).pure
+      case SecurityFilter.IsActive(active) =>
+        Filter.eq(Field.IsActive, active).pure
+      case SecurityFilter.UpdatedWithin(duration) =>
+        clock.now.map(currentTime => Filter.gt(Field.UpdatedAt, currentTime.minus(duration)))
+      case SecurityFilter.NotUpdatedFor(duration) =>
+        clock.now.map(currentTime => Filter.lt(Field.UpdatedAt, currentTime.minus(duration)))
+      case SecurityFilter.Composite(filters) =>
+        filters.traverse(_.toFilter).map(_.toList.foldLeft(Filter.empty)(_ && _))
 }
 
 object SecurityRepository extends MongoJsonCodecs:

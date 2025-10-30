@@ -6,6 +6,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.applicative.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
+import kirill5k.common.syntax.time.*
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Filter, Update}
@@ -26,6 +27,19 @@ final private class LiveCompanyProfileRepository[F[_]](
     C: Clock[F]
 ) extends CompanyProfileRepository[F] {
 
+  private object Field:
+    val Id          = "_id"
+    val Name        = "name"
+    val Country     = "country"
+    val Industry    = "industry"
+    val Description = "description"
+    val Website     = "website"
+    val IpoDate     = "ipoDate"
+    val Currency    = "currency"
+    val MarketCap   = "marketCap"
+    val UpdatedAt   = "updatedAt"
+    val CreatedAt   = "createdAt"
+
   override def save(cp: CompanyProfile): F[Unit] =
     C.now.flatMap { time =>
       collection
@@ -38,15 +52,15 @@ final private class LiveCompanyProfileRepository[F[_]](
               .updateOne(
                 Filter.idEq(cp.ticker),
                 Update
-                  .set("name", cp.name)
-                  .set("country", cp.country)
-                  .set("industry", cp.industry)
-                  .set("description", cp.description)
-                  .set("website", cp.website)
-                  .set("ipoDate", cp.ipoDate)
-                  .set("currency", cp.currency)
-                  .set("marketCap", cp.marketCap)
-                  .currentDate("updatedAt")
+                  .set(Field.Name, cp.name)
+                  .set(Field.Country, cp.country)
+                  .set(Field.Industry, cp.industry)
+                  .set(Field.Description, cp.description)
+                  .set(Field.Website, cp.website)
+                  .set(Field.IpoDate, cp.ipoDate)
+                  .set(Field.Currency, cp.currency)
+                  .set(Field.MarketCap, cp.marketCap)
+                  .currentDate(Field.UpdatedAt)
               )
               .void
         }
@@ -57,25 +71,25 @@ final private class LiveCompanyProfileRepository[F[_]](
 
   override def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): Stream[F, Ticker] =
     Stream.eval(filter.toFilter).flatMap { mongoFilter =>
-      collection.find(mongoFilter).sortByDesc("marketCap").limit(limit.getOrElse(Int.MaxValue)).stream.map(_._id)
+      collection.find(mongoFilter).sortByDesc(Field.MarketCap).limit(limit.getOrElse(Int.MaxValue)).stream.map(_._id)
     }
 
   extension (f: CompanyProfileFilter)
     private def toFilter: F[Filter] = f match
       case CompanyProfileFilter.MarketCapAbove(min) =>
-        Filter.gt("marketCap", min).pure
+        Filter.gt(Field.MarketCap, min).pure
       case CompanyProfileFilter.MarketCapBelow(max) =>
-        Filter.lt("marketCap", max).pure
+        Filter.lt(Field.MarketCap, max).pure
       case CompanyProfileFilter.CountryIs(countryCode) =>
-        Filter.eq("country", countryCode).pure
+        Filter.eq(Field.Country, countryCode).pure
       case CompanyProfileFilter.IpoDateAfter(date) =>
-        Filter.gt("ipoDate", date).pure
+        Filter.gt(Field.IpoDate, date).pure
       case CompanyProfileFilter.IpoDateBefore(date) =>
-        Filter.lt("ipoDate", date).pure
+        Filter.lt(Field.IpoDate, date).pure
       case CompanyProfileFilter.UpdatedWithin(duration) =>
-        C.now.map(currentTime => Filter.gt("updatedAt", currentTime.minusMillis(duration.toMillis)))
+        C.now.map(currentTime => Filter.gt(Field.UpdatedAt, currentTime.minus(duration)))
       case CompanyProfileFilter.NotUpdatedFor(duration) =>
-        C.now.map(currentTime => Filter.lt("updatedAt", currentTime.minusMillis(duration.toMillis)))
+        C.now.map(currentTime => Filter.lt(Field.UpdatedAt, currentTime.minus(duration)))
       case CompanyProfileFilter.Composite(filters) =>
         filters.traverse(_.toFilter).map(_.toList.foldLeft(Filter.empty)(_ && _))
 }
