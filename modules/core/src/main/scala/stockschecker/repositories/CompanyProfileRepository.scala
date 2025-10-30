@@ -3,6 +3,7 @@ package stockschecker.repositories
 import cats.Monad
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
+import cats.syntax.applicative.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
 import mongo4cats.collection.MongoCollection
@@ -18,9 +19,10 @@ trait CompanyProfileRepository[F[_]]:
   def find(ticker: Ticker): F[Option[CompanyProfile]]
   def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): Stream[F, Ticker]
 
-final private class LiveCompanyProfileRepository[F[_]: Monad](
+final private class LiveCompanyProfileRepository[F[_]](
     private val collection: MongoCollection[F, CompanyProfileEntity]
 )(using
+    M: Monad[F],
     C: Clock[F]
 ) extends CompanyProfileRepository[F] {
 
@@ -54,26 +56,28 @@ final private class LiveCompanyProfileRepository[F[_]: Monad](
     collection.find(Filter.idEq(ticker)).first.mapOpt(_.toDomain)
 
   override def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): Stream[F, Ticker] =
-    collection.find(filter.toFilter).sortByDesc("marketCap").limit(limit.getOrElse(Int.MaxValue)).stream.map(_._id)
+    Stream.eval(filter.toFilter).flatMap { mongoFilter =>
+      collection.find(mongoFilter).sortByDesc("marketCap").limit(limit.getOrElse(Int.MaxValue)).stream.map(_._id)
+    }
 
   extension (f: CompanyProfileFilter)
-    private def toFilter: Filter = f match
+    private def toFilter: F[Filter] = f match
       case CompanyProfileFilter.MarketCapAbove(min) =>
-        Filter.gt("marketCap", min)
+        Filter.gt("marketCap", min).pure
       case CompanyProfileFilter.MarketCapBelow(max) =>
-        Filter.lt("marketCap", max)
+        Filter.lt("marketCap", max).pure
       case CompanyProfileFilter.CountryIs(countryCode) =>
-        Filter.eq("country", countryCode)
+        Filter.eq("country", countryCode).pure
       case CompanyProfileFilter.IpoDateAfter(date) =>
-        Filter.gt("ipoDate", date)
+        Filter.gt("ipoDate", date).pure
       case CompanyProfileFilter.IpoDateBefore(date) =>
-        Filter.lt("ipoDate", date)
-      case CompanyProfileFilter.UpdatedAfter(date) =>
-        Filter.gt("updatedAt", date)
-      case CompanyProfileFilter.UpdatedBefore(date) =>
-        Filter.lt("updatedAt", date)
+        Filter.lt("ipoDate", date).pure
+      case CompanyProfileFilter.UpdatedWithin(duration) =>
+        C.now.map(currentTime => Filter.gt("updatedAt", currentTime.minusMillis(duration.toMillis)))
+      case CompanyProfileFilter.NotUpdatedFor(duration) =>
+        C.now.map(currentTime => Filter.lt("updatedAt", currentTime.minusMillis(duration.toMillis)))
       case CompanyProfileFilter.Composite(filters) =>
-        filters.map(_.toFilter).foldLeft(Filter.empty)(_ && _)
+        filters.traverse(_.toFilter).map(_.toList.foldLeft(Filter.empty)(_ && _))
 }
 
 object CompanyProfileRepository extends MongoJsonCodecs:

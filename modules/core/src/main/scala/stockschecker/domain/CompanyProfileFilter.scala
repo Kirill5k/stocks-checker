@@ -4,8 +4,10 @@ import cats.data.NonEmptyList
 import org.latestbit.circe.adt.codec.JsonTaggedAdt
 
 import java.time.LocalDate
-
 import org.latestbit.circe.adt.codec.*
+import stockschecker.common.JsonCodecs
+
+import scala.concurrent.duration.FiniteDuration
 
 enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
   case MarketCapAbove(min: Long)
@@ -14,20 +16,20 @@ enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt
   case IpoDateAfter(date: LocalDate)
   case IpoDateBefore(date: LocalDate)
   case Composite(filters: NonEmptyList[CompanyProfileFilter])
-  case UpdatedAfter(date: LocalDate)
-  case UpdatedBefore(date: LocalDate)
+  case UpdatedWithin(duration: FiniteDuration)
+  case NotUpdatedFor(duration: FiniteDuration)
 
-object CompanyProfileFilter {
+object CompanyProfileFilter extends JsonCodecs {
   given JsonTaggedAdt.Config[CompanyProfileFilter] = JsonTaggedAdt.Config.Values[CompanyProfileFilter](
     mappings = Map(
-      "market-cap-above"    -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapAbove],
-      "market-cap-below"    -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapBelow],
-      "country-is"          -> JsonTaggedAdt.tagged[CompanyProfileFilter.CountryIs],
-      "ipo-date-after"      -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateAfter],
-      "ipo-date-before"     -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateBefore],
-      "updated-after"  -> JsonTaggedAdt.tagged[CompanyProfileFilter.UpdatedAfter],
-      "updated-before" -> JsonTaggedAdt.tagged[CompanyProfileFilter.UpdatedBefore],
-      "composite"           -> JsonTaggedAdt.tagged[CompanyProfileFilter.Composite]
+      "market-cap-above" -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapAbove],
+      "market-cap-below" -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapBelow],
+      "country-is"       -> JsonTaggedAdt.tagged[CompanyProfileFilter.CountryIs],
+      "ipo-date-after"   -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateAfter],
+      "ipo-date-before"  -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateBefore],
+      "updated-within"   -> JsonTaggedAdt.tagged[CompanyProfileFilter.UpdatedWithin],
+      "not-updated-for"  -> JsonTaggedAdt.tagged[CompanyProfileFilter.NotUpdatedFor],
+      "composite"        -> JsonTaggedAdt.tagged[CompanyProfileFilter.Composite]
     ),
     strict = true,
     typeFieldName = "kind"
