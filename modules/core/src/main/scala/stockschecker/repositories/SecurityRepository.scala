@@ -12,9 +12,9 @@ import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
-import mongo4cats.operations.{Filter, Update}
+import mongo4cats.operations.{Aggregate, Filter, Projection, Update}
 import stockschecker.domain.{Exchange, Security, SecurityFilter, SecurityKind, Ticker}
-import stockschecker.repositories.entities.SecurityEntity
+import stockschecker.repositories.entities.{Entity, SecurityEntity}
 
 import java.time.Instant
 
@@ -89,8 +89,12 @@ final private class LiveSecurityRepository[F[_]](
   override def streamTickersBy(filter: SecurityFilter, limit: Option[Int]): Stream[F, Ticker] =
     Stream.eval(filter.toFilter).flatMap { mongoFilter =>
       collection
-        .find(mongoFilter)
-        .limit(limit.getOrElse(Int.MaxValue))
+        .aggregate[Entity](
+          Aggregate
+            .matchBy(mongoFilter)
+            .limit(limit.getOrElse(Int.MaxValue))
+            .project(Projection.include(Field.Id))
+        )
         .stream
         .map(_._id)
     }
@@ -115,5 +119,5 @@ object SecurityRepository extends MongoJsonCodecs:
   def make[F[_]](database: MongoDatabase[F])(using Concurrent[F], Clock[F]): F[SecurityRepository[F]] =
     database
       .getCollectionWithCodec[SecurityEntity]("securities")
-      .map(_.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind])
+      .map(_.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity])
       .map(LiveSecurityRepository[F](_))

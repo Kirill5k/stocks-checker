@@ -11,6 +11,8 @@ import java.time.{Instant, LocalDate}
 
 private[repositories] object entities extends MongoJsonCodecs {
 
+  final case class Entity(_id: Ticker) derives Codec.AsObject
+  
   final case class SecurityEntity(
       _id: Ticker,
       ticker: Ticker,

@@ -9,10 +9,10 @@ import kirill5k.common.cats.Clock
 import kirill5k.common.syntax.time.*
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.operations.{Filter, Update}
+import mongo4cats.operations.{Aggregate, Filter, Projection, Sort, Update}
 import mongo4cats.circe.MongoJsonCodecs
 import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
-import stockschecker.repositories.entities.CompanyProfileEntity
+import stockschecker.repositories.entities.{CompanyProfileEntity, Entity}
 import kirill5k.common.cats.syntax.applicative.*
 
 trait CompanyProfileRepository[F[_]]:
@@ -71,7 +71,16 @@ final private class LiveCompanyProfileRepository[F[_]](
 
   override def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): Stream[F, Ticker] =
     Stream.eval(filter.toFilter).flatMap { mongoFilter =>
-      collection.find(mongoFilter).sortByDesc(Field.MarketCap).limit(limit.getOrElse(Int.MaxValue)).stream.map(_._id)
+      collection
+        .aggregate[Entity](
+          Aggregate
+            .matchBy(mongoFilter)
+            .sort(Sort.desc(Field.MarketCap))
+            .limit(limit.getOrElse(Int.MaxValue))
+            .project(Projection.include(Field.Id))
+        )
+        .stream
+        .map(_._id)
     }
 
   extension (f: CompanyProfileFilter)
@@ -98,5 +107,5 @@ object CompanyProfileRepository extends MongoJsonCodecs:
   def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[CompanyProfileRepository[F]] =
     database
       .getCollectionWithCodec[CompanyProfileEntity]("company-profiles")
-      .map(_.withAddedCodec[Ticker])
+      .map(_.withAddedCodec[Ticker].withAddedCodec[Entity])
       .map(LiveCompanyProfileRepository[F](_))
