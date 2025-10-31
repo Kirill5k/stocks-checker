@@ -7,7 +7,7 @@ object Dependencies {
     val pureConfig     = "0.17.9"
     val circe          = "0.14.15"
     val circeFs2       = "0.14.1"
-    val sttp           = "3.11.0"
+    val sttp           = "4.0.13"
     val logback        = "1.5.20"
     val log4cats       = "2.7.1"
     val tapir          = "1.11.50"
@@ -56,10 +56,10 @@ object Dependencies {
     }
 
     object sttp {
-      val core          = "com.softwaremill.sttp.client3" %% "core"           % Versions.sttp
-      val circe         = "com.softwaremill.sttp.client3" %% "circe"          % Versions.sttp
-      val catsBackend   = "com.softwaremill.sttp.client3" %% "fs2"            % Versions.sttp
-      val http4sBackend = "com.softwaremill.sttp.client3" %% "http4s-backend" % Versions.sttp
+      val core          = "com.softwaremill.sttp.client4" %% "core"           % Versions.sttp
+      val circe         = "com.softwaremill.sttp.client4" %% "circe"          % Versions.sttp
+      val catsBackend   = "com.softwaremill.sttp.client4" %% "fs2"            % Versions.sttp
+      val http4sBackend = "com.softwaremill.sttp.client4" %% "http4s-backend" % Versions.sttp
 
       val all = Seq(core, circe, catsBackend, http4sBackend)
     }

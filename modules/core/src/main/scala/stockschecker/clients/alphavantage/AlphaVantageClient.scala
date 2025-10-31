@@ -9,8 +9,8 @@ import stockschecker.common.config.AlphaVantageClientConfig
 import stockschecker.domain.{PriceCandle, Ticker}
 import stockschecker.domain.errors.AppError
 import sttp.capabilities.fs2.Fs2Streams
-import sttp.client3.*
-import sttp.client3.circe.asJson
+import sttp.client4.*
+import sttp.client4.circe.{asJson, asJsonEither}
 
 import java.time.LocalDate
 import scala.collection.immutable.ListMap
@@ -22,7 +22,7 @@ final private class LiveAlphaVantageClient[F[_]](
     private val config: AlphaVantageClientConfig,
     private val apiKeys: Array[String],
     private val keyIndex: Ref[F, Int],
-    private val backend: SttpBackend[F, Fs2Streams[F]]
+    private val backend: WebSocketStreamBackend[F, Fs2Streams[F]]
 )(using
     F: Async[F]
 ) extends AlphaVantageClient[F] {
@@ -42,26 +42,30 @@ final private class LiveAlphaVantageClient[F[_]](
       response <- backend.send(request)
       result   <- response.body match
         case Right(data) =>
-          // Check for error messages in Note or Information fields first
-          val errorMessage = data.note.orElse(data.information)
-          errorMessage match
-            case Some(msg) =>
-              // Determine status code based on error message content
-              val statusCode = if msg.contains("API rate limit") then 429 else 500
-              F.raiseError(AppError.Http(statusCode, s"AlphaVantage API error: $msg"))
-            case None =>
-              // No error message, check for time series data
-              data.timeSeries match
-                case Some(series) if series.isEmpty =>
-                  F.raiseError(AppError.Http(500, s"No price candle data returned for ticker ${ticker.value}"))
-                case Some(series) =>
-                  val candles = series.map { case (dateStr, candle) => candle.toDomain(LocalDate.parse(dateStr)) }.toList
-                  F.pure(NonEmptyList.fromListUnsafe(candles))
-                case None =>
-                  F.raiseError(AppError.Http(500, s"No time series data returned for ticker ${ticker.value}"))
-        case Left(err) =>
-          F.raiseError(AppError.Http(response.code.code, s"Error retrieving monthly price candles: ${err.getMessage}"))
+          processData(data, ticker)
+        case Left(ResponseException.DeserializationException(responseBody, error, _)) =>
+          F.raiseError(AppError.JsonParsingFailure(responseBody, s"Alpha Vantage client returned ${error.getMessage}"))
+        case Left(ResponseException.UnexpectedStatusCode(body, meta)) =>
+          F.raiseError(AppError.Http(meta.code.code, s"Alpha Vantage client returned unexpected status ${meta.code.code} with body: $body"))
     } yield result
+
+  private def processData(data: AlphaVantageClient.MonthlyTimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
+    data.timeSeries match
+      case Some(series) if series.nonEmpty =>
+        val candles = series.map { case (dateStr, candle) => candle.toDomain(LocalDate.parse(dateStr)) }.toList
+        F.pure(NonEmptyList.fromListUnsafe(candles))
+      case Some(_) =>
+        F.raiseError(AppError.Http(500, s"No price candle data returned for ticker ${ticker.value}"))
+      case None =>
+        handleError(data.note.orElse(data.information), ticker)
+
+  private def handleError(errorMessage: Option[String], ticker: Ticker): F[NonEmptyList[PriceCandle]] =
+    errorMessage match
+      case Some(msg) =>
+        val statusCode = if msg.contains("API rate limit") then 429 else 500
+        F.raiseError(AppError.Http(statusCode, s"AlphaVantage API error: $msg"))
+      case None =>
+        F.raiseError(AppError.Http(500, s"No time series data returned for ticker ${ticker.value}"))
 }
 
 object AlphaVantageClient {
@@ -109,7 +113,7 @@ object AlphaVantageClient {
       yield MonthlyTimeSeriesResponse(timeSeries, information, note)
   }
 
-  def make[F[_]](config: AlphaVantageClientConfig, backend: SttpBackend[F, Fs2Streams[F]])(using F: Async[F]): F[AlphaVantageClient[F]] =
+  def make[F[_]](config: AlphaVantageClientConfig, backend: WebSocketStreamBackend[F, Fs2Streams[F]])(using F: Async[F]): F[AlphaVantageClient[F]] =
     val apiKeys = config.apiKey.split(',').map(_.trim).filter(_.nonEmpty)
     F.raiseWhen(apiKeys.isEmpty)(AppError.Critical("At least one AlphaVantage API key must be provided")) >>
       Ref.of[F, Int](0).map(keyIndex => LiveAlphaVantageClient[F](config, apiKeys, keyIndex, backend))
