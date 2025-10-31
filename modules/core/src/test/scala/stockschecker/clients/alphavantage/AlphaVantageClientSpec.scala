@@ -1,15 +1,15 @@
 package stockschecker.clients.alphavantage
 
 import cats.effect.IO
-import kirill5k.common.sttp.test.SttpWordSpec
+import kirill5k.common.sttp.test.Sttp4WordSpec
 import stockschecker.common.config.AlphaVantageClientConfig
 import stockschecker.domain.{PriceCandle, Ticker}
 import stockschecker.domain.errors.AppError
-import sttp.client3.Response
+import sttp.client4.testing.ResponseStub
 
 import java.time.LocalDate
 
-class AlphaVantageClientSpec extends SttpWordSpec {
+class AlphaVantageClientSpec extends Sttp4WordSpec {
   "An AlphaVantageClient" when {
 
     val config = AlphaVantageClientConfig("http://alphavantage.co", "api-key")
@@ -17,10 +17,10 @@ class AlphaVantageClientSpec extends SttpWordSpec {
     "getMonthlyPriceCandles" should {
       "return list of price candles on success" in {
         val expectedParams = Map("function" -> "TIME_SERIES_MONTHLY", "symbol" -> "AAPL", "apikey" -> "api-key")
-        val testingBackend = backendStub
+        val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/query") && r.hasParams(expectedParams) =>
-              Response.ok(readJson("alpha-vantage/monthly-data-success.json"))
+              ResponseStub.adjust(readJson("alpha-vantage/monthly-data-success.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
@@ -52,10 +52,10 @@ class AlphaVantageClientSpec extends SttpWordSpec {
 
       "return error when API rate limit is exceeded" in {
         val expectedParams = Map("function" -> "TIME_SERIES_MONTHLY", "symbol" -> "AAPL", "apikey" -> "api-key")
-        val testingBackend = backendStub
+        val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/query") && r.hasParams(expectedParams) =>
-              Response.ok(readJson("alpha-vantage/monthly-data-error.json"))
+              ResponseStub.adjust(readJson("alpha-vantage/monthly-data-error.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
@@ -74,10 +74,10 @@ class AlphaVantageClientSpec extends SttpWordSpec {
 
       "return error when no time series data is returned" in {
         val expectedParams = Map("function" -> "TIME_SERIES_MONTHLY", "symbol" -> "INVALID", "apikey" -> "api-key")
-        val testingBackend = backendStub
+        val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/query") && r.hasParams(expectedParams) =>
-              Response.ok("""{}""")
+              ResponseStub.adjust("""{}""")
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
@@ -86,20 +86,15 @@ class AlphaVantageClientSpec extends SttpWordSpec {
           candles <- client.getMonthlyPriceCandles(Ticker("INVALID"))
         yield candles
 
-        result.attempt.asserting {
-          case Left(AppError.Http(200, msg)) =>
-            msg must include("No time series data returned for ticker INVALID")
-          case other =>
-            fail(s"Expected AppError.Http with message about no time series data, got: $other")
-        }
+        result.attempt.asserting(_ mustBe Left(AppError.Http(500, "No time series data returned for ticker INVALID")))
       }
 
       "return error when empty candle data is returned" in {
         val expectedParams = Map("function" -> "TIME_SERIES_MONTHLY", "symbol" -> "EMPTY", "apikey" -> "api-key")
-        val testingBackend = backendStub
+        val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/query") && r.hasParams(expectedParams) =>
-              Response.ok("""{"Monthly Time Series": {}}""")
+              ResponseStub.adjust("""{"Monthly Time Series": {}}""")
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 

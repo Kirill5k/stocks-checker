@@ -1,15 +1,15 @@
 package stockschecker.clients.finnhub
 
 import cats.effect.IO
-import kirill5k.common.sttp.test.SttpWordSpec
+import kirill5k.common.sttp.test.Sttp4WordSpec
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.{CompanyProfile, Exchange, Security, SecurityKind, Ticker}
-import sttp.client3.Response
+import sttp.client4.testing.ResponseStub
 import fs2.Stream
 
 import java.time.LocalDate
 
-class FinnhubClientSpec extends SttpWordSpec {
+class FinnhubClientSpec extends Sttp4WordSpec {
   "A FinnhubClient" when {
 
     val config = FinnhubClientConfig("http://finnhub.io", "api-key")
@@ -17,10 +17,10 @@ class FinnhubClientSpec extends SttpWordSpec {
     "getListedSecurities" should {
       "return list of securities for NASDAQ on success" in {
         val expectedParams = Map("apikey" -> "api-key", "exchange" -> "US", "mic" -> "XNAS")
-        val testingBackend = backendStub
+        val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
-              Response.ok(Right(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode)))
+              ResponseStub.adjust(Right(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode)))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
@@ -48,10 +48,10 @@ class FinnhubClientSpec extends SttpWordSpec {
 
       "return list of securities for NYSE on success" in {
         val expectedParams = Map("apikey" -> "api-key", "exchange" -> "US", "mic" -> "XNYS")
-        val testingBackend = backendStub
+        val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
-              Response.ok(Right(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode)))
+              ResponseStub.adjust(Right(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode)))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
@@ -69,10 +69,10 @@ class FinnhubClientSpec extends SttpWordSpec {
     "getCompanyProfile" should {
       "return company profile on success" in {
         val expectedParams = Map("apikey" -> "api-key", "symbol" -> "AAPL")
-        val testingBackend = backendStub
+        val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
-              Response.ok(readJson("finnhub/company-profile-success.json"))
+              ResponseStub.adjust(readJson("finnhub/company-profile-success.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
@@ -101,10 +101,10 @@ class FinnhubClientSpec extends SttpWordSpec {
 
       "return None when company profile is not found" in {
         val expectedParams = Map("apikey" -> "api-key", "symbol" -> "INVALID")
-        val testingBackend = backendStub
+        val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
-              Response.ok(readJson("finnhub/company-profile-not-found.json"))
+              ResponseStub.adjust(readJson("finnhub/company-profile-not-found.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
