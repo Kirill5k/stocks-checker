@@ -105,7 +105,7 @@ class AlphaVantageClientSpec extends Sttp4WordSpec {
 
         result.attempt.asserting {
           case Left(AppError.Http(500, msg)) =>
-            msg must include("No price candle data returned for ticker EMPTY")
+            msg must include("No time series data returned for ticker EMPTY")
           case other =>
             fail(s"Expected AppError.Http with message about no candle data, got: $other")
         }

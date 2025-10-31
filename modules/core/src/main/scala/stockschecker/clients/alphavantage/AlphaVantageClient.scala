@@ -54,9 +54,7 @@ final private class LiveAlphaVantageClient[F[_]](
       case Some(series) if series.nonEmpty =>
         val candles = series.map { case (dateStr, candle) => candle.toDomain(LocalDate.parse(dateStr)) }.toList
         F.pure(NonEmptyList.fromListUnsafe(candles))
-      case Some(_) =>
-        F.raiseError(AppError.Http(500, s"No price candle data returned for ticker ${ticker.value}"))
-      case None =>
+      case _ =>
         handleError(data.note.orElse(data.information), ticker)
 
   private def handleError(errorMessage: Option[String], ticker: Ticker): F[NonEmptyList[PriceCandle]] =
@@ -113,7 +111,10 @@ object AlphaVantageClient {
       yield MonthlyTimeSeriesResponse(timeSeries, information, note)
   }
 
-  def make[F[_]](config: AlphaVantageClientConfig, backend: WebSocketStreamBackend[F, Fs2Streams[F]])(using F: Async[F]): F[AlphaVantageClient[F]] =
+  def make[F[_]](
+      config: AlphaVantageClientConfig,
+      backend: WebSocketStreamBackend[F, Fs2Streams[F]]
+  )(using F: Async[F]): F[AlphaVantageClient[F]] =
     val apiKeys = config.apiKey.split(',').map(_.trim).filter(_.nonEmpty)
     F.raiseWhen(apiKeys.isEmpty)(AppError.Critical("At least one AlphaVantage API key must be provided")) >>
       Ref.of[F, Int](0).map(keyIndex => LiveAlphaVantageClient[F](config, apiKeys, keyIndex, backend))
