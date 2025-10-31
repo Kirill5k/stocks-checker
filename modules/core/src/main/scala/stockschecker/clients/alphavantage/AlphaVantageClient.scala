@@ -91,7 +91,8 @@ object AlphaVantageClient {
 
   final case class MonthlyTimeSeriesResponse(
       timeSeries: Option[ListMap[String, CandleData]], // "Monthly Time Series"
-      information: Option[String]                      // "Information" field for errors
+      information: Option[String],                     // "Information" field for errors
+      note: Option[String]                             // "Note" field for errors
   )
 
   object MonthlyTimeSeriesResponse {
@@ -99,7 +100,8 @@ object AlphaVantageClient {
       for
         timeSeries  <- c.downField("Monthly Time Series").as[Option[ListMap[String, CandleData]]]
         information <- c.downField("Information").as[Option[String]]
-      yield MonthlyTimeSeriesResponse(timeSeries, information)
+        note        <- c.downField("Note").as[Option[String]]
+      yield MonthlyTimeSeriesResponse(timeSeries, information, note)
   }
 
   def make[F[_]](config: AlphaVantageClientConfig, backend: SttpBackend[F, Fs2Streams[F]])(using F: Async[F]): F[AlphaVantageClient[F]] =
