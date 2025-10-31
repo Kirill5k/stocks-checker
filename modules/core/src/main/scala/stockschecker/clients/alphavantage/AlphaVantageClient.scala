@@ -42,18 +42,23 @@ final private class LiveAlphaVantageClient[F[_]](
       response <- backend.send(request)
       result   <- response.body match
         case Right(data) =>
-          data.timeSeries match
-            case Some(series) if series.isEmpty =>
-              F.raiseError(AppError.Http(500, s"No price candle data returned for ticker ${ticker.value}"))
-            case Some(series) =>
-              val candles = series.map { case (dateStr, candle) => candle.toDomain(LocalDate.parse(dateStr)) }.toList
-              F.pure(NonEmptyList.fromListUnsafe(candles))
+          // Check for error messages in Note or Information fields first
+          val errorMessage = data.note.orElse(data.information)
+          errorMessage match
+            case Some(msg) =>
+              // Determine status code based on error message content
+              val statusCode = if msg.contains("API rate limit") then 429 else 500
+              F.raiseError(AppError.Http(statusCode, s"AlphaVantage API error: $msg"))
             case None =>
-              data.information match
-                case Some(info) =>
-                  F.raiseError(AppError.Http(429, s"AlphaVantage API error: $info"))
+              // No error message, check for time series data
+              data.timeSeries match
+                case Some(series) if series.isEmpty =>
+                  F.raiseError(AppError.Http(500, s"No price candle data returned for ticker ${ticker.value}"))
+                case Some(series) =>
+                  val candles = series.map { case (dateStr, candle) => candle.toDomain(LocalDate.parse(dateStr)) }.toList
+                  F.pure(NonEmptyList.fromListUnsafe(candles))
                 case None =>
-                  F.raiseError(AppError.Http(response.code.code, s"No time series data returned for ticker ${ticker.value}"))
+                  F.raiseError(AppError.Http(500, s"No time series data returned for ticker ${ticker.value}"))
         case Left(err) =>
           F.raiseError(AppError.Http(response.code.code, s"Error retrieving monthly price candles: ${err.getMessage}"))
     } yield result
