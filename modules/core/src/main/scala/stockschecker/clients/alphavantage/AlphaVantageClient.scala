@@ -2,6 +2,7 @@ package stockschecker.clients.alphavantage
 
 import cats.data.NonEmptyList
 import cats.effect.kernel.{Async, Ref}
+import cats.syntax.applicativeError.*
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import io.circe.{Decoder, HCursor}
@@ -34,20 +35,32 @@ final private class LiveAlphaVantageClient[F[_]](
     }
 
   override def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]] =
-    for {
+    attemptWithKeyRotation(ticker, Set.empty)
+
+  private def attemptWithKeyRotation(ticker: Ticker, triedKeys: Set[String]): F[NonEmptyList[PriceCandle]] =
+    for
       apiKey <- getNextApiKey
-      request = emptyRequest
-        .get(uri"${config.baseUri}/query?function=TIME_SERIES_MONTHLY&symbol=$ticker&apikey=$apiKey")
-        .response(asJson[AlphaVantageClient.MonthlyTimeSeriesResponse])
-      response <- backend.send(request)
-      result   <- response.body match
+      _      <- F.raiseWhen(triedKeys.contains(apiKey))(AppError.Http(429, s"All Alpha Vantage API keys exhausted due to rate limiting"))
+      result <- sendRequest(ticker, apiKey).recoverWith {
+        case err: AppError.Http if err.status == 429 => attemptWithKeyRotation(ticker, triedKeys + apiKey)
+      }
+    yield result
+
+  private def sendRequest(ticker: Ticker, apiKey: String): F[NonEmptyList[PriceCandle]] =
+    for
+      response <- backend.send {
+        emptyRequest
+          .get(uri"${config.baseUri}/query?function=TIME_SERIES_MONTHLY&symbol=$ticker&apikey=$apiKey")
+          .response(asJson[AlphaVantageClient.MonthlyTimeSeriesResponse])
+      }
+      result <- response.body match
         case Right(data) =>
           processData(data, ticker)
         case Left(ResponseException.DeserializationException(responseBody, error, _)) =>
           F.raiseError(AppError.JsonParsingFailure(responseBody, s"Alpha Vantage client returned ${error.getMessage}"))
         case Left(ResponseException.UnexpectedStatusCode(body, meta)) =>
           F.raiseError(AppError.Http(meta.code.code, s"Alpha Vantage client returned unexpected status ${meta.code.code} with body: $body"))
-    } yield result
+    yield result
 
   private def processData(data: AlphaVantageClient.MonthlyTimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
     data.timeSeries match
