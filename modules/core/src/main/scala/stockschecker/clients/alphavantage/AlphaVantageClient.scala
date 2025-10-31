@@ -1,8 +1,9 @@
 package stockschecker.clients.alphavantage
 
 import cats.data.NonEmptyList
-import cats.effect.kernel.Async
+import cats.effect.kernel.{Async, Ref}
 import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import io.circe.{Decoder, HCursor}
 import stockschecker.common.config.AlphaVantageClientConfig
 import stockschecker.domain.{PriceCandle, Ticker}
@@ -19,18 +20,27 @@ trait AlphaVantageClient[F[_]]:
 
 final private class LiveAlphaVantageClient[F[_]](
     private val config: AlphaVantageClientConfig,
+    private val apiKeys: Array[String],
+    private val keyIndex: Ref[F, Int],
     private val backend: SttpBackend[F, Fs2Streams[F]]
 )(using
     F: Async[F]
 ) extends AlphaVantageClient[F] {
 
-  override def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]] = {
-    val request = emptyRequest
-      .get(uri"${config.baseUri}/query?function=TIME_SERIES_MONTHLY&symbol=$ticker&apikey=${config.apiKey}")
-      .response(asJson[AlphaVantageClient.MonthlyTimeSeriesResponse])
+  private def getNextApiKey: F[String] =
+    keyIndex.modify { currentIndex =>
+      val nextIndex = (currentIndex + 1) % apiKeys.length
+      (nextIndex, apiKeys(currentIndex))
+    }
 
-    backend.send(request).flatMap { response =>
-      response.body match
+  override def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]] =
+    for {
+      apiKey <- getNextApiKey
+      request = emptyRequest
+        .get(uri"${config.baseUri}/query?function=TIME_SERIES_MONTHLY&symbol=$ticker&apikey=$apiKey")
+        .response(asJson[AlphaVantageClient.MonthlyTimeSeriesResponse])
+      response <- backend.send(request)
+      result   <- response.body match
         case Right(data) =>
           data.timeSeries match
             case Some(series) if series.isEmpty =>
@@ -46,8 +56,7 @@ final private class LiveAlphaVantageClient[F[_]](
                   F.raiseError(AppError.Http(response.code.code, s"No time series data returned for ticker ${ticker.value}"))
         case Left(err) =>
           F.raiseError(AppError.Http(response.code.code, s"Error retrieving monthly price candles: ${err.getMessage}"))
-    }
-  }
+    } yield result
 }
 
 object AlphaVantageClient {
@@ -93,6 +102,8 @@ object AlphaVantageClient {
       yield MonthlyTimeSeriesResponse(timeSeries, information)
   }
 
-  def make[F[_]: Async](config: AlphaVantageClientConfig, backend: SttpBackend[F, Fs2Streams[F]]): F[AlphaVantageClient[F]] =
-    Async[F].pure(LiveAlphaVantageClient[F](config, backend))
+  def make[F[_]](config: AlphaVantageClientConfig, backend: SttpBackend[F, Fs2Streams[F]])(using F: Async[F]): F[AlphaVantageClient[F]] =
+    val apiKeys = config.apiKey.split(',').map(_.trim).filter(_.nonEmpty)
+    F.raiseWhen(apiKeys.isEmpty)(AppError.Critical("At least one AlphaVantage API key must be provided")) >>
+      Ref.of[F, Int](0).map(keyIndex => LiveAlphaVantageClient[F](config, apiKeys, keyIndex, backend))
 }
