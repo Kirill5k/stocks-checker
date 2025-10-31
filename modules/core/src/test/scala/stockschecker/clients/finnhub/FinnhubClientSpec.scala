@@ -20,7 +20,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
-              ResponseStub.adjust(Right(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode)))
+              ResponseStub.adjust(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
@@ -51,7 +51,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
-              ResponseStub.adjust(Right(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode)))
+              ResponseStub.adjust(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
 
