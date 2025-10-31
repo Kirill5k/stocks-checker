@@ -10,7 +10,7 @@ import stockschecker.domain.{PriceCandle, Ticker}
 import stockschecker.domain.errors.AppError
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
-import sttp.client4.circe.{asJson, asJsonEither}
+import sttp.client4.circe.asJson
 
 import java.time.LocalDate
 import scala.collection.immutable.ListMap

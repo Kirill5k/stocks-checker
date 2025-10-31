@@ -9,8 +9,8 @@ import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, Exchange, Security, SecurityKind, Ticker}
 import sttp.capabilities.fs2.Fs2Streams
-import sttp.client3.*
-import sttp.client3.circe.asJson
+import sttp.client4.*
+import sttp.client4.circe.asJson
 
 import scala.concurrent.duration.*
 
@@ -20,7 +20,7 @@ trait FinnhubClient[F[_]]:
 
 final private class LiveFinnhubClient[F[_]](
     private val config: FinnhubClientConfig,
-    private val backend: SttpBackend[F, Fs2Streams[F]]
+    private val backend: WebSocketStreamBackend[F, Fs2Streams[F]]
 )(using
     F: Async[F]
 ) extends FinnhubClient[F] {
@@ -130,7 +130,7 @@ object FinnhubClient {
 
   def make[F[_]: Async](
       config: FinnhubClientConfig,
-      backend: SttpBackend[F, Fs2Streams[F]]
+      backend: WebSocketStreamBackend[F, Fs2Streams[F]]
   ): F[FinnhubClient[F]] =
     Async[F].pure(LiveFinnhubClient[F](config, backend))
 }
