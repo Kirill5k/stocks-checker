@@ -18,6 +18,7 @@ import kirill5k.common.cats.syntax.applicative.*
 trait CompanyProfileRepository[F[_]]:
   def save(cp: CompanyProfile): F[Unit]
   def find(ticker: Ticker): F[Option[CompanyProfile]]
+  def findAll(limit: Option[Int]): F[List[CompanyProfile]]
   def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): Stream[F, Ticker]
 
 final private class LiveCompanyProfileRepository[F[_]](
@@ -68,6 +69,14 @@ final private class LiveCompanyProfileRepository[F[_]](
 
   override def find(ticker: Ticker): F[Option[CompanyProfile]] =
     collection.find(Filter.idEq(ticker)).first.mapOpt(_.toDomain)
+
+  override def findAll(limit: Option[Int]): F[List[CompanyProfile]] =
+    collection
+      .find
+      .sort(Sort.desc(Field.MarketCap))
+      .limit(limit.getOrElse(Int.MaxValue))
+      .all
+      .mapList(_.toDomain)
 
   override def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): Stream[F, Ticker] =
     Stream.eval(filter.toFilter).flatMap { mongoFilter =>

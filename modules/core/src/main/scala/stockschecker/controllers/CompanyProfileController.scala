@@ -20,10 +20,18 @@ final private class CompanyProfileController[F[_]: Async](
         .mapResponse(identity)
     }
 
+  private val getCompanyProfile = CompanyProfileController.getCompanyProfileEndpoint
+    .serverLogic { limit =>
+      companyProfileService
+        .getAll(limit)
+        .mapResponse(identity)
+    }
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
       List(
-        getCompanyProfileByTicker
+        getCompanyProfileByTicker,
+        getCompanyProfile
       )
     )
 }
@@ -37,6 +45,12 @@ object CompanyProfileController extends TapirJsonCirce with SchemaDerivation {
     .in(query[Option[Boolean]]("fetchLatest"))
     .out(jsonBody[CompanyProfile])
     .description("Get company profile by ticker")
+
+  private val getCompanyProfileEndpoint = Controller.publicEndpoint.get
+    .in(basePath)
+    .in(query[Option[Int]]("limit"))
+    .out(jsonBody[List[CompanyProfile]])
+    .description("Get all company profiles")
 
   def make[F[_]: Async](service: CompanyProfileService[F]): F[Controller[F]] =
     Async[F].pure(CompanyProfileController[F](service))

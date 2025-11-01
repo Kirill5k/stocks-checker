@@ -11,6 +11,7 @@ import stockschecker.repositories.CompanyProfileRepository
 
 trait CompanyProfileService[F[_]]:
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
+  def getAll(limit: Option[Int]): F[List[CompanyProfile]]
   def fetchLatest(ticker: Ticker): F[Unit]
   def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): Stream[F, Ticker]
 
@@ -24,6 +25,9 @@ final private class LiveCompanyProfileService[F[_]](
   override def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile] =
     if (fetchLatest) fetchCompanyProfile(ticker)
     else repository.find(ticker).flatMap(unfoldOpt(F.pure, fetchCompanyProfile(ticker)))
+
+  override def getAll(limit: Option[Int]): F[List[CompanyProfile]] =
+    repository.findAll(limit)
 
   override def fetchLatest(ticker: Ticker): F[Unit] =
     fetchCompanyProfile(ticker).void
