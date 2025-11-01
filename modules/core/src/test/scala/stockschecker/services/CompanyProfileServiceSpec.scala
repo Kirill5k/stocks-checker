@@ -81,6 +81,53 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         }
       }
     }
+
+    "getAll" should {
+      "return all company profiles from repository" in {
+        val (repo, client) = mocks
+        when(repo.findAll(any[Option[Int]])).thenReturnIO(List(AAPLCompanyProfile, MSFTCompanyProfile))
+
+        val res = for
+          svc <- CompanyProfileService.make(repo, client)
+          res <- svc.getAll(None)
+        yield res
+
+        res.asserting { profiles =>
+          verify(repo).findAll(None)
+          profiles mustBe List(AAPLCompanyProfile, MSFTCompanyProfile)
+        }
+      }
+
+      "return limited number of company profiles when limit is specified" in {
+        val (repo, client) = mocks
+        when(repo.findAll(any[Option[Int]])).thenReturnIO(List(AAPLCompanyProfile))
+
+        val res = for
+          svc <- CompanyProfileService.make(repo, client)
+          res <- svc.getAll(Some(1))
+        yield res
+
+        res.asserting { profiles =>
+          verify(repo).findAll(Some(1))
+          profiles mustBe List(AAPLCompanyProfile)
+        }
+      }
+
+      "return empty list when no company profiles exist" in {
+        val (repo, client) = mocks
+        when(repo.findAll(any[Option[Int]])).thenReturnIO(List.empty)
+
+        val res = for
+          svc <- CompanyProfileService.make(repo, client)
+          res <- svc.getAll(None)
+        yield res
+
+        res.asserting { profiles =>
+          verify(repo).findAll(None)
+          profiles mustBe List.empty
+        }
+      }
+    }
   }
 
   def mocks: (CompanyProfileRepository[IO], MarketDataClient[IO]) =

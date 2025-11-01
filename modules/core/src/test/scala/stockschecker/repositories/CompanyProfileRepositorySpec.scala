@@ -10,7 +10,7 @@ import java.time.LocalDate
 import scala.concurrent.Future
 import scala.concurrent.duration.*
 
-class CompanyProfileRepositoryTest extends RepositorySpec {
+class CompanyProfileRepositorySpec extends RepositorySpec {
 
   override def port: Int = 12147
 
@@ -35,6 +35,52 @@ class CompanyProfileRepositoryTest extends RepositorySpec {
             _    <- repo.save(AAPLCompanyProfile.copy(marketCap = 1L))
             res  <- repo.find(AAPL)
           yield res.map(_.marketCap) mustBe Some(1L)
+        }
+      }
+    }
+
+    "findAll" should {
+      "return all company profiles sorted by market cap descending" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            _    <- repo.save(MSFTCompanyProfile)
+            _    <- repo.save(AAPLCompanyProfile)
+            res  <- repo.findAll(None)
+          yield res mustBe List(AAPLCompanyProfile, MSFTCompanyProfile)
+        }
+      }
+
+      "return limited number of company profiles when limit is specified" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            _    <- repo.save(AAPLCompanyProfile)
+            _    <- repo.save(MSFTCompanyProfile)
+            res  <- repo.findAll(Some(1))
+          yield 
+            res.size mustBe 1
+            res.head mustBe AAPLCompanyProfile
+        }
+      }
+
+      "return empty list when no company profiles exist" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            res  <- repo.findAll(None)
+          yield res mustBe List.empty
+        }
+      }
+
+      "return all profiles when limit is greater than available profiles" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            _    <- repo.save(AAPLCompanyProfile)
+            _    <- repo.save(MSFTCompanyProfile)
+            res  <- repo.findAll(Some(10))
+          yield res.size mustBe 2
         }
       }
     }

@@ -3,7 +3,7 @@ package stockschecker.repositories
 import cats.effect.IO
 import stockschecker.fixtures.{AAPL, AAPLPricePerformanceSummary, MSFT}
 
-class PricePerformanceSummaryRepositoryTest extends RepositorySpec {
+class PricePerformanceSummaryRepositorySpec extends RepositorySpec {
 
   override def port: Int = 12148
 
