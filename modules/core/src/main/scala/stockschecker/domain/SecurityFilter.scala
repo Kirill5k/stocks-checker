@@ -8,7 +8,7 @@ import scala.concurrent.duration.FiniteDuration
 
 enum SecurityFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
   case ExchangeIs(exchange: Exchange)
-  case KindIs(kind: SecurityKind)
+  case KindIs(securityKind: SecurityKind)
   case IsActive(active: Boolean)
   case UpdatedWithin(duration: FiniteDuration)
   case NotUpdatedFor(duration: FiniteDuration)
