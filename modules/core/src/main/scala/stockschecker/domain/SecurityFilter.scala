@@ -14,7 +14,7 @@ enum SecurityFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.Decod
   case NotUpdatedFor(duration: FiniteDuration)
   case Composite(filters: NonEmptyList[SecurityFilter])
 
-object SecurityFilter extends JsonCodecs {
+object SecurityFilter extends JsonCodecs:
   given JsonTaggedAdt.Config[SecurityFilter] = JsonTaggedAdt.Config.Values[SecurityFilter](
     mappings = Map(
       "exchange-is"     -> JsonTaggedAdt.tagged[SecurityFilter.ExchangeIs],
@@ -27,4 +27,3 @@ object SecurityFilter extends JsonCodecs {
     strict = true,
     typeFieldName = "kind"
   )
-}
