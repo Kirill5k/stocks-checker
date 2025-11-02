@@ -52,55 +52,52 @@ final private class LiveCommandRepository[F[_]](
     collection
       .find(Filter.idEq(id.toObjectId))
       .first
-      .flatMap {
-        case Some(cmd) => cmd.toDomain.pure[F]
-        case None      => AppError.EntityDoesNotExist("Command", id.value).raiseError
-      }
+      .flatMap(toCommandOrError(id))
 
   override def create(cmd: CreateCommand): F[Command] =
     val newCmd = CommandEntity.from(cmd)
     collection.insertOne(newCmd).as(newCmd.toDomain)
 
   override def update(cmd: UpdateCommand): F[Command] =
-    collection
-      .findOneAndUpdate(
-        Filter.idEq(cmd.id.toObjectId),
-        Update
-          .set(Field.isActive, cmd.isActive)
-          .set(Field.action, cmd.action)
-          .set(Field.schedule, cmd.schedule)
-          .set(Field.maxExecutions, cmd.maxExecutions),
-        FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
-      )
-      .flatMap {
-        case Some(updatedCmd) => updatedCmd.toDomain.pure[F]
-        case None             => AppError.EntityDoesNotExist("Command", cmd.id.value).raiseError
-      }
+    updateCommand(
+      cmd.id,
+      Update
+        .set(Field.isActive, cmd.isActive)
+        .set(Field.action, cmd.action)
+        .set(Field.schedule, cmd.schedule)
+        .set(Field.maxExecutions, cmd.maxExecutions)
+    )
 
   override def update(cmd: Command): F[Command] =
+    updateCommand(
+      cmd.id,
+      Update
+        .set(Field.isActive, cmd.isActive)
+        .set(Field.action, cmd.action)
+        .set(Field.schedule, cmd.schedule)
+        .set(Field.lastExecutedAt, cmd.lastExecutedAt)
+        .set(Field.executionCount, cmd.executionCount)
+        .set(Field.maxExecutions, cmd.maxExecutions)
+    )
+
+  private def updateCommand(id: CommandId, update: Update): F[Command] =
     collection
       .findOneAndUpdate(
-        Filter.idEq(cmd.id.toObjectId),
-        Update
-          .set(Field.isActive, cmd.isActive)
-          .set(Field.action, cmd.action)
-          .set(Field.schedule, cmd.schedule)
-          .set(Field.lastExecutedAt, cmd.lastExecutedAt)
-          .set(Field.executionCount, cmd.executionCount)
-          .set(Field.maxExecutions, cmd.maxExecutions),
+        Filter.idEq(id.toObjectId),
+        update,
         FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
       )
-      .flatMap {
-        case Some(updatedCmd) => updatedCmd.toDomain.pure[F]
-        case None             => AppError.EntityDoesNotExist("Command", cmd.id.value).raiseError
-      }
+      .flatMap(toCommandOrError(id))
 
   override def setActive(id: CommandId, isActive: Boolean): F[Unit] =
     collection
       .updateOne(Filter.idEq(id.toObjectId), Update.set(Field.isActive, isActive))
       .flatMap(errorIfNoMatches(AppError.EntityDoesNotExist("Command", id.value)))
 
-  private def errorIfNoMatches(error: Throwable)(res: UpdateResult)(using F: MonadError[F, Throwable]): F[Unit] =
+  private def toCommandOrError(id: CommandId)(maybeCmd: Option[CommandEntity]): F[Command] =
+    F.fromOption(maybeCmd.map(_.toDomain), AppError.EntityDoesNotExist("Command", id.value))
+
+  private def errorIfNoMatches(error: Throwable)(res: UpdateResult): F[Unit] =
     F.raiseWhen(res.getMatchedCount == 0)(error)
 }
 
