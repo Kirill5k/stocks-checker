@@ -1,8 +1,6 @@
 package stockschecker.repositories
 
-import cats.{MonadError, MonadThrow}
-import cats.syntax.applicative.*
-import cats.syntax.applicativeError.*
+import cats.MonadThrow
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
 import com.mongodb.client.model.ReturnDocument
