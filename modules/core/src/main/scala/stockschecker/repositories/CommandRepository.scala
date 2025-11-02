@@ -5,14 +5,17 @@ import cats.syntax.applicative.*
 import cats.syntax.applicativeError.*
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
+import com.mongodb.client.model.ReturnDocument
 import com.mongodb.client.result.UpdateResult
 import fs2.Stream
 import mongo4cats.collection.MongoCollection
+import mongo4cats.models.collection.FindOneAndUpdateOptions
 import mongo4cats.operations.{Filter, Update}
 import mongo4cats.circe.given
 import mongo4cats.database.MongoDatabase
+import stockschecker.actions.Action
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule}
+import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule, UpdateCommand}
 import stockschecker.repositories.entities.CommandEntity
 import kirill5k.common.cats.syntax.applicative.*
 
@@ -21,6 +24,7 @@ trait CommandRepository[F[_]]:
   def streamActive: Stream[F, Command]
   def find(id: CommandId): F[Command]
   def create(cmd: CreateCommand): F[Command]
+  def update(cmd: UpdateCommand): F[Command]
   def update(cmd: Command): F[Command]
   def setActive(id: CommandId, isActive: Boolean): F[Unit]
 
@@ -32,6 +36,7 @@ final private class LiveCommandRepository[F[_]](
 
   private object Field:
     val isActive       = "isActive"
+    val action         = "action"
     val schedule       = "schedule"
     val lastExecutedAt = "lastExecutedAt"
     val executionCount = "executionCount"
@@ -56,19 +61,39 @@ final private class LiveCommandRepository[F[_]](
     val newCmd = CommandEntity.from(cmd)
     collection.insertOne(newCmd).as(newCmd.toDomain)
 
-  override def update(cmd: Command): F[Command] =
+  override def update(cmd: UpdateCommand): F[Command] =
     collection
-      .updateOne(
+      .findOneAndUpdate(
         Filter.idEq(cmd.id.toObjectId),
         Update
           .set(Field.isActive, cmd.isActive)
+          .set(Field.action, cmd.action)
+          .set(Field.schedule, cmd.schedule)
+          .set(Field.maxExecutions, cmd.maxExecutions),
+        FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
+      )
+      .flatMap {
+        case Some(updatedCmd) => updatedCmd.toDomain.pure[F]
+        case None             => AppError.EntityDoesNotExist("Command", cmd.id.value).raiseError
+      }
+
+  override def update(cmd: Command): F[Command] =
+    collection
+      .findOneAndUpdate(
+        Filter.idEq(cmd.id.toObjectId),
+        Update
+          .set(Field.isActive, cmd.isActive)
+          .set(Field.action, cmd.action)
           .set(Field.schedule, cmd.schedule)
           .set(Field.lastExecutedAt, cmd.lastExecutedAt)
           .set(Field.executionCount, cmd.executionCount)
-          .set(Field.maxExecutions, cmd.maxExecutions)
+          .set(Field.maxExecutions, cmd.maxExecutions),
+        FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
       )
-      .flatMap(errorIfNoMatches(AppError.EntityDoesNotExist("Command", cmd.id.value)))
-      .as(cmd)
+      .flatMap {
+        case Some(updatedCmd) => updatedCmd.toDomain.pure[F]
+        case None             => AppError.EntityDoesNotExist("Command", cmd.id.value).raiseError
+      }
 
   override def setActive(id: CommandId, isActive: Boolean): F[Unit] =
     collection
@@ -83,5 +108,5 @@ object CommandRepository:
   def make[F[_]](db: MongoDatabase[F])(using F: MonadThrow[F]): F[CommandRepository[F]] =
     db
       .getCollectionWithCodec[CommandEntity]("commands")
-      .map(_.withAddedCodec[Schedule])
+      .map(_.withAddedCodec[Schedule].withAddedCodec[Action])
       .map(LiveCommandRepository(_))

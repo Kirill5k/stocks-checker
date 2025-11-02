@@ -17,6 +17,14 @@ final case class CreateCommand(
     maxExecutions: Option[Int]
 ) derives Codec.AsObject
 
+final case class UpdateCommand(
+    id: CommandId,
+    isActive: Boolean,
+    action: Action,
+    schedule: Schedule,
+    maxExecutions: Option[Int]
+) derives Codec.AsObject
+
 final case class Command(
     id: CommandId,
     isActive: Boolean,

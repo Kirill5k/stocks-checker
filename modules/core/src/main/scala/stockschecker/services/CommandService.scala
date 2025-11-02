@@ -7,7 +7,7 @@ import kirill5k.common.cats.Clock
 import kirill5k.common.syntax.time.*
 import stockschecker.actions.Action
 import stockschecker.actions.ActionDispatcher
-import stockschecker.domain.{Command, CommandId, CreateCommand}
+import stockschecker.domain.{Command, CommandId, CreateCommand, UpdateCommand}
 import stockschecker.repositories.CommandRepository
 
 trait CommandService[F[_]]:
@@ -16,6 +16,7 @@ trait CommandService[F[_]]:
   def execute(cid: CommandId): F[Unit]
   def getAll: F[List[Command]]
   def activate(cid: CommandId, isActive: Boolean): F[Unit]
+  def update(uc: UpdateCommand): F[Command]
 
 final private class LiveCommandService[F[_]](
     private val actionDispatcher: ActionDispatcher[F],
@@ -59,6 +60,9 @@ final private class LiveCommandService[F[_]](
 
   override def activate(cid: CommandId, isActive: Boolean): F[Unit] =
     repo.setActive(cid, isActive)
+
+  override def update(uc: UpdateCommand): F[Command] =
+    repo.update(uc)
 }
 
 object CommandService:

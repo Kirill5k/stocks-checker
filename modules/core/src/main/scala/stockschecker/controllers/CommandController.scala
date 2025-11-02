@@ -5,7 +5,7 @@ import io.circe.Codec
 import org.http4s.HttpRoutes
 import stockschecker.actions.Action
 import stockschecker.controllers.CommandController.CreateCommandResponse
-import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule}
+import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule, UpdateCommand}
 import stockschecker.services.CommandService
 import sttp.model.StatusCode
 import sttp.tapir.*
@@ -37,12 +37,20 @@ final private class CommandController[F[_]: Async](
         .voidResponse
     }
 
+  private val updateCommand = CommandController.updateCommandEndpoint
+    .serverLogic { (cid, req) =>
+      service
+        .update(UpdateCommand(cid, req.isActive, req.action, req.schedule, req.maxExecutions))
+        .mapResponse(identity)
+    }
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
       List(
         getAllCommands,
         createCommand,
-        activateCommand
+        activateCommand,
+        updateCommand
       )
     )
 }
@@ -88,6 +96,19 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .in(jsonBody[ActivateCommandRequest])
     .out(statusCode(StatusCode.NoContent))
     .description("Change active status of a command")
+
+  final case class UpdateCommandRequest(
+      isActive: Boolean,
+      action: Action,
+      schedule: Schedule,
+      maxExecutions: Option[Int]
+  ) derives Codec.AsObject
+
+  private val updateCommandEndpoint = Controller.publicEndpoint.put
+    .in(commandIdPath)
+    .in(jsonBody[UpdateCommandRequest])
+    .out(jsonBody[Command])
+    .description("Update an existing command")
 
   def make[F[_]: Async](service: CommandService[F]): F[Controller[F]] =
     Async[F].pure(CommandController[F](service))
