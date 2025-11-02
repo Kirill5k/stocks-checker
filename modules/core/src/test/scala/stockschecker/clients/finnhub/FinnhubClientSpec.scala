@@ -16,7 +16,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
     "getListedSecurities" should {
       "return list of securities for NASDAQ on success" in {
-        val expectedParams = Map("apikey" -> "api-key", "exchange" -> "US", "mic" -> "XNAS")
+        val expectedParams = Map("token" -> "api-key", "exchange" -> "US", "mic" -> "XNAS")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
@@ -47,7 +47,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
       }
 
       "return list of securities for NYSE on success" in {
-        val expectedParams = Map("apikey" -> "api-key", "exchange" -> "US", "mic" -> "XNYS")
+        val expectedParams = Map("token" -> "api-key", "exchange" -> "US", "mic" -> "XNYS")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
@@ -68,7 +68,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
     "getCompanyProfile" should {
       "return company profile on success" in {
-        val expectedParams = Map("apikey" -> "api-key", "symbol" -> "AAPL")
+        val expectedParams = Map("token" -> "api-key", "symbol" -> "AAPL")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
@@ -100,7 +100,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
       }
 
       "return None when company profile is not found" in {
-        val expectedParams = Map("apikey" -> "api-key", "symbol" -> "INVALID")
+        val expectedParams = Map("token" -> "api-key", "symbol" -> "INVALID")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
             case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>

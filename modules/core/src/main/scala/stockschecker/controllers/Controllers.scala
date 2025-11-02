@@ -23,7 +23,7 @@ trait Controllers[F[_]]:
     )
 
 object Controllers:
-  def make[F[_]: Async: Clock](services: Services[F]): F[Controllers[F]] =
+  def make[F[_]: {Async, Clock}](services: Services[F]): F[Controllers[F]] =
     for
       s  <- SecurityController.make(services.security)
       cp <- CompanyProfileController.make(services.companyProfile)
