@@ -10,6 +10,7 @@ import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.CompanyProfileRepository
 
 trait CompanyProfileService[F[_]]:
+  def save(cps: List[CompanyProfile]): F[Unit]
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
   def getAll(limit: Option[Int]): F[List[CompanyProfile]]
   def fetchLatest(ticker: Ticker): F[Unit]
@@ -49,6 +50,9 @@ final private class LiveCompanyProfileService[F[_]](
 
   override def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): Stream[F, Ticker] =
     repository.streamTickersBy(filter, limit)
+
+  override def save(cps: List[CompanyProfile]): F[Unit] =
+    repository.save(cps)
 }
 
 object CompanyProfileService:

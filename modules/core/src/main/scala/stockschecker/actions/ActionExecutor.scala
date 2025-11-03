@@ -42,12 +42,12 @@ final private class LiveActionExecutor[F[_]](
         case Action.EnrichCompanyProfiles(filter, limit) =>
           services.security
             .streamTickersBy(filter, limit)
-            .tapAndDrain(ticker => dispatcher.dispatch(Action.FetchCompanyProfile(ticker)))
+            .tapAndDrain(ticker => handleAction(Action.FetchCompanyProfile(ticker)))
         case Action.FetchPricePerformanceSummaries(filter, limit) =>
           services.companyProfile
             .streamTickersBy(filter, limit)
             .metered(1.second)
-            .tapAndDrain(ticker => dispatcher.dispatch(Action.FetchLatestPricePerformanceSummary(ticker)))
+            .tapAndDrain(ticker => handleAction(Action.FetchLatestPricePerformanceSummary(ticker)))
         case Action.Sequence(actions) =>
           Stream.emits(actions.toList).tapAndDrain(handleAction)
       ).handleErrorWith {
