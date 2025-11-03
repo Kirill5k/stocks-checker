@@ -2,14 +2,13 @@ package stockschecker.actions
 
 import cats.data.NonEmptyList
 import cats.effect.Temporal
+import cats.implicits.toFoldableOps
 import cats.syntax.flatMap.*
 import cats.syntax.applicativeError.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
 import stockschecker.domain.errors.AppError
 import stockschecker.services.Services
-
-import scala.concurrent.duration.*
 
 trait ActionExecutor[F[_]]:
   def run: Stream[F, Unit]
@@ -24,23 +23,16 @@ final private class LiveActionExecutor[F[_]](
   override def run: Stream[F, Unit] =
     dispatcher.pendingActions.map(a => Stream.eval(handleAction(a))).parJoinUnbounded
 
-  extension [A](s: Stream[F, A])
-    def tapAndDrain(f: A => F[Unit]): F[Unit] =
-      s.metered(1.second).evalTap(f).compile.drain
-
   private def handleAction(action: Action): F[Unit] =
     logger.info(s"Processing $action") >>
       (action match
+        case Action.Sequence(actions)                             => actions.toList.traverse_(handleAction)
         case Action.RescheduleAll                                 => services.command.rescheduleAll
         case Action.Schedule(cid, waiting)                        => F.sleep(waiting) >> services.command.execute(cid)
-        case Action.FetchLatestSecurities(exchange)               => services.security.fetchLatest(exchange)
+        case Action.DiscoverSecurities(exchanges)                 => services.security.fetchLatest(exchanges)
         case Action.FetchCompanyProfiles(tickers)                 => services.companyProfile.fetchLatest(tickers)
         case Action.FetchLatestPricePerformanceSummaries(tickers) => services.price.fetchLatestPerformanceSummaries(tickers)
-        case Action.DiscoverSecurities(exchanges)                 =>
-          Stream
-            .emits(exchanges.toList)
-            .tapAndDrain(exchange => handleAction(Action.FetchLatestSecurities(exchange)))
-        case Action.EnrichCompanyProfiles(filter, limit) =>
+        case Action.EnrichCompanyProfiles(filter, limit)          =>
           services.security
             .findTickersBy(filter, limit)
             .flatMap {
@@ -54,8 +46,6 @@ final private class LiveActionExecutor[F[_]](
               case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchPricePerformanceSummaries")
               case tickers => dispatcher.dispatch(Action.FetchLatestPricePerformanceSummaries(NonEmptyList.fromListUnsafe(tickers)))
             }
-        case Action.Sequence(actions) =>
-          Stream.emits(actions.toList).tapAndDrain(handleAction)
       ).handleErrorWith {
         case error: AppError =>
           logger.warn(error)(s"Domain error while processing action $action")

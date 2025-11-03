@@ -1,6 +1,7 @@
 package stockschecker.services
 
-import cats.effect.Concurrent
+import cats.data.NonEmptyList
+import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
@@ -9,19 +10,21 @@ import stockschecker.domain.{Exchange, Security, SecurityFilter, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.SecurityRepository
 
+import scala.concurrent.duration.*
+
 trait SecurityService[F[_]]:
   def find(ticker: Ticker): F[Security]
   def findByExchange(exchange: Exchange): F[List[Security]]
   def getAllTickers: F[List[Ticker]]
   def streamAll: Stream[F, Security]
-  def fetchLatest(exchange: Exchange): F[Unit]
+  def fetchLatest(exchanges: NonEmptyList[Exchange]): F[Unit]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
 
 final private class LiveSecurityService[F[_]](
     private val repository: SecurityRepository[F],
     private val marketDataClient: MarketDataClient[F]
 )(using
-    F: Concurrent[F],
+    F: Temporal[F],
     logger: Logger[F]
 ) extends SecurityService[F] {
 
@@ -37,10 +40,12 @@ final private class LiveSecurityService[F[_]](
   override def streamAll: Stream[F, Security] =
     repository.streamAll
 
-  override def fetchLatest(exchange: Exchange): F[Unit] =
-    logger.info(s"Fetching latest securities for ${exchange.fullName}") >>
-      marketDataClient
-        .getTradedSecurities(exchange)
+  override def fetchLatest(exchanges: NonEmptyList[Exchange]): F[Unit] =
+    logger.info(s"Fetching latest securities for ${exchanges}") >>
+      Stream
+        .emits(exchanges.toList)
+        .metered(1.second)
+        .flatMap(exchange => marketDataClient.getTradedSecurities(exchange))
         .chunkN(512)
         .evalMap { chunk =>
           logger.info(s"Saving batch of ${chunk.size} securities") >>
@@ -48,7 +53,7 @@ final private class LiveSecurityService[F[_]](
         }
         .compile
         .drain >>
-      logger.info(s"Finished fetching securities for ${exchange.fullName}")
+      logger.info(s"Finished fetching securities for ${exchanges}")
 
   override def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
@@ -58,5 +63,5 @@ object SecurityService:
   def make[F[_]](
       repository: SecurityRepository[F],
       marketDataClient: MarketDataClient[F]
-  )(using Concurrent[F], Logger[F]): F[SecurityService[F]] =
-    Concurrent[F].pure(LiveSecurityService[F](repository, marketDataClient))
+  )(using Temporal[F], Logger[F]): F[SecurityService[F]] =
+    Temporal[F].pure(LiveSecurityService[F](repository, marketDataClient))
