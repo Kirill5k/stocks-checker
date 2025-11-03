@@ -27,6 +27,9 @@ object errors {
     final case class CompanyProfileNotFound(ticker: Ticker) extends NotFound:
       override val message: String = s"Could not find company profile for $ticker"
 
+    final case class PricePerformanceSummaryNotFound(ticker: Ticker) extends NotFound:
+      override val message: String = s"Could not find price performance summary for $ticker"
+
     final case class JsonParsingFailure(original: String, error: String) extends AppError:
       override val message: String = s"Failed to parse json response: $error\n$original"
 }

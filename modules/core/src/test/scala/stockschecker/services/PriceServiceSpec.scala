@@ -63,6 +63,61 @@ class PriceServiceSpec extends IOWordSpec {
         }
       }
     }
+
+    "findPerformanceSummary" should {
+      "return performance summary from repository when found" in {
+        val (repo, client) = mocks
+        when(repo.find(any[Ticker])).thenReturnIO(Some(AAPLPricePerformanceSummary))
+
+        val res = for
+          svc    <- PriceService.make(repo, client)
+          result <- svc.findPerformanceSummary(AAPL)
+        yield result
+
+        res.asserting { result =>
+          verify(repo).find(AAPL)
+          verifyNoInteractions(client)
+          result mustBe AAPLPricePerformanceSummary
+        }
+      }
+
+      "fetch from market data client when not found in repository" in {
+        val (repo, client) = mocks
+        when(repo.find(any[Ticker])).thenReturnIO(None)
+        when(client.getMonthlyPriceCandles(any[Ticker])).thenReturnIO(AAPLPriceCandles)
+        when(repo.save(any[PricePerformanceSummary])).thenReturnUnit
+
+        val res = for
+          svc    <- PriceService.make(repo, client)
+          result <- svc.findPerformanceSummary(AAPL)
+        yield result
+
+        res.asserting { result =>
+          verify(repo).find(AAPL)
+          verify(client).getMonthlyPriceCandles(AAPL)
+          verify(repo).save(any[PricePerformanceSummary])
+          result.ticker mustBe AAPL
+        }
+      }
+
+      "handle errors when market data client fails" in {
+        val (repo, client) = mocks
+        val error = new RuntimeException("API error")
+        when(repo.find(any[Ticker])).thenReturnIO(None)
+        when(client.getMonthlyPriceCandles(any[Ticker])).thenRaiseError(error)
+
+        val res = for
+          svc    <- PriceService.make(repo, client)
+          result <- svc.findPerformanceSummary(AAPL)
+        yield result
+
+        res.attempt.asserting { result =>
+          verify(repo).find(AAPL)
+          verify(client).getMonthlyPriceCandles(AAPL)
+          result mustBe Left(error)
+        }
+      }
+    }
   }
 
   def mocks: (PricePerformanceSummaryRepository[IO], MarketDataClient[IO]) =

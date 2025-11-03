@@ -16,7 +16,7 @@ final private class SecurityController[F[_]: Async](
   private val getSecurityByTicker = SecurityController.getSecurityByTickerEndpoint
     .serverLogic { ticker =>
       securityService
-        .findByTicker(ticker)
+        .find(ticker)
         .mapResponse(identity)
     }
 

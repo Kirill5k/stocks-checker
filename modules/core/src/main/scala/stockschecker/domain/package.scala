@@ -67,7 +67,7 @@ package object domain {
       name: String,
       country: String,
       industry: String,
-      description: String,
+      description: Option[String],
       website: String,
       ipoDate: LocalDate,
       currency: String,

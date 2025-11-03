@@ -15,7 +15,7 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
     "GET /securities/:ticker" should {
       "return 200 and security on success" in {
         val svc = mocks
-        when(svc.findByTicker(any[Ticker])).thenReturnIO(AAPLSecurity)
+        when(svc.find(any[Ticker])).thenReturnIO(AAPLSecurity)
 
         val res = for
           controller <- SecurityController.make(svc)
@@ -31,13 +31,13 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
                         |  "isActive" : true
                         |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(resBody))
-        verify(svc).findByTicker(AAPL)
+        verify(svc).find(AAPL)
       }
 
       "return 404 when security is not found" in {
         val svc = mocks
         val ticker = Ticker("UNKNOWN")
-        when(svc.findByTicker(ticker)).thenRaiseError(AppError.SecurityNotFound(ticker))
+        when(svc.find(ticker)).thenRaiseError(AppError.SecurityNotFound(ticker))
 
         val res = for
           controller <- SecurityController.make(svc)
@@ -47,7 +47,7 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
 
         val resBody = s"""{"message" : "Could not find security for UNKNOWN"}""".stripMargin
         res mustHaveStatus (Status.NotFound, Some(resBody))
-        verify(svc).findByTicker(ticker)
+        verify(svc).find(ticker)
       }
     }
 

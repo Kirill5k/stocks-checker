@@ -108,7 +108,7 @@ object FinnhubClient {
       name: String,
       country: String,
       finnhubIndustry: String,
-      description: String,
+      description: Option[String],
       weburl: String,
       ipo: String,
       estimateCurrency: String,

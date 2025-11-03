@@ -11,7 +11,7 @@ import stockschecker.domain.errors.AppError
 import stockschecker.repositories.SecurityRepository
 
 trait SecurityService[F[_]]:
-  def findByTicker(ticker: Ticker): F[Security]
+  def find(ticker: Ticker): F[Security]
   def findByExchange(exchange: Exchange): F[List[Security]]
   def getAllTickers: F[List[Ticker]]
   def streamAll: Stream[F, Security]
@@ -25,7 +25,7 @@ final private class LiveSecurityService[F[_]: {Concurrent, Logger}](
     F: MonadThrow[F]
 ) extends SecurityService[F] {
 
-  override def findByTicker(ticker: Ticker): F[Security] =
+  override def find(ticker: Ticker): F[Security] =
     repository.find(ticker).flatMap(s => F.fromOption(s, AppError.SecurityNotFound(ticker)))
 
   override def findByExchange(exchange: Exchange): F[List[Security]] =

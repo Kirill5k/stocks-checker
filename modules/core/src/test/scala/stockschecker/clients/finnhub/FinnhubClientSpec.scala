@@ -88,8 +88,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
               name = "APPLE INC",
               country = "US",
               industry = "Technology",
-              description =
-                "Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide.",
+              description = Some("Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide."),
               website = "https://www.apple.com/",
               ipoDate = LocalDate.parse("1980-12-12"),
               currency = "USD",
