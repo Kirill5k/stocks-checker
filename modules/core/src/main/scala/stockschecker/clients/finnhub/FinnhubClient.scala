@@ -27,7 +27,7 @@ final private class LiveFinnhubClient[F[_]](
 
   override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
     val request = emptyRequest
-      .get(uri"${config.baseUri}/api/v1/stock/symbol?token=${config.apiKey}&symbol=$ticker")
+      .get(uri"${config.baseUri}/api/v1/stock/profile2?token=${config.apiKey}&symbol=$ticker")
       .response(asJson[io.circe.JsonObject])
 
     backend.send(request).flatMap { response =>

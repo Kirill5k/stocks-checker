@@ -71,7 +71,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
         val expectedParams = Map("token" -> "api-key", "symbol" -> "AAPL")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
-            case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
+            case r if r.isGet && r.hasPath("/api/v1/stock/profile2") && r.hasParams(expectedParams) =>
               ResponseStub.adjust(readJson("finnhub/company-profile-success.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
@@ -103,7 +103,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
         val expectedParams = Map("token" -> "api-key", "symbol" -> "INVALID")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
-            case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
+            case r if r.isGet && r.hasPath("/api/v1/stock/profile2") && r.hasParams(expectedParams) =>
               ResponseStub.adjust(readJson("finnhub/company-profile-not-found.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
