@@ -17,7 +17,7 @@ enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt
   case UpdatedWithin(duration: FiniteDuration)
   case NotUpdatedFor(duration: FiniteDuration)
 
-object CompanyProfileFilter extends JsonCodecs {
+object CompanyProfileFilter extends JsonCodecs:
   given JsonTaggedAdt.Config[CompanyProfileFilter] = JsonTaggedAdt.Config.Values[CompanyProfileFilter](
     mappings = Map(
       "market-cap-above" -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapAbove],
@@ -32,4 +32,3 @@ object CompanyProfileFilter extends JsonCodecs {
     strict = true,
     typeFieldName = "kind"
   )
-}
