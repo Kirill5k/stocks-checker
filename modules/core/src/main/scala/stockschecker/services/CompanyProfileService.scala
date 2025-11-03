@@ -1,41 +1,60 @@
 package stockschecker.services
 
-import cats.MonadThrow
+import cats.data.NonEmptyList
+import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
+import cats.syntax.applicativeError.*
 import fs2.Stream
+import org.typelevel.log4cats.Logger
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.CompanyProfileRepository
 
+import scala.concurrent.duration.*
+
 trait CompanyProfileService[F[_]]:
   def save(cps: List[CompanyProfile]): F[Unit]
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
   def getAll(limit: Option[Int]): F[List[CompanyProfile]]
-  def fetchLatest(ticker: Ticker, save: Boolean = true): F[Option[CompanyProfile]]
-  def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): Stream[F, Ticker]
+  def fetchLatest(tickers: NonEmptyList[Ticker]): F[Unit]
+  def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]]
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
     private val client: MarketDataClient[F]
 )(using
-    F: MonadThrow[F]
+    F: Temporal[F],
+    logger: Logger[F]
 ) extends CompanyProfileService[F] {
 
-  override def fetchLatest(ticker: Ticker, save: Boolean = true): F[Option[CompanyProfile]] =
-    fetchCompanyProfile(ticker)
-      .flatMap {
-        case Some(cp)     => F.whenA(save)(repository.save(cp)).as(Some(cp))
-        case None if save => F.raiseError(AppError.CompanyProfileNotFound(ticker))
-        case None         => F.pure(None)
-      }
+  override def fetchLatest(tickers: NonEmptyList[Ticker]): F[Unit] =
+    logger.info(s"Fetching latest company profiles for ${tickers.size} tickers") >>
+      Stream
+        .emits(tickers.toList)
+        .metered(1.second)
+        .evalMap { ticker =>
+          fetchCompanyProfile(ticker)
+            .handleErrorWith { error =>
+              logger.error(error)(s"Error fetching company profile for $ticker").as(None)
+            }
+        }
+        .unNone
+        .chunkN(512)
+        .evalMap { chunk =>
+          logger.info(s"Saving batch of ${chunk.size} company profiles") >>
+            repository.save(chunk.toList)
+        }
+        .compile
+        .drain >>
+      logger.info(s"Finished fetching company profiles for ${tickers.size} tickers")
 
   override def get(ticker: Ticker, fetch: Boolean = false): F[CompanyProfile] = {
     val cpOpt =
-      if (fetch) fetchLatest(ticker)
+      if (fetch) fetchCompanyProfile(ticker).flatTap(cp => F.whenA(cp.nonEmpty)(repository.save(cp.get)))
       else repository.find(ticker)
-      
+
     cpOpt.flatMap(cp => F.fromOption(cp, AppError.CompanyProfileNotFound(ticker)))
   }
 
@@ -45,13 +64,13 @@ final private class LiveCompanyProfileService[F[_]](
   private def fetchCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] =
     client.getCompanyProfile(ticker)
 
-  override def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): Stream[F, Ticker] =
-    repository.streamTickersBy(filter, limit)
+  override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]] =
+    repository.findTickersBy(filter, limit)
 
   override def save(cps: List[CompanyProfile]): F[Unit] =
     repository.save(cps)
 }
 
 object CompanyProfileService:
-  def make[F[_]](repo: CompanyProfileRepository[F], client: MarketDataClient[F])(using F: MonadThrow[F]): F[CompanyProfileService[F]] =
-    F.pure(LiveCompanyProfileService[F](repo, client))
+  def make[F[_]: {Temporal, Logger}](repo: CompanyProfileRepository[F], client: MarketDataClient[F]): F[CompanyProfileService[F]] =
+    Temporal[F].pure(LiveCompanyProfileService[F](repo, client))

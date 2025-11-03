@@ -1,6 +1,5 @@
 package stockschecker.services
 
-import cats.{Monad, MonadThrow}
 import cats.effect.Concurrent
 import cats.syntax.flatMap.*
 import fs2.Stream
@@ -16,13 +15,14 @@ trait SecurityService[F[_]]:
   def getAllTickers: F[List[Ticker]]
   def streamAll: Stream[F, Security]
   def fetchLatest(exchange: Exchange): F[Unit]
-  def streamTickersBy(filter: SecurityFilter, limit: Option[Int]): Stream[F, Ticker]
+  def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
 
-final private class LiveSecurityService[F[_]: {Concurrent, Logger}](
+final private class LiveSecurityService[F[_]](
     private val repository: SecurityRepository[F],
     private val marketDataClient: MarketDataClient[F]
 )(using
-    F: MonadThrow[F]
+    F: Concurrent[F],
+    logger: Logger[F]
 ) extends SecurityService[F] {
 
   override def find(ticker: Ticker): F[Security] =
@@ -38,20 +38,20 @@ final private class LiveSecurityService[F[_]: {Concurrent, Logger}](
     repository.streamAll
 
   override def fetchLatest(exchange: Exchange): F[Unit] =
-    Logger[F].info(s"Fetching latest securities for ${exchange.fullName}") >>
+    logger.info(s"Fetching latest securities for ${exchange.fullName}") >>
       marketDataClient
         .getTradedSecurities(exchange)
         .chunkN(512)
         .evalMap { chunk =>
-          Logger[F].info(s"Saving batch of ${chunk.size} securities") >>
+          logger.info(s"Saving batch of ${chunk.size} securities") >>
             repository.save(chunk.toList)
         }
         .compile
         .drain >>
-      Logger[F].info(s"Finished fetching securities for ${exchange.fullName}")
+      logger.info(s"Finished fetching securities for ${exchange.fullName}")
 
-  override def streamTickersBy(filter: SecurityFilter, limit: Option[Int]): Stream[F, Ticker] =
-    repository.streamTickersBy(filter, limit)
+  override def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]] =
+    repository.findTickersBy(filter, limit)
 }
 
 object SecurityService:
@@ -59,4 +59,4 @@ object SecurityService:
       repository: SecurityRepository[F],
       marketDataClient: MarketDataClient[F]
   )(using Concurrent[F], Logger[F]): F[SecurityService[F]] =
-    Monad[F].pure(LiveSecurityService[F](repository, marketDataClient))
+    Concurrent[F].pure(LiveSecurityService[F](repository, marketDataClient))

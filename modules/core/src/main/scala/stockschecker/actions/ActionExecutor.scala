@@ -1,8 +1,8 @@
 package stockschecker.actions
 
+import cats.data.NonEmptyList
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
-import cats.syntax.functor.*
 import cats.syntax.applicativeError.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
@@ -31,29 +31,29 @@ final private class LiveActionExecutor[F[_]](
   private def handleAction(action: Action): F[Unit] =
     logger.info(s"Processing $action") >>
       (action match
-        case Action.RescheduleAll                              => services.command.rescheduleAll
-        case Action.Schedule(cid, waiting)                     => F.sleep(waiting) >> services.command.execute(cid)
-        case Action.FetchLatestSecurities(exchange)            => services.security.fetchLatest(exchange).void
-        case Action.FetchCompanyProfile(ticker)                => services.companyProfile.fetchLatest(ticker).void
-        case Action.FetchLatestPricePerformanceSummary(ticker) => services.price.fetchLatestPerformanceSummary(ticker)
-        case Action.DiscoverSecurities(exchanges)              =>
+        case Action.RescheduleAll                                 => services.command.rescheduleAll
+        case Action.Schedule(cid, waiting)                        => F.sleep(waiting) >> services.command.execute(cid)
+        case Action.FetchLatestSecurities(exchange)               => services.security.fetchLatest(exchange)
+        case Action.FetchCompanyProfiles(tickers)                 => services.companyProfile.fetchLatest(tickers)
+        case Action.FetchLatestPricePerformanceSummaries(tickers) => services.price.fetchLatestPerformanceSummaries(tickers)
+        case Action.DiscoverSecurities(exchanges)                 =>
           Stream
             .emits(exchanges.toList)
             .tapAndDrain(exchange => handleAction(Action.FetchLatestSecurities(exchange)))
         case Action.EnrichCompanyProfiles(filter, limit) =>
           services.security
-            .streamTickersBy(filter, limit)
-            .metered(1.second)
-            .evalMap(ticker => services.companyProfile.fetchLatest(ticker, false).handleErrorWith(_ => F.pure(None)))
-            .unNone
-            .chunkN(512, true)
-            .evalMap(cps => services.companyProfile.save(cps.toList))
-            .compile
-            .drain
+            .findTickersBy(filter, limit)
+            .flatMap {
+              case Nil     => logger.info("Couldn't find any applicable securities for Action.EnrichCompanyProfiles")
+              case tickers => dispatcher.dispatch(Action.FetchCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)))
+            }
         case Action.FetchPricePerformanceSummaries(filter, limit) =>
           services.companyProfile
-            .streamTickersBy(filter, limit)
-            .tapAndDrain(ticker => handleAction(Action.FetchLatestPricePerformanceSummary(ticker)))
+            .findTickersBy(filter, limit)
+            .flatMap {
+              case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchPricePerformanceSummaries")
+              case tickers => dispatcher.dispatch(Action.FetchLatestPricePerformanceSummaries(NonEmptyList.fromListUnsafe(tickers)))
+            }
         case Action.Sequence(actions) =>
           Stream.emits(actions.toList).tapAndDrain(handleAction)
       ).handleErrorWith {

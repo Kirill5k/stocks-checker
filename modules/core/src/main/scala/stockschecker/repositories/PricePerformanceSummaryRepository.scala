@@ -8,13 +8,16 @@ import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.models.collection.UpdateOptions
+import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.{PricePerformanceSummary, Ticker}
 import stockschecker.repositories.entities.PricePerformanceSummaryEntity
 
+import java.time.Instant
+
 trait PricePerformanceSummaryRepository[F[_]]:
   def save(summary: PricePerformanceSummary): F[Unit]
+  def save(summaries: List[PricePerformanceSummary]): F[Unit]
   def find(ticker: Ticker): F[Option[PricePerformanceSummary]]
 
 final private class LivePricePerformanceSummaryRepository[F[_]](
@@ -25,42 +28,54 @@ final private class LivePricePerformanceSummaryRepository[F[_]](
 ) extends PricePerformanceSummaryRepository[F] {
 
   private object Field:
-    val Id                = "_id"
-    val Ticker            = "ticker"
-    val LatestPrice       = "latestPrice"
-    val LatestPriceDate   = "latestPriceDate"
-    val OneMonthChange    = "oneMonthChange"
-    val ThreeMonthChange  = "threeMonthChange"
-    val SixMonthChange    = "sixMonthChange"
-    val OneYearChange     = "oneYearChange"
-    val ThreeYearChange   = "threeYearChange"
-    val FiveYearChange    = "fiveYearChange"
-    val TenYearChange     = "tenYearChange"
-    val MaxChange         = "maxChange"
-    val CreatedAt         = "createdAt"
-    val UpdatedAt         = "updatedAt"
+    val Id               = "_id"
+    val Ticker           = "ticker"
+    val LatestPrice      = "latestPrice"
+    val LatestPriceDate  = "latestPriceDate"
+    val OneMonthChange   = "oneMonthChange"
+    val ThreeMonthChange = "threeMonthChange"
+    val SixMonthChange   = "sixMonthChange"
+    val OneYearChange    = "oneYearChange"
+    val ThreeYearChange  = "threeYearChange"
+    val FiveYearChange   = "fiveYearChange"
+    val TenYearChange    = "tenYearChange"
+    val MaxChange        = "maxChange"
+    val CreatedAt        = "createdAt"
+    val UpdatedAt        = "updatedAt"
+
+  extension (summary: PricePerformanceSummary)
+    private def toUpdate(now: Instant): Update =
+      Update
+        .setOnInsert(Field.Id, summary.ticker)
+        .setOnInsert(Field.CreatedAt, now)
+        .set(Field.UpdatedAt, now)
+        .set(Field.Ticker, summary.ticker)
+        .set(Field.LatestPrice, summary.latestPrice)
+        .set(Field.LatestPriceDate, summary.latestPriceDate)
+        .set(Field.OneMonthChange, summary.oneMonthChange)
+        .set(Field.ThreeMonthChange, summary.threeMonthChange)
+        .set(Field.SixMonthChange, summary.sixMonthChange)
+        .set(Field.OneYearChange, summary.oneYearChange)
+        .set(Field.ThreeYearChange, summary.threeYearChange)
+        .set(Field.FiveYearChange, summary.fiveYearChange)
+        .set(Field.TenYearChange, summary.tenYearChange)
+        .set(Field.MaxChange, summary.maxChange)
 
   override def save(summary: PricePerformanceSummary): F[Unit] =
     clock.now.flatMap { now =>
-      collection.updateOne(
-        Filter.idEq(summary.ticker),
-        Update
-          .setOnInsert(Field.Id, summary.ticker)
-          .setOnInsert(Field.CreatedAt, now)
-          .set(Field.UpdatedAt, now)
-          .set(Field.Ticker, summary.ticker)
-          .set(Field.LatestPrice, summary.latestPrice)
-          .set(Field.LatestPriceDate, summary.latestPriceDate)
-          .set(Field.OneMonthChange, summary.oneMonthChange)
-          .set(Field.ThreeMonthChange, summary.threeMonthChange)
-          .set(Field.SixMonthChange, summary.sixMonthChange)
-          .set(Field.OneYearChange, summary.oneYearChange)
-          .set(Field.ThreeYearChange, summary.threeYearChange)
-          .set(Field.FiveYearChange, summary.fiveYearChange)
-          .set(Field.TenYearChange, summary.tenYearChange)
-          .set(Field.MaxChange, summary.maxChange),
-        UpdateOptions(upsert = true)
-      ).void
+      collection.updateOne(Filter.idEq(summary.ticker), summary.toUpdate(now), UpdateOptions(upsert = true)).void
+    }
+
+  override def save(summaries: List[PricePerformanceSummary]): F[Unit] =
+    clock.now.flatMap { now =>
+      val updates = summaries.map { s =>
+        WriteCommand.UpdateOne(
+          Filter.idEq(s.ticker),
+          s.toUpdate(now),
+          UpdateOptions(upsert = true)
+        )
+      }
+      collection.bulkWrite(updates).void
     }
 
   override def find(ticker: Ticker): F[Option[PricePerformanceSummary]] =
@@ -73,5 +88,3 @@ object PricePerformanceSummaryRepository extends MongoJsonCodecs:
       .getCollectionWithCodec[PricePerformanceSummaryEntity]("price-performance-summaries")
       .map(_.withAddedCodec[Ticker])
       .map(LivePricePerformanceSummaryRepository[F](_))
-
-

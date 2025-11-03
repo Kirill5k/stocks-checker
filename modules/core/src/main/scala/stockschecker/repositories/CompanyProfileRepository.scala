@@ -4,7 +4,6 @@ import cats.Monad
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
 import cats.syntax.applicative.*
-import fs2.Stream
 import kirill5k.common.cats.Clock
 import kirill5k.common.syntax.time.*
 import mongo4cats.collection.MongoCollection
@@ -23,7 +22,7 @@ trait CompanyProfileRepository[F[_]]:
   def save(cps: List[CompanyProfile]): F[Unit]
   def find(ticker: Ticker): F[Option[CompanyProfile]]
   def findAll(limit: Option[Int]): F[List[CompanyProfile]]
-  def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): Stream[F, Ticker]
+  def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): F[List[Ticker]]
 
 final private class LiveCompanyProfileRepository[F[_]](
     private val collection: MongoCollection[F, CompanyProfileEntity]
@@ -59,7 +58,7 @@ final private class LiveCompanyProfileRepository[F[_]](
         .set(Field.Currency, cp.currency)
         .set(Field.MarketCap, cp.marketCap)
         .set(Field.UpdatedAt, now)
-  
+
   override def save(cp: CompanyProfile): F[Unit] =
     C.now.flatMap { time =>
       collection.updateOne(Filter.idEq(cp.ticker), cp.toUpdate(time), UpdateOptions(upsert = true)).void
@@ -76,20 +75,19 @@ final private class LiveCompanyProfileRepository[F[_]](
       }
       collection.bulkWrite(updates).void
     }
-  
+
   override def find(ticker: Ticker): F[Option[CompanyProfile]] =
     collection.find(Filter.idEq(ticker)).first.mapOpt(_.toDomain)
 
   override def findAll(limit: Option[Int]): F[List[CompanyProfile]] =
-    collection
-      .find
+    collection.find
       .sort(Sort.desc(Field.MarketCap))
       .limit(limit.getOrElse(Int.MaxValue))
       .all
       .mapList(_.toDomain)
 
-  override def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): Stream[F, Ticker] =
-    Stream.eval(filter.toFilter).flatMap { mongoFilter =>
+  override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): F[List[Ticker]] =
+    filter.toFilter.flatMap { mongoFilter =>
       collection
         .aggregate[Entity](
           Aggregate
@@ -98,8 +96,8 @@ final private class LiveCompanyProfileRepository[F[_]](
             .limit(limit.getOrElse(Int.MaxValue))
             .project(Projection.include(Field.Id))
         )
-        .stream
-        .map(_._id)
+        .all
+        .mapList(_._id)
     }
 
   extension (f: CompanyProfileFilter)

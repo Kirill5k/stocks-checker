@@ -25,7 +25,7 @@ trait SecurityRepository[F[_]]:
   def findByExchange(exchange: Exchange): F[List[Security]]
   def streamAll: Stream[F, Security]
   def getAllTickers: F[List[Ticker]]
-  def streamTickersBy(filter: SecurityFilter, limit: Option[Int]): Stream[F, Ticker]
+  def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
 
 final private class LiveSecurityRepository[F[_]](
     private val collection: MongoCollection[F, SecurityEntity]
@@ -86,8 +86,8 @@ final private class LiveSecurityRepository[F[_]](
   override def getAllTickers: F[List[Ticker]] =
     collection.distinct[Ticker]("ticker").all.map(_.toList)
 
-  override def streamTickersBy(filter: SecurityFilter, limit: Option[Int]): Stream[F, Ticker] =
-    Stream.eval(filter.toFilter).flatMap { mongoFilter =>
+  override def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]] =
+    filter.toFilter.flatMap { mongoFilter =>
       collection
         .aggregate[Entity](
           Aggregate
@@ -95,8 +95,8 @@ final private class LiveSecurityRepository[F[_]](
             .limit(limit.getOrElse(Int.MaxValue))
             .project(Projection.include(Field.Id))
         )
-        .stream
-        .map(_._id)
+        .all
+        .mapList(_._id)
     }
 
   extension (f: SecurityFilter)
