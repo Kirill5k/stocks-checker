@@ -40,16 +40,16 @@ final private class LiveActionExecutor[F[_]](
         case Action.DiscoverSecurities(exchanges)              =>
           Stream
             .emits(exchanges.toList)
-            .tapAndDrain(exchange => dispatcher.dispatch(Action.FetchLatestSecurities(exchange)))
+            .tapAndDrain(exchange => handleAction(Action.FetchLatestSecurities(exchange)))
         case Action.EnrichCompanyProfiles(filter, limit) =>
           services.security
             .streamTickersBy(filter, limit)
-            .tapAndDrain(ticker => dispatcher.dispatch(Action.FetchCompanyProfile(ticker)))
+            .tapAndDrain(ticker => handleAction(Action.FetchCompanyProfile(ticker)))
         case Action.FetchPricePerformanceSummaries(filter, limit) =>
           services.companyProfile
             .streamTickersBy(filter, limit)
             .metered(1.second)
-            .tapAndDrain(ticker => dispatcher.dispatch(Action.FetchLatestPricePerformanceSummary(ticker)))
+            .tapAndDrain(ticker => handleAction(Action.FetchLatestPricePerformanceSummary(ticker)))
       ).handleErrorWith {
         case error: AppError =>
           logger.warn(error)(s"Domain error while processing action $action")
