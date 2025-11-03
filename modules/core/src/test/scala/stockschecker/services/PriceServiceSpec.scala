@@ -92,7 +92,6 @@ class PriceServiceSpec extends IOWordSpec {
         yield result
 
         res.asserting { result =>
-          verifyNoInteractions(repo)
           verify(client).getMonthlyPriceCandles(AAPL)
           verify(repo).save(any[PricePerformanceSummary])
           result.ticker mustBe AAPL
