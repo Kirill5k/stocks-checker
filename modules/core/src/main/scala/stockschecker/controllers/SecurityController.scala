@@ -50,7 +50,7 @@ object SecurityController extends TapirJsonCirce with SchemaDerivation {
 
   private val getSecurityByTickerEndpoint = Controller.publicEndpoint.get
     .in(basePath / path[Ticker]("ticker"))
-    .out(jsonBody[Option[Security]])
+    .out(jsonBody[Security])
     .description("Get security by ticker")
 
   private val getSecuritiesByExchangeEndpoint = Controller.publicEndpoint.get

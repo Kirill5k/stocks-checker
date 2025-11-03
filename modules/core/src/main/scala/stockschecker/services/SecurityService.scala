@@ -1,16 +1,17 @@
 package stockschecker.services
 
-import cats.Monad
+import cats.{Monad, MonadThrow}
 import cats.effect.Concurrent
 import cats.syntax.flatMap.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.{Exchange, Security, SecurityFilter, Ticker}
+import stockschecker.domain.errors.AppError
 import stockschecker.repositories.SecurityRepository
 
 trait SecurityService[F[_]]:
-  def findByTicker(ticker: Ticker): F[Option[Security]]
+  def findByTicker(ticker: Ticker): F[Security]
   def findByExchange(exchange: Exchange): F[List[Security]]
   def getAllTickers: F[List[Ticker]]
   def streamAll: Stream[F, Security]
@@ -20,10 +21,12 @@ trait SecurityService[F[_]]:
 final private class LiveSecurityService[F[_]: {Concurrent, Logger}](
     private val repository: SecurityRepository[F],
     private val marketDataClient: MarketDataClient[F]
+)(using
+    F: MonadThrow[F]
 ) extends SecurityService[F] {
 
-  override def findByTicker(ticker: Ticker): F[Option[Security]] =
-    repository.findByTicker(ticker)
+  override def findByTicker(ticker: Ticker): F[Security] =
+    repository.find(ticker).flatMap(s => F.fromOption(s, AppError.SecurityNotFound(ticker)))
 
   override def findByExchange(exchange: Exchange): F[List[Security]] =
     repository.findByExchange(exchange)

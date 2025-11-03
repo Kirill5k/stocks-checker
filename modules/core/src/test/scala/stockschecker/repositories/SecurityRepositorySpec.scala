@@ -43,7 +43,7 @@ class SecurityRepositorySpec extends RepositorySpec {
           for
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
-            s    <- repo.findByTicker(AAPL)
+            s    <- repo.find(AAPL)
           yield s mustBe Some(AAPLSecurity)
         }
       }
@@ -52,7 +52,7 @@ class SecurityRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- SecurityRepository.make(db)
-            s    <- repo.findByTicker(AAPL)
+            s    <- repo.find(AAPL)
           yield s mustBe None
         }
       }

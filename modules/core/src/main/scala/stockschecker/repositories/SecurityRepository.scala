@@ -21,7 +21,7 @@ import java.time.Instant
 trait SecurityRepository[F[_]]:
   def save(security: Security): F[Unit]
   def save(securities: List[Security]): F[Unit]
-  def findByTicker(ticker: Ticker): F[Option[Security]]
+  def find(ticker: Ticker): F[Option[Security]]
   def findByExchange(exchange: Exchange): F[List[Security]]
   def streamAll: Stream[F, Security]
   def getAllTickers: F[List[Ticker]]
@@ -74,7 +74,7 @@ final private class LiveSecurityRepository[F[_]](
   override def streamAll: Stream[F, Security] =
     collection.find.stream.map(_.toDomain)
 
-  override def findByTicker(ticker: Ticker): F[Option[Security]] =
+  override def find(ticker: Ticker): F[Option[Security]] =
     collection.find(Filter.idEq(ticker.value)).first.map(_.map(_.toDomain))
 
   override def findByExchange(exchange: Exchange): F[List[Security]] =

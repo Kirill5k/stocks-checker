@@ -5,6 +5,7 @@ import kirill5k.common.http4s.test.HttpRoutesWordSpec
 import org.http4s.*
 import org.http4s.implicits.*
 import stockschecker.domain.{Exchange, Ticker}
+import stockschecker.domain.errors.AppError
 import stockschecker.services.SecurityService
 import stockschecker.fixtures.*
 
@@ -14,7 +15,7 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
     "GET /securities/:ticker" should {
       "return 200 and security on success" in {
         val svc = mocks
-        when(svc.findByTicker(any[Ticker])).thenReturnIO(Some(AAPLSecurity))
+        when(svc.findByTicker(any[Ticker])).thenReturnIO(AAPLSecurity)
 
         val res = for
           controller <- SecurityController.make(svc)
@@ -31,6 +32,22 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
                         |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(resBody))
         verify(svc).findByTicker(AAPL)
+      }
+
+      "return 404 when security is not found" in {
+        val svc = mocks
+        val ticker = Ticker("UNKNOWN")
+        when(svc.findByTicker(ticker)).thenRaiseError(AppError.SecurityNotFound(ticker))
+
+        val res = for
+          controller <- SecurityController.make(svc)
+          req = Request[IO](uri = uri"/securities/unknown", method = Method.GET)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        val resBody = s"""{"message" : "Could not find security for UNKNOWN"}""".stripMargin
+        res mustHaveStatus (Status.NotFound, Some(resBody))
+        verify(svc).findByTicker(ticker)
       }
     }
 
