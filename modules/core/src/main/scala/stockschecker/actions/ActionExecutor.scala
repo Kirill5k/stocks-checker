@@ -32,7 +32,6 @@ final private class LiveActionExecutor[F[_]](
     logger.info(s"Processing $action") >>
       (action match
         case Action.RescheduleAll                              => services.command.rescheduleAll
-        case Action.Sequence(actions)                          => actions.toList.traverse_(handleAction)
         case Action.Schedule(cid, waiting)                     => F.sleep(waiting) >> services.command.execute(cid)
         case Action.FetchLatestSecurities(exchange)            => services.security.fetchLatest(exchange)
         case Action.FetchCompanyProfile(ticker)                => services.companyProfile.fetchLatest(ticker)
@@ -50,6 +49,8 @@ final private class LiveActionExecutor[F[_]](
             .streamTickersBy(filter, limit)
             .metered(1.second)
             .tapAndDrain(ticker => handleAction(Action.FetchLatestPricePerformanceSummary(ticker)))
+        case Action.Sequence(actions) =>
+          Stream.emits(actions.toList).tapAndDrain(handleAction)
       ).handleErrorWith {
         case error: AppError =>
           logger.warn(error)(s"Domain error while processing action $action")
