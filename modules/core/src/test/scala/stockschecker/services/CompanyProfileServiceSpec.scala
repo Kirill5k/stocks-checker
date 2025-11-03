@@ -27,7 +27,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         }
       }
 
-      "fetch latest company profile" in {
+      "fetch latest company profile when flag is true" in {
         val (repo, client) = mocks
         when(client.getCompanyProfile(any[Ticker])).thenReturnSome(AAPLCompanyProfile)
         when(repo.save(any[CompanyProfile])).thenReturnUnit
@@ -40,43 +40,41 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         res.asserting { cp =>
           verify(client).getCompanyProfile(AAPL)
           verify(repo).save(AAPLCompanyProfile)
+          verifyNoMoreInteractions(repo) // ensure repo.find wasn't called
           cp mustBe AAPLCompanyProfile
         }
       }
 
-      "fetch company profile from client if it is not present in db" in {
+      "return error when company profile missing in db and fetchLatest flag is false" in {
         val (repo, client) = mocks
         when(repo.find(any[Ticker])).thenReturnNone
-        when(repo.save(any[CompanyProfile])).thenReturnUnit
-        when(client.getCompanyProfile(any[Ticker])).thenReturnSome(AAPLCompanyProfile)
+        // client should NOT be called
 
         val res = for
           svc <- CompanyProfileService.make(repo, client)
-          res <- svc.get(AAPL)
-        yield res
-
-        res.asserting { cp =>
-          verify(repo).find(AAPL)
-          verify(client).getCompanyProfile(AAPL)
-          verify(repo).save(AAPLCompanyProfile)
-          cp mustBe AAPLCompanyProfile
-        }
-      }
-
-      "return errors if company profile is missing" in {
-        val (repo, client) = mocks
-        when(repo.find(any[Ticker])).thenReturnNone
-        when(client.getCompanyProfile(any[Ticker])).thenReturnNone
-
-        val res = for
-          svc <- CompanyProfileService.make(repo, client)
-          res <- svc.get(AAPL)
+          res <- svc.get(AAPL) // flag is false (default)
         yield res
 
         res.attempt.asserting { err =>
           verify(repo).find(AAPL)
+          verifyNoInteractions(client)
+          err mustBe Left(AppError.CompanyProfileNotFound(AAPL))
+        }
+      }
+
+      "return error when explicitly fetching latest and client returns nothing" in {
+        val (repo, client) = mocks
+        when(client.getCompanyProfile(any[Ticker])).thenReturnNone
+
+        val res = for
+          svc <- CompanyProfileService.make(repo, client)
+          res <- svc.get(AAPL, true) // fetch latest path
+        yield res
+
+        res.attempt.asserting { err =>
           verify(client).getCompanyProfile(AAPL)
-          verifyNoMoreInteractions(repo)
+          // repo.save should not be called, and repo.find not used
+          verifyNoInteractions(repo)
           err mustBe Left(AppError.CompanyProfileNotFound(AAPL))
         }
       }
