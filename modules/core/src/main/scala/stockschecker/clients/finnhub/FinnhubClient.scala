@@ -124,7 +124,7 @@ object FinnhubClient {
         website = weburl,
         ipoDate = java.time.LocalDate.parse(ipo),
         currency = estimateCurrency,
-        marketCap = (marketCapitalization * 1000).longValue
+        marketCap = (marketCapitalization * 1_000_000).longValue
       )
   }
 

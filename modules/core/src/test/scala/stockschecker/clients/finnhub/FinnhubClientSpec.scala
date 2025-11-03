@@ -92,7 +92,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
               website = "https://www.apple.com/",
               ipoDate = LocalDate.parse("1980-12-12"),
               currency = "USD",
-              marketCap = 3989245252L
+              marketCap = 3989245252568L
             )
           )
         }

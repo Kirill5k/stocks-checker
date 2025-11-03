@@ -9,14 +9,14 @@ import scala.concurrent.duration.FiniteDuration
 
 object TimePeriod extends EnumType[TimePeriod](() => TimePeriod.values)
 enum TimePeriod(val fieldName: String):
-  case OneMonth extends TimePeriod("oneMonthChange")
+  case OneMonth   extends TimePeriod("oneMonthChange")
   case ThreeMonth extends TimePeriod("threeMonthChange")
-  case SixMonth extends TimePeriod("sixMonthChange")
-  case OneYear extends TimePeriod("oneYearChange")
-  case ThreeYear extends TimePeriod("threeYearChange")
-  case FiveYear extends TimePeriod("fiveYearChange")
-  case TenYear extends TimePeriod("tenYearChange")
-  case Max extends TimePeriod("maxChange")
+  case SixMonth   extends TimePeriod("sixMonthChange")
+  case OneYear    extends TimePeriod("oneYearChange")
+  case ThreeYear  extends TimePeriod("threeYearChange")
+  case FiveYear   extends TimePeriod("fiveYearChange")
+  case TenYear    extends TimePeriod("tenYearChange")
+  case Max        extends TimePeriod("maxChange")
 
 enum PricePerformanceFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
   case Composite(filters: NonEmptyList[SecurityFilter])
@@ -28,11 +28,11 @@ enum PricePerformanceFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedA
 object PricePerformanceFilter extends JsonCodecs:
   given JsonTaggedAdt.Config[PricePerformanceFilter] = JsonTaggedAdt.Config.Values[PricePerformanceFilter](
     mappings = Map(
-      "updated-within"  -> JsonTaggedAdt.tagged[PricePerformanceFilter.UpdatedWithin],
-      "not-updated-for" -> JsonTaggedAdt.tagged[PricePerformanceFilter.NotUpdatedFor],
+      "composite"         -> JsonTaggedAdt.tagged[PricePerformanceFilter.Composite],
+      "updated-within"    -> JsonTaggedAdt.tagged[PricePerformanceFilter.UpdatedWithin],
+      "not-updated-for"   -> JsonTaggedAdt.tagged[PricePerformanceFilter.NotUpdatedFor],
       "performance-above" -> JsonTaggedAdt.tagged[PricePerformanceFilter.PerformanceAbove],
-      "performance-below" -> JsonTaggedAdt.tagged[PricePerformanceFilter.PerformanceBelow],
-      "composite"       -> JsonTaggedAdt.tagged[PricePerformanceFilter.Composite]
+      "performance-below" -> JsonTaggedAdt.tagged[PricePerformanceFilter.PerformanceBelow]
     ),
     strict = true,
     typeFieldName = "kind"
