@@ -65,13 +65,13 @@ class PriceServiceSpec extends IOWordSpec {
     }
 
     "findPerformanceSummary" should {
-      "return performance summary from repository when found" in {
+      "return performance summary from repository when found and fetchLatest is false" in {
         val (repo, client) = mocks
         when(repo.find(any[Ticker])).thenReturnIO(Some(AAPLPricePerformanceSummary))
 
         val res = for
           svc    <- PriceService.make(repo, client)
-          result <- svc.findPerformanceSummary(AAPL)
+          result <- svc.findPerformanceSummary(AAPL, fetchLatest = false)
         yield result
 
         res.asserting { result =>
@@ -81,38 +81,51 @@ class PriceServiceSpec extends IOWordSpec {
         }
       }
 
-      "fetch from market data client when not found in repository" in {
+      "fetch from market data client when fetchLatest is true" in {
         val (repo, client) = mocks
-        when(repo.find(any[Ticker])).thenReturnIO(None)
         when(client.getMonthlyPriceCandles(any[Ticker])).thenReturnIO(AAPLPriceCandles)
         when(repo.save(any[PricePerformanceSummary])).thenReturnUnit
 
         val res = for
           svc    <- PriceService.make(repo, client)
-          result <- svc.findPerformanceSummary(AAPL)
+          result <- svc.findPerformanceSummary(AAPL, fetchLatest = true)
         yield result
 
         res.asserting { result =>
-          verify(repo).find(AAPL)
+          verifyNoInteractions(repo)
           verify(client).getMonthlyPriceCandles(AAPL)
           verify(repo).save(any[PricePerformanceSummary])
           result.ticker mustBe AAPL
         }
       }
 
-      "handle errors when market data client fails" in {
+      "raise error when not found in repository and fetchLatest is false" in {
         val (repo, client) = mocks
-        val error = new RuntimeException("API error")
         when(repo.find(any[Ticker])).thenReturnIO(None)
-        when(client.getMonthlyPriceCandles(any[Ticker])).thenRaiseError(error)
 
         val res = for
           svc    <- PriceService.make(repo, client)
-          result <- svc.findPerformanceSummary(AAPL)
+          result <- svc.findPerformanceSummary(AAPL, fetchLatest = false)
         yield result
 
         res.attempt.asserting { result =>
           verify(repo).find(AAPL)
+          verifyNoInteractions(client)
+          result.isLeft mustBe true
+        }
+      }
+
+      "handle errors when market data client fails with fetchLatest true" in {
+        val (repo, client) = mocks
+        val error = new RuntimeException("API error")
+        when(client.getMonthlyPriceCandles(any[Ticker])).thenRaiseError(error)
+
+        val res = for
+          svc    <- PriceService.make(repo, client)
+          result <- svc.findPerformanceSummary(AAPL, fetchLatest = true)
+        yield result
+
+        res.attempt.asserting { result =>
           verify(client).getMonthlyPriceCandles(AAPL)
           result mustBe Left(error)
         }
