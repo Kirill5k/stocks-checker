@@ -1,6 +1,7 @@
 package stockschecker
 
 import cats.effect.{IO, IOApp}
+import fs2.Stream
 import kirill5k.common.http4s.Server
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.log4cats.Logger
@@ -18,7 +19,7 @@ object Application extends IOApp.Simple {
     for
       _      <- logger.info(s"starting stocks-checker-core ${sys.env.getOrElse("VERSION", "")}")
       config <- AppConfig.loadDefault[IO]
-      _ <- Resources
+      _      <- Resources
         .make[IO](config)
         .use: res =>
           for
@@ -29,11 +30,10 @@ object Application extends IOApp.Simple {
             controllers      <- Controllers.make(services)
             actionExecutor   <- ActionExecutor.make(actionDispatcher, services)
             _                <- actionDispatcher.dispatch(Action.RescheduleAll)
-            _ <- Server
-              .serveEmber(config.server, controllers.routes)
-              .concurrently(actionExecutor.run)
-              .compile
-              .drain
+            _                <- Stream(
+              Server.serveEmber(config.server, controllers.routes),
+              actionExecutor.run
+            ).parJoinUnbounded.compile.drain
           yield ()
     yield ()
 }

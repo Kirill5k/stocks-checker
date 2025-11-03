@@ -44,7 +44,7 @@ final private class LiveActionExecutor[F[_]](
           services.security
             .streamTickersBy(filter, limit)
             .metered(1.second)
-            .evalMap(ticker => services.companyProfile.fetchLatest(ticker, false))
+            .evalMap(ticker => services.companyProfile.fetchLatest(ticker, false).handleErrorWith(_ => F.pure(None)))
             .unNone
             .chunkN(512, true)
             .evalMap(cps => services.companyProfile.save(cps.toList))

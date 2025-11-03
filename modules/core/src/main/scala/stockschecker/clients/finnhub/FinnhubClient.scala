@@ -39,9 +39,9 @@ final private class LiveFinnhubClient[F[_]](
             case Right(profile) =>
               F.pure(Some(profile.toDomain))
             case Left(err) =>
-              F.raiseError(AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile: ${err.getMessage}"))
+              F.raiseError(AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile for $ticker: ${err.getMessage}"))
         case Left(err) =>
-          F.raiseError(AppError.Http(response.code.code, s"Error retrieving company profile: ${err.getMessage}"))
+          F.raiseError(AppError.Http(response.code.code, s"Error retrieving company profile for $ticker: ${err.getMessage}"))
     }
   }
 
