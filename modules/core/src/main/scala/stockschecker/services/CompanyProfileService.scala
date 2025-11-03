@@ -13,7 +13,7 @@ trait CompanyProfileService[F[_]]:
   def save(cps: List[CompanyProfile]): F[Unit]
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
   def getAll(limit: Option[Int]): F[List[CompanyProfile]]
-  def fetchLatest(ticker: Ticker): F[Unit]
+  def fetchLatest(ticker: Ticker, save: Boolean = true): F[Option[CompanyProfile]]
   def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): Stream[F, Ticker]
 
 final private class LiveCompanyProfileService[F[_]](
@@ -23,30 +23,27 @@ final private class LiveCompanyProfileService[F[_]](
     F: MonadThrow[F]
 ) extends CompanyProfileService[F] {
 
-  override def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile] =
-    if (fetchLatest) fetchCompanyProfile(ticker)
-    else repository.find(ticker).flatMap(unfoldOpt(F.pure, fetchCompanyProfile(ticker)))
+  override def fetchLatest(ticker: Ticker, save: Boolean = true): F[Option[CompanyProfile]] =
+    fetchCompanyProfile(ticker)
+      .flatMap {
+        case Some(cp)     => F.whenA(save)(repository.save(cp)).as(Some(cp))
+        case None if save => F.raiseError(AppError.CompanyProfileNotFound(ticker))
+        case None         => F.pure(None)
+      }
+
+  override def get(ticker: Ticker, fetch: Boolean = false): F[CompanyProfile] = {
+    val cpOpt =
+      if (fetch) fetchLatest(ticker)
+      else repository.find(ticker)
+      
+    cpOpt.flatMap(cp => F.fromOption(cp, AppError.CompanyProfileNotFound(ticker)))
+  }
 
   override def getAll(limit: Option[Int]): F[List[CompanyProfile]] =
     repository.findAll(limit)
 
-  override def fetchLatest(ticker: Ticker): F[Unit] =
-    fetchCompanyProfile(ticker).void
-
-  private def unfoldOpt[A](ifPresent: A => F[A], ifMissing: => F[A])(opt: Option[A]): F[A] =
-    opt match
-      case Some(value) => ifPresent(value)
-      case None        => ifMissing
-
-  private def fetchCompanyProfile(ticker: Ticker): F[CompanyProfile] =
-    client
-      .getCompanyProfile(ticker)
-      .flatMap(
-        unfoldOpt(
-          cp => repository.save(cp).as(cp),
-          F.raiseError(AppError.CompanyProfileNotFound(ticker))
-        )
-      )
+  private def fetchCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] =
+    client.getCompanyProfile(ticker)
 
   override def streamTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): Stream[F, Ticker] =
     repository.streamTickersBy(filter, limit)

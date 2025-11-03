@@ -2,6 +2,7 @@ package stockschecker.actions
 
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import cats.syntax.applicativeError.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
@@ -32,8 +33,8 @@ final private class LiveActionExecutor[F[_]](
       (action match
         case Action.RescheduleAll                              => services.command.rescheduleAll
         case Action.Schedule(cid, waiting)                     => F.sleep(waiting) >> services.command.execute(cid)
-        case Action.FetchLatestSecurities(exchange)            => services.security.fetchLatest(exchange)
-        case Action.FetchCompanyProfile(ticker)                => services.companyProfile.fetchLatest(ticker)
+        case Action.FetchLatestSecurities(exchange)            => services.security.fetchLatest(exchange).void
+        case Action.FetchCompanyProfile(ticker)                => services.companyProfile.fetchLatest(ticker).void
         case Action.FetchLatestPricePerformanceSummary(ticker) => services.price.fetchLatestPerformanceSummary(ticker)
         case Action.DiscoverSecurities(exchanges)              =>
           Stream
@@ -42,11 +43,16 @@ final private class LiveActionExecutor[F[_]](
         case Action.EnrichCompanyProfiles(filter, limit) =>
           services.security
             .streamTickersBy(filter, limit)
-            .tapAndDrain(ticker => handleAction(Action.FetchCompanyProfile(ticker)))
+            .metered(1.second)
+            .evalMap(ticker => services.companyProfile.fetchLatest(ticker, false))
+            .unNone
+            .chunkN(512, true)
+            .evalMap(cps => services.companyProfile.save(cps.toList))
+            .compile
+            .drain
         case Action.FetchPricePerformanceSummaries(filter, limit) =>
           services.companyProfile
             .streamTickersBy(filter, limit)
-            .metered(1.second)
             .tapAndDrain(ticker => handleAction(Action.FetchLatestPricePerformanceSummary(ticker)))
         case Action.Sequence(actions) =>
           Stream.emits(actions.toList).tapAndDrain(handleAction)
