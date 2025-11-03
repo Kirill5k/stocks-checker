@@ -4,6 +4,7 @@ import cats.data.NonEmptyList
 import cats.implicits.toFoldableOps
 import io.circe.Codec as CirceCodec
 import stockschecker.common.types.{EnumType, StringType}
+import stockschecker.domain.errors.AppError
 import sttp.tapir.{Codec, DecodeResult, Schema}
 
 import java.time.LocalDate
@@ -13,14 +14,22 @@ package object domain {
 
   opaque type Ticker = String
   object Ticker extends StringType[Ticker] {
-    inline given Codec.PlainCodec[Ticker] = Codec.string.mapDecode[Ticker](s => DecodeResult.Value(Ticker(s)))(_.value)
+    inline given Codec.PlainCodec[Ticker] = Codec.string.mapDecode[Ticker](s => DecodeResult.Value(Ticker(s.toUpperCase)))(_.value)
     given Schema[Ticker]                  = Schema.string
   }
 
-  object Exchange extends EnumType[Exchange](() => Exchange.values, e => EnumType.printLowerCase(e))
   enum Exchange(val code: String, val fullName: String):
     case NASDAQ extends Exchange("NSQ", "NASDAQ Stock Exchange")
     case NYSE   extends Exchange("NYS", "New York Stock Exchange")
+
+  object Exchange extends EnumType[Exchange](() => Exchange.values, e => EnumType.printLowerCase(e)) {
+    inline given Codec.PlainCodec[Exchange] = Codec.string.mapDecode[Exchange](s =>
+      from(s) match {
+        case Right(exchange) => DecodeResult.Value(exchange)
+        case Left(error)     => DecodeResult.Error(s, AppError.FailedValidation(error))
+      }
+    )(_.print)
+  }
 
   object SecurityKind extends EnumType[SecurityKind](() => SecurityKind.values, e => EnumType.printLowerCase(e))
   enum SecurityKind:
@@ -95,11 +104,11 @@ package object domain {
 
   object PricePerformanceSummary:
     def from(ticker: Ticker, priceCandles: NonEmptyList[PriceCandle]): PricePerformanceSummary = {
-      val latestCandle = priceCandles.head
-      val latestPrice = latestCandle.close
+      val latestCandle    = priceCandles.head
+      val latestPrice     = latestCandle.close
       val latestPriceDate = latestCandle.date
 
-      def calculateChange(prevCandle: Option[PriceCandle]): Option[BigDecimal] = {
+      def calculateChange(prevCandle: Option[PriceCandle]): Option[BigDecimal] =
         prevCandle.flatMap { lastCandle =>
           val earliestPrice = lastCandle.close
           Option.when(earliestPrice > 0) {
@@ -107,13 +116,11 @@ package object domain {
             change.setScale(4, RoundingMode.HALF_UP)
           }
         }
-      }
 
-      def calculatePeriodChange(monthsAgo: Int): Option[BigDecimal] = {
+      def calculatePeriodChange(monthsAgo: Int): Option[BigDecimal] =
         // NonEmptyList.get(n) safely returns an Option[PriceCandle].
         // This elegantly handles cases where history is shorter than the look-back period.
         calculateChange(priceCandles.get(monthsAgo))
-      }
 
       PricePerformanceSummary(
         ticker = ticker,

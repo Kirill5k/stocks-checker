@@ -21,11 +21,7 @@ final private class SecurityController[F[_]: Async](
     }
 
   private val getSecuritiesByExchange = SecurityController.getSecuritiesByExchangeEndpoint
-    .serverLogic { exchangeCode =>
-      val exchange = exchangeCode match
-        case "NASDAQ" | "NSQ" => Exchange.NASDAQ
-        case "NYSE" | "NYS"   => Exchange.NYSE
-        case _                => Exchange.NASDAQ // default
+    .serverLogic { exchange =>
       securityService
         .findByExchange(exchange)
         .mapResponse(identity)
@@ -58,7 +54,7 @@ object SecurityController extends TapirJsonCirce with SchemaDerivation {
     .description("Get security by ticker")
 
   private val getSecuritiesByExchangeEndpoint = Controller.publicEndpoint.get
-    .in(basePath / "exchange" / path[String]("exchange"))
+    .in(basePath / "exchange" / path[Exchange]("exchange"))
     .out(jsonBody[List[Security]])
     .description("Get all securities for an exchange")
 

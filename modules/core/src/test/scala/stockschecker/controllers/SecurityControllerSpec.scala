@@ -18,7 +18,7 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
 
         val res = for
           controller <- SecurityController.make(svc)
-          req = Request[IO](uri = uri"/securities/AAPL", method = Method.GET)
+          req = Request[IO](uri = uri"/securities/aapl", method = Method.GET)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -41,7 +41,7 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
 
         val res = for
           controller <- SecurityController.make(svc)
-          req = Request[IO](uri = uri"/securities/exchange/NASDAQ", method = Method.GET)
+          req = Request[IO](uri = uri"/securities/exchange/nasdaq", method = Method.GET)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
