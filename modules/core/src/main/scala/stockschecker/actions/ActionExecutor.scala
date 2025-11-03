@@ -3,7 +3,6 @@ package stockschecker.actions
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.applicativeError.*
-import cats.syntax.foldable.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
 import stockschecker.domain.errors.AppError
