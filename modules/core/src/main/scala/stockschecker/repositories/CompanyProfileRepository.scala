@@ -14,6 +14,7 @@ import mongo4cats.circe.MongoJsonCodecs
 import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.entities.{CompanyProfileEntity, Entity}
 import kirill5k.common.cats.syntax.applicative.*
+import mongo4cats.models.collection.UpdateOptions
 
 trait CompanyProfileRepository[F[_]]:
   def save(cp: CompanyProfile): F[Unit]
@@ -43,28 +44,22 @@ final private class LiveCompanyProfileRepository[F[_]](
 
   override def save(cp: CompanyProfile): F[Unit] =
     C.now.flatMap { time =>
-      collection
-        .count(Filter.idEq(cp.ticker))
-        .flatMap {
-          case 0 =>
-            collection.insertOne(CompanyProfileEntity.from(cp, time)).void
-          case _ =>
-            collection
-              .updateOne(
-                Filter.idEq(cp.ticker),
-                Update
-                  .set(Field.Name, cp.name)
-                  .set(Field.Country, cp.country)
-                  .set(Field.Industry, cp.industry)
-                  .set(Field.Description, cp.description)
-                  .set(Field.Website, cp.website)
-                  .set(Field.IpoDate, cp.ipoDate)
-                  .set(Field.Currency, cp.currency)
-                  .set(Field.MarketCap, cp.marketCap)
-                  .currentDate(Field.UpdatedAt)
-              )
-              .void
-        }
+      collection.updateOne(
+        Filter.idEq(cp.ticker),
+        Update
+          .setOnInsert(Field.Id, cp.ticker)
+          .setOnInsert(Field.CreatedAt, time)
+          .set(Field.Name, cp.name)
+          .set(Field.Country, cp.country)
+          .set(Field.Industry, cp.industry)
+          .set(Field.Description, cp.description)
+          .set(Field.Website, cp.website)
+          .set(Field.IpoDate, cp.ipoDate)
+          .set(Field.Currency, cp.currency)
+          .set(Field.MarketCap, cp.marketCap)
+          .set(Field.UpdatedAt, time),
+        UpdateOptions(upsert = true)
+      ).void
     }
 
   override def find(ticker: Ticker): F[Option[CompanyProfile]] =

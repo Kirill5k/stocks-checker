@@ -8,12 +8,10 @@ import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
+import mongo4cats.models.collection.UpdateOptions
 import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.{PricePerformanceSummary, Ticker}
 import stockschecker.repositories.entities.PricePerformanceSummaryEntity
-
-import java.time.Instant
 
 trait PricePerformanceSummaryRepository[F[_]]:
   def save(summary: PricePerformanceSummary): F[Unit]
@@ -42,13 +40,12 @@ final private class LivePricePerformanceSummaryRepository[F[_]](
     val CreatedAt         = "createdAt"
     val UpdatedAt         = "updatedAt"
 
-  extension (summary: PricePerformanceSummary)
-    private def toUpdateCommand(now: Instant): WriteCommand[Nothing] =
-      val id = summary.ticker.value
-      WriteCommand.UpdateOne(
-        Filter.idEq(id),
+  override def save(summary: PricePerformanceSummary): F[Unit] =
+    clock.now.flatMap { now =>
+      collection.updateOne(
+        Filter.idEq(summary.ticker),
         Update
-          .setOnInsert(Field.Id, id)
+          .setOnInsert(Field.Id, summary.ticker)
           .setOnInsert(Field.CreatedAt, now)
           .set(Field.UpdatedAt, now)
           .set(Field.Ticker, summary.ticker)
@@ -63,11 +60,7 @@ final private class LivePricePerformanceSummaryRepository[F[_]](
           .set(Field.TenYearChange, summary.tenYearChange)
           .set(Field.MaxChange, summary.maxChange),
         UpdateOptions(upsert = true)
-      )
-
-  override def save(summary: PricePerformanceSummary): F[Unit] =
-    clock.now.flatMap { now =>
-      collection.bulkWrite(List(summary.toUpdateCommand(now))).void
+      ).void
     }
 
   override def find(ticker: Ticker): F[Option[PricePerformanceSummary]] =
