@@ -40,7 +40,9 @@ final private class LiveAlphaVantageClient[F[_]](
   private def attemptWithKeyRotation(ticker: Ticker, triedKeys: Set[String]): F[NonEmptyList[PriceCandle]] =
     for
       apiKey <- getNextApiKey
-      _      <- F.raiseWhen(triedKeys.contains(apiKey))(AppError.Http(429, s"All Alpha Vantage API keys exhausted due to rate limiting: ${triedKeys.mkString(",")}"))
+      _      <- F.raiseWhen(triedKeys.contains(apiKey)) {
+        AppError.Http(429, s"All Alpha Vantage API keys exhausted due to rate limiting: ${triedKeys.mkString(",")}")
+      }
       result <- sendRequest(ticker, apiKey).recoverWith {
         case err: AppError.Http if err.status == 429 => attemptWithKeyRotation(ticker, triedKeys + apiKey)
       }
