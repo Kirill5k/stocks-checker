@@ -28,8 +28,8 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
              |    "id" : "${FetchLatestSecuritiesCommand.id.value}",
              |    "isActive" : true,
              |    "action" : {
-             |      "exchange" : "nasdaq",
-             |      "kind" : "fetch-latest-securities"
+             |      "exchanges" : ["nasdaq"],
+             |      "kind" : "discover-securities"
              |    },
              |    "schedule" : {
              |      "kind" : "periodic",
@@ -55,14 +55,14 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
           body =
             """{
               |    "action" : {
-              |      "exchange" : "nasdaq",
-              |      "kind" : "fetch-latest-securities"
+              |      "exchanges" : ["nasdaq"],
+              |      "kind" : "discover-securities"
               |    },
               |    "schedule": {
               |        "kind": "periodic",
               |        "period" : "20minutes"
               |    },
-          |        "lastExecutedAt" : "2025-10-29T10:06:06.961Z",
+              |    "lastExecutedAt" : "2025-10-29T10:06:06.961Z",
               |    "executionCount" : 1,
               |    "maxExecutions" : 10
               |}""".stripMargin
