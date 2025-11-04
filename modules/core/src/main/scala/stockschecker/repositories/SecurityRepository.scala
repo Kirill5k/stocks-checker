@@ -50,19 +50,17 @@ final private class LiveSecurityRepository[F[_]](
   extension (security: Security)
     private def toUpdateCommand(now: Instant): WriteCommand[Nothing] =
       val id = security.ticker.value
-      WriteCommand.UpdateOne(
-        Filter.idEq(id),
-        Update
-          .setOnInsert(Field.Id, id)
-          .setOnInsert(Field.CreatedAt, now)
-          .set(Field.UpdatedAt, now)
-          .set(Field.Ticker, security.ticker)
-          .set(Field.Exchange, security.exchange)
-          .set(Field.Name, security.name)
-          .set(Field.Kind, security.kind)
-          .set(Field.IsActive, security.isActive),
-        UpdateOptions(upsert = true)
-      )
+      var update = Update
+        .setOnInsert(Field.Id, id)
+        .setOnInsert(Field.CreatedAt, now)
+        .set(Field.UpdatedAt, now)
+        .set(Field.Ticker, security.ticker)
+        .set(Field.Exchange, security.exchange)
+        .set(Field.Name, security.name)
+        .set(Field.Kind, security.kind)
+        .set(Field.IsActive, security.isActive)
+      update = security.companyProfileLastUpdated.fold(update)(ts => update.set(Field.CompanyProfileLastUpdated, ts))
+      WriteCommand.UpdateOne(Filter.idEq(id), update, UpdateOptions(upsert = true))
 
   override def save(securities: List[Security]): F[Unit] =
     clock.now.flatMap { now =>
