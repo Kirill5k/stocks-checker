@@ -37,15 +37,15 @@ final private class LiveSecurityRepository[F[_]](
 ) extends SecurityRepository[F] {
 
   private object Field:
-    val Id                         = "_id"
-    val Exchange                   = "exchange"
-    val Ticker                     = "ticker"
-    val Name                       = "name"
-    val Kind                       = "kind"
-    val IsActive                   = "isActive"
-    val CompanyProfileLastUpdated  = "companyProfileLastUpdated"
-    val CreatedAt                  = "createdAt"
-    val UpdatedAt                  = "updatedAt"
+    val Id                        = "_id"
+    val Exchange                  = "exchange"
+    val Ticker                    = "ticker"
+    val Name                      = "name"
+    val Kind                      = "kind"
+    val IsActive                  = "isActive"
+    val CompanyProfileLastUpdated = "companyProfileLastUpdated"
+    val CreatedAt                 = "createdAt"
+    val UpdatedAt                 = "updatedAt"
 
   extension (security: Security)
     private def toUpdateCommand(now: Instant): WriteCommand[Nothing] =
@@ -106,15 +106,14 @@ final private class LiveSecurityRepository[F[_]](
     collection.updateOne(Filter.idEq(ticker.value), Update.currentDate(Field.CompanyProfileLastUpdated)).void
 
   override def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit] =
-    if tickers.isEmpty then F.unit
-    else
-      val commands = tickers.map { ticker =>
-        WriteCommand.UpdateOne(
-          Filter.idEq(ticker.value),
+    F.whenA(tickers.nonEmpty) {
+      collection
+        .updateMany(
+          Filter.in(Field.Id, tickers.map(_.value)),
           Update.currentDate(Field.CompanyProfileLastUpdated)
         )
-      }
-      collection.bulkWrite(commands).void
+        .void
+    }
 
   extension (f: SecurityFilter)
     private def toFilter: F[Filter] = f match
