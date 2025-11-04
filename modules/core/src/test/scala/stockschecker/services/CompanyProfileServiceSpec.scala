@@ -2,6 +2,8 @@ package stockschecker.services
 
 import cats.effect.IO
 import kirill5k.common.cats.test.IOWordSpec
+import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, Ticker}
@@ -9,6 +11,7 @@ import stockschecker.repositories.CompanyProfileRepository
 import stockschecker.fixtures.*
 
 class CompanyProfileServiceSpec extends IOWordSpec {
+  given Logger[IO] = Slf4jLogger.getLogger[IO]
 
   "A CompanyProfileService" when {
     "get" should {

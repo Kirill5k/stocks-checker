@@ -1,5 +1,6 @@
 package stockschecker.services
 
+import cats.data.NonEmptyList
 import cats.effect.IO
 import kirill5k.common.cats.test.IOWordSpec
 import org.typelevel.log4cats.Logger
@@ -20,12 +21,12 @@ class SecurityServiceSpec extends IOWordSpec {
         when(repo.save(anyList[Security])).thenReturnUnit
         val res = for
           svc <- SecurityService.make(repo, client)
-          _   <- svc.fetchLatest(Exchange.NASDAQ)
+          _   <- svc.fetchLatest(NonEmptyList.of(Exchange.NASDAQ))
         yield ()
 
         res.asserting { r =>
           verify(client).getTradedSecurities(Exchange.NASDAQ)
-          verify(repo).save(anyList[Security])
+          verify(repo).save(List(AAPLSecurity))
           r mustBe ()
         }
       }

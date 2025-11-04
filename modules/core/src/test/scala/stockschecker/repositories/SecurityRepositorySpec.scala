@@ -84,7 +84,7 @@ class SecurityRepositorySpec extends RepositorySpec {
       }
     }
 
-    "streamTickersBy" should {
+    "findTickersBy" should {
       "return tickers filtered by ExchangeIs" in {
         withEmbeddedMongoDatabase { db =>
           val nyseSec = AAPLSecurity.copy(ticker = Ticker("IBM"), exchange = Exchange.NYSE)
@@ -93,7 +93,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             _    <- repo.save(AAPLSecurity)
             _    <- repo.save(MSFTSecurity)
             _    <- repo.save(nyseSec)
-            res  <- repo.streamTickersBy(SecurityFilter.ExchangeIs(Exchange.NASDAQ), None).compile.toList
+            res  <- repo.findTickersBy(SecurityFilter.ExchangeIs(Exchange.NASDAQ), None)
           yield res must contain theSameElementsAs List(AAPL, MSFT)
         }
       }
@@ -105,7 +105,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
             _    <- repo.save(etfSec)
-            res  <- repo.streamTickersBy(SecurityFilter.KindIs(SecurityKind.ETF), None).compile.toList
+            res  <- repo.findTickersBy(SecurityFilter.KindIs(SecurityKind.ETF), None)
           yield res mustBe List(Ticker("SPY"))
         }
       }
@@ -117,7 +117,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
             _    <- repo.save(inactiveSec)
-            res  <- repo.streamTickersBy(SecurityFilter.IsActive(true), None).compile.toList
+            res  <- repo.findTickersBy(SecurityFilter.IsActive(true), None)
           yield res mustBe List(AAPL)
         }
       }
@@ -129,7 +129,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             _    <- repo.save(AAPLSecurity)
             _    <- IO.sleep(100.millis)
             _    <- repo.save(MSFTSecurity)
-            res  <- repo.streamTickersBy(SecurityFilter.UpdatedWithin(50.millis), None).compile.toList
+            res  <- repo.findTickersBy(SecurityFilter.UpdatedWithin(50.millis), None)
           yield res mustBe List(MSFT)
         }
       }
@@ -141,7 +141,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             _    <- repo.save(AAPLSecurity)
             _    <- IO.sleep(100.millis)
             _    <- repo.save(MSFTSecurity)
-            res  <- repo.streamTickersBy(SecurityFilter.NotUpdatedFor(50.millis), None).compile.toList
+            res  <- repo.findTickersBy(SecurityFilter.NotUpdatedFor(50.millis), None)
           yield res mustBe List(AAPL)
         }
       }
@@ -158,7 +158,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
             _    <- repo.save(MSFTSecurity)
-            res  <- repo.streamTickersBy(composite, None).compile.toList
+            res  <- repo.findTickersBy(composite, None)
           yield res must contain theSameElementsAs List(AAPL, MSFT)
         }
       }
@@ -169,7 +169,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
             _    <- repo.save(MSFTSecurity)
-            res  <- repo.streamTickersBy(SecurityFilter.ExchangeIs(Exchange.NASDAQ), Some(1)).compile.toList
+            res  <- repo.findTickersBy(SecurityFilter.ExchangeIs(Exchange.NASDAQ), Some(1))
           yield res.size mustBe 1
         }
       }
@@ -179,7 +179,7 @@ class SecurityRepositorySpec extends RepositorySpec {
           for
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
-            res  <- repo.streamTickersBy(SecurityFilter.ExchangeIs(Exchange.NYSE), None).compile.toList
+            res  <- repo.findTickersBy(SecurityFilter.ExchangeIs(Exchange.NYSE), None)
           yield res mustBe List.empty
         }
       }

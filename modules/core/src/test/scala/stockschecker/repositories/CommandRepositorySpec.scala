@@ -1,5 +1,6 @@
 package stockschecker.repositories
 
+import cats.data.NonEmptyList
 import org.scalatest.wordspec.AsyncWordSpec
 import stockschecker.actions.Action
 import stockschecker.domain.errors.AppError
@@ -12,7 +13,7 @@ class CommandRepositorySpec extends RepositorySpec {
 
   override def port: Int = 12146
 
-  val action = Action.FetchLatestSecurities(Exchange.NASDAQ)
+  val action = Action.DiscoverSecurities(NonEmptyList.of(Exchange.NASDAQ))
   val newCmd = CreateCommand(action, Schedule.Periodic(5.minutes), None)
 
   "A  CommandRepository" when {
@@ -28,7 +29,7 @@ class CommandRepositorySpec extends RepositorySpec {
             cmd.isActive mustBe true
             cmd.lastExecutedAt mustBe None
             cmd.schedule mustBe Schedule.Periodic(5.minutes)
-            cmd.action mustBe action
+            assert(cmd.action == action)
           }
         }
       }
