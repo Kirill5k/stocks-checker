@@ -12,17 +12,19 @@ enum SecurityFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.Decod
   case IsActive(active: Boolean)
   case UpdatedWithin(duration: FiniteDuration)
   case NotUpdatedFor(duration: FiniteDuration)
+  case CompanyProfileNotUpdatedFor(duration: FiniteDuration)
   case Composite(filters: NonEmptyList[SecurityFilter])
 
 object SecurityFilter extends JsonCodecs:
   given JsonTaggedAdt.Config[SecurityFilter] = JsonTaggedAdt.Config.Values[SecurityFilter](
     mappings = Map(
-      "exchange-is"     -> JsonTaggedAdt.tagged[SecurityFilter.ExchangeIs],
-      "kind-is"         -> JsonTaggedAdt.tagged[SecurityFilter.KindIs],
-      "is-active"       -> JsonTaggedAdt.tagged[SecurityFilter.IsActive],
-      "updated-within"  -> JsonTaggedAdt.tagged[SecurityFilter.UpdatedWithin],
-      "not-updated-for" -> JsonTaggedAdt.tagged[SecurityFilter.NotUpdatedFor],
-      "composite"       -> JsonTaggedAdt.tagged[SecurityFilter.Composite]
+      "exchange-is"                     -> JsonTaggedAdt.tagged[SecurityFilter.ExchangeIs],
+      "kind-is"                         -> JsonTaggedAdt.tagged[SecurityFilter.KindIs],
+      "is-active"                       -> JsonTaggedAdt.tagged[SecurityFilter.IsActive],
+      "updated-within"                  -> JsonTaggedAdt.tagged[SecurityFilter.UpdatedWithin],
+      "not-updated-for"                 -> JsonTaggedAdt.tagged[SecurityFilter.NotUpdatedFor],
+      "company-profile-not-updated-for" -> JsonTaggedAdt.tagged[SecurityFilter.CompanyProfileNotUpdatedFor],
+      "composite"                       -> JsonTaggedAdt.tagged[SecurityFilter.Composite]
     ),
     strict = true,
     typeFieldName = "kind"

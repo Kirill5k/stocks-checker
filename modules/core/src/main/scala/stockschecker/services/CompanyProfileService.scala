@@ -7,6 +7,7 @@ import cats.syntax.functor.*
 import cats.syntax.applicativeError.*
 import fs2.Stream
 import org.typelevel.log4cats.Logger
+import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
@@ -22,7 +23,8 @@ trait CompanyProfileService[F[_]]:
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
-    private val client: MarketDataClient[F]
+    private val client: MarketDataClient[F],
+    private val dispatcher: ActionDispatcher[F]
 )(using
     F: Temporal[F],
     logger: Logger[F]
@@ -66,9 +68,13 @@ final private class LiveCompanyProfileService[F[_]](
     repository.findTickersBy(filter, limit)
 
   private def save(cps: List[CompanyProfile]): F[Unit] =
-    repository.save(cps)
+    repository.save(cps) >> dispatcher.dispatch(Action.MarkSecuritiesAsEnriched(cps.map(_.ticker)))
 }
 
 object CompanyProfileService:
-  def make[F[_]: {Temporal, Logger}](repo: CompanyProfileRepository[F], client: MarketDataClient[F]): F[CompanyProfileService[F]] =
-    Temporal[F].pure(LiveCompanyProfileService[F](repo, client))
+  def make[F[_]: {Temporal, Logger}](
+      repo: CompanyProfileRepository[F],
+      client: MarketDataClient[F],
+      dispatcher: ActionDispatcher[F]
+  ): F[CompanyProfileService[F]] =
+    Temporal[F].pure(LiveCompanyProfileService[F](repo, client, dispatcher))

@@ -124,9 +124,11 @@ final private class LiveSecurityRepository[F[_]](
       case SecurityFilter.IsActive(active) =>
         Filter.eq(Field.IsActive, active).pure
       case SecurityFilter.UpdatedWithin(duration) =>
-        clock.now.map(currentTime => Filter.gt(Field.UpdatedAt, currentTime.minus(duration)))
+        clock.now.map(now => Filter.gt(Field.UpdatedAt, now.minus(duration)))
       case SecurityFilter.NotUpdatedFor(duration) =>
-        clock.now.map(currentTime => Filter.lt(Field.UpdatedAt, currentTime.minus(duration)))
+        clock.now.map(now => Filter.lt(Field.UpdatedAt, now.minus(duration)))
+      case SecurityFilter.CompanyProfileNotUpdatedFor(duration) =>
+        clock.now.map(now => Filter.isNull(Field.CompanyProfileLastUpdated) || Filter.lt(Field.CompanyProfileLastUpdated, now.minus(duration)))
       case SecurityFilter.Composite(filters) =>
         filters.traverse(_.toFilter).map(_.toList.foldLeft(Filter.empty)(_ && _))
 }

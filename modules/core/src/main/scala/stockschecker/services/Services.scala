@@ -18,7 +18,7 @@ object Services:
   def make[F[_]: {Temporal, Logger}](clients: Clients[F], repos: Repositories[F], ad: ActionDispatcher[F]): F[Services[F]] =
     for
       s  <- SecurityService.make(repos.security, clients.marketData)
-      cp <- CompanyProfileService.make(repos.companyProfile, clients.marketData)
+      cp <- CompanyProfileService.make(repos.companyProfile, clients.marketData, ad)
       p  <- PriceService.make(repos.pricePerformanceSummary, clients.marketData)
       c  <- CommandService.make(repos.command, ad)
     yield new Services[F]:

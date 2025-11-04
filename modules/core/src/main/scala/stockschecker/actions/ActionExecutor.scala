@@ -32,6 +32,7 @@ final private class LiveActionExecutor[F[_]](
         case Action.DiscoverSecurities(exchanges)                 => services.security.fetchLatest(exchanges)
         case Action.FetchCompanyProfiles(tickers)                 => services.companyProfile.fetchLatest(tickers)
         case Action.FetchLatestPricePerformanceSummaries(tickers) => services.price.fetchLatestPerformanceSummaries(tickers)
+        case Action.MarkSecuritiesAsEnriched(tickers)             => services.security.markAsEnriched(tickers)
         case Action.EnrichCompanyProfiles(filter, limit)          =>
           services.security
             .findTickersBy(filter, limit)

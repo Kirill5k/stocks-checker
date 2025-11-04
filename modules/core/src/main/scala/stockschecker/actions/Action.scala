@@ -15,6 +15,7 @@ enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithCo
   case FetchPricePerformanceSummaries(filter: CompanyProfileFilter, limit: Option[Int] = None)
   case FetchCompanyProfiles(ticker: NonEmptyList[Ticker])
   case FetchLatestPricePerformanceSummaries(tickers: NonEmptyList[Ticker])
+  case MarkSecuritiesAsEnriched(tickers: List[Ticker])
   case Sequence(actions: NonEmptyList[Action])
 
 object Action extends JsonCodecs {
@@ -25,6 +26,7 @@ object Action extends JsonCodecs {
       "fetch-price-performance-summaries"        -> JsonTaggedAdt.tagged[Action.FetchPricePerformanceSummaries],
       "fetch-company-profiles"                   -> JsonTaggedAdt.tagged[Action.FetchCompanyProfiles],
       "fetch-latest-price-performance-summaries" -> JsonTaggedAdt.tagged[Action.FetchLatestPricePerformanceSummaries],
+      "mark-securities-as-enriched"              -> JsonTaggedAdt.tagged[Action.MarkSecuritiesAsEnriched],
       "schedule"                                 -> JsonTaggedAdt.tagged[Action.Schedule],
       "reschedule-all"                           -> JsonTaggedAdt.tagged[Action.RescheduleAll.type],
       "sequence"                                 -> JsonTaggedAdt.tagged[Action.Sequence]
