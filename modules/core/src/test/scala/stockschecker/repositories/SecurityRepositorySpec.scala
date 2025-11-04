@@ -184,5 +184,71 @@ class SecurityRepositorySpec extends RepositorySpec {
         }
       }
     }
+
+    "updateCompanyProfileLastUpdated" should {
+      "update the companyProfileLastUpdated field" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo    <- SecurityRepository.make(db)
+            _       <- repo.save(AAPLSecurity)
+            _       <- repo.updateCompanyProfileLastUpdated(AAPL)
+            updated <- repo.find(AAPL)
+          yield updated.flatMap(_.companyProfileLastUpdated) mustBe defined
+        }
+      }
+
+      "do nothing if security does not exist" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- SecurityRepository.make(db)
+            _    <- repo.updateCompanyProfileLastUpdated(AAPL)
+            res  <- repo.find(AAPL)
+          yield res mustBe None
+        }
+      }
+
+      "update the companyProfileLastUpdated field for multiple tickers" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo         <- SecurityRepository.make(db)
+            _            <- repo.save(AAPLSecurity)
+            _            <- repo.save(MSFTSecurity)
+            _            <- repo.updateCompanyProfileLastUpdated(List(AAPL, MSFT))
+            updatedAAPL  <- repo.find(AAPL)
+            updatedMSFT  <- repo.find(MSFT)
+          yield {
+            updatedAAPL.flatMap(_.companyProfileLastUpdated) mustBe defined
+            updatedMSFT.flatMap(_.companyProfileLastUpdated) mustBe defined
+          }
+        }
+      }
+
+      "handle empty list gracefully" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- SecurityRepository.make(db)
+            _    <- repo.save(AAPLSecurity)
+            _    <- repo.updateCompanyProfileLastUpdated(List.empty)
+            res  <- repo.find(AAPL)
+          yield res mustBe Some(AAPLSecurity)
+        }
+      }
+
+      "update only existing securities when given mixed list" in {
+        withEmbeddedMongoDatabase { db =>
+          val nonExistent = Ticker("NONEXIST")
+          for
+            repo         <- SecurityRepository.make(db)
+            _            <- repo.save(AAPLSecurity)
+            _            <- repo.updateCompanyProfileLastUpdated(List(AAPL, nonExistent))
+            updatedAAPL  <- repo.find(AAPL)
+            updatedOther <- repo.find(nonExistent)
+          yield {
+            updatedAAPL.flatMap(_.companyProfileLastUpdated) mustBe defined
+            updatedOther mustBe None
+          }
+        }
+      }
+    }
   }
 }

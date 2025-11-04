@@ -26,6 +26,8 @@ trait SecurityRepository[F[_]]:
   def streamAll: Stream[F, Security]
   def getAllTickers: F[List[Ticker]]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
+  def updateCompanyProfileLastUpdated(ticker: Ticker): F[Unit]
+  def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit]
 
 final private class LiveSecurityRepository[F[_]](
     private val collection: MongoCollection[F, SecurityEntity]
@@ -35,14 +37,15 @@ final private class LiveSecurityRepository[F[_]](
 ) extends SecurityRepository[F] {
 
   private object Field:
-    val Id        = "_id"
-    val Exchange  = "exchange"
-    val Ticker    = "ticker"
-    val Name      = "name"
-    val Kind      = "kind"
-    val IsActive  = "isActive"
-    val CreatedAt = "createdAt"
-    val UpdatedAt = "updatedAt"
+    val Id                         = "_id"
+    val Exchange                   = "exchange"
+    val Ticker                     = "ticker"
+    val Name                       = "name"
+    val Kind                       = "kind"
+    val IsActive                   = "isActive"
+    val CompanyProfileLastUpdated  = "companyProfileLastUpdated"
+    val CreatedAt                  = "createdAt"
+    val UpdatedAt                  = "updatedAt"
 
   extension (security: Security)
     private def toUpdateCommand(now: Instant): WriteCommand[Nothing] =
@@ -98,6 +101,20 @@ final private class LiveSecurityRepository[F[_]](
         .all
         .mapList(_._id)
     }
+
+  override def updateCompanyProfileLastUpdated(ticker: Ticker): F[Unit] =
+    collection.updateOne(Filter.idEq(ticker.value), Update.currentDate(Field.CompanyProfileLastUpdated)).void
+
+  override def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit] =
+    if tickers.isEmpty then F.unit
+    else
+      val commands = tickers.map { ticker =>
+        WriteCommand.UpdateOne(
+          Filter.idEq(ticker.value),
+          Update.currentDate(Field.CompanyProfileLastUpdated)
+        )
+      }
+      collection.bulkWrite(commands).void
 
   extension (f: SecurityFilter)
     private def toFilter: F[Filter] = f match

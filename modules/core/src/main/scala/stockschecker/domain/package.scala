@@ -7,7 +7,7 @@ import stockschecker.common.types.{EnumType, StringType}
 import stockschecker.domain.errors.AppError
 import sttp.tapir.{Codec, DecodeResult, Schema}
 
-import java.time.LocalDate
+import java.time.{Instant, LocalDate}
 import scala.math.BigDecimal.RoundingMode
 
 package object domain {
@@ -59,7 +59,8 @@ package object domain {
       exchange: Exchange,
       name: String,
       kind: SecurityKind,
-      isActive: Boolean = true
+      isActive: Boolean = true,
+      companyProfileLastUpdated: Option[Instant] = None
   ) derives CirceCodec.AsObject
 
   final case class CompanyProfile(

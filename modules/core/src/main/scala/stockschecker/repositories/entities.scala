@@ -20,6 +20,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       name: String,
       kind: SecurityKind,
       isActive: Boolean,
+      companyProfileLastUpdated: Option[Instant],
       createdAt: Instant,
       updatedAt: Instant
   ) derives Codec.AsObject:
@@ -29,7 +30,8 @@ private[repositories] object entities extends MongoJsonCodecs {
         exchange = exchange,
         name = name,
         kind = kind,
-        isActive = isActive
+        isActive = isActive,
+        companyProfileLastUpdated = companyProfileLastUpdated
       )
 
   object SecurityEntity:
@@ -42,6 +44,7 @@ private[repositories] object entities extends MongoJsonCodecs {
         name = security.name,
         kind = security.kind,
         isActive = security.isActive,
+        companyProfileLastUpdated = security.companyProfileLastUpdated,
         createdAt = now,
         updatedAt = now
       )
