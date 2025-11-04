@@ -28,7 +28,8 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
                         |  "exchange" : "nasdaq",
                         |  "name" : "Apple Inc.",
                         |  "kind" : "stock",
-                        |  "isActive" : true
+                        |  "isActive" : true,
+                        |  "companyProfileLastUpdated" : "2024-01-15T10:00:00Z"
                         |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(resBody))
         verify(svc).find(AAPL)
@@ -69,14 +70,16 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
              |    "exchange" : "nasdaq",
              |    "name" : "Apple Inc.",
              |    "kind" : "stock",
-             |    "isActive" : true
+             |    "isActive" : true,
+             |    "companyProfileLastUpdated" : "2024-01-15T10:00:00Z"
              |  },
              |  {
              |    "ticker" : "MSFT",
              |    "exchange" : "nasdaq",
              |    "name" : "Microsoft Corporation",
              |    "kind" : "stock",
-             |    "isActive" : true
+             |    "isActive" : true,
+             |    "companyProfileLastUpdated" : null
              |  }
              |]""".stripMargin
 
