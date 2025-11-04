@@ -12,22 +12,22 @@ class ActionExecutorSpec extends IOWordSpec {
   given Logger[IO] = Slf4jLogger.getLogger[IO]
 
   "An ActionExecutor" when {
-    "handling MarkSecuritiesAsEnriched action" should {
+    "handling RecordCompanyProfileUpdate action" should {
       "call security service markAsEnriched method" in {
         val securityService = mock[SecurityService[IO]]
         val services        = mock[Services[IO]]
         val tickers         = List(AAPL, MSFT)
 
         when(services.security).thenReturn(securityService)
-        when(securityService.markAsEnriched(anyList[Ticker])).thenReturnUnit
+        when(securityService.recordCompanyProfileUpdate(anyList[Ticker])).thenReturnUnit
 
         (for
           dispatcher <- ActionDispatcher.make[IO]
           executor   <- ActionExecutor.make(dispatcher, services)
-          _          <- dispatcher.dispatch(Action.MarkSecuritiesAsEnriched(tickers))
+          _          <- dispatcher.dispatch(Action.RecordCompanyProfileUpdate(tickers))
           _          <- executor.run.take(1).compile.drain
         yield ()).asserting { _ =>
-          verify(securityService).markAsEnriched(tickers)
+          verify(securityService).recordCompanyProfileUpdate(tickers)
           succeed
         }
       }
@@ -37,15 +37,15 @@ class ActionExecutorSpec extends IOWordSpec {
         val services        = mock[Services[IO]]
 
         when(services.security).thenReturn(securityService)
-        when(securityService.markAsEnriched(anyList[Ticker])).thenReturnUnit
+        when(securityService.recordCompanyProfileUpdate(anyList[Ticker])).thenReturnUnit
 
         (for
           dispatcher <- ActionDispatcher.make[IO]
           executor   <- ActionExecutor.make(dispatcher, services)
-          _          <- dispatcher.dispatch(Action.MarkSecuritiesAsEnriched(List.empty))
+          _          <- dispatcher.dispatch(Action.RecordCompanyProfileUpdate(List.empty))
           _          <- executor.run.take(1).compile.drain
         yield ()).asserting { _ =>
-          verify(securityService).markAsEnriched(List.empty)
+          verify(securityService).recordCompanyProfileUpdate(List.empty)
           succeed
         }
       }

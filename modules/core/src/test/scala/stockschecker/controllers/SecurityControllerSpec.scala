@@ -29,7 +29,7 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
                         |  "name" : "Apple Inc.",
                         |  "kind" : "stock",
                         |  "isActive" : true,
-                        |  "companyProfileLastUpdated" : "2024-01-15T10:00:00Z"
+                        |  "companyProfileLastUpdatedAt" : "2024-01-15T10:00:00Z"
                         |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(resBody))
         verify(svc).find(AAPL)
@@ -71,7 +71,7 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
              |    "name" : "Apple Inc.",
              |    "kind" : "stock",
              |    "isActive" : true,
-             |    "companyProfileLastUpdated" : "2024-01-15T10:00:00Z"
+             |    "companyProfileLastUpdatedAt" : "2024-01-15T10:00:00Z"
              |  },
              |  {
              |    "ticker" : "MSFT",
@@ -79,7 +79,7 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
              |    "name" : "Microsoft Corporation",
              |    "kind" : "stock",
              |    "isActive" : true,
-             |    "companyProfileLastUpdated" : null
+             |    "companyProfileLastUpdatedAt" : null
              |  }
              |]""".stripMargin
 

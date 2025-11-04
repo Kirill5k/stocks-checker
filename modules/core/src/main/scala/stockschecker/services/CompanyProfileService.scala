@@ -20,6 +20,7 @@ trait CompanyProfileService[F[_]]:
   def getAll(limit: Option[Int]): F[List[CompanyProfile]]
   def fetchLatest(tickers: NonEmptyList[Ticker]): F[Unit]
   def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]]
+  def recordPricePerformanceUpdate(tickers: List[Ticker]): F[Unit]
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
@@ -66,9 +67,12 @@ final private class LiveCompanyProfileService[F[_]](
 
   override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
-
+    
+  override def recordPricePerformanceUpdate(tickers: List[Ticker]): F[Unit] =
+    repository.updatePricePerformanceLastUpdated(tickers)
+  
   private def save(cps: List[CompanyProfile]): F[Unit] =
-    repository.save(cps) >> dispatcher.dispatch(Action.MarkSecuritiesAsEnriched(cps.map(_.ticker)))
+    repository.save(cps) >> dispatcher.dispatch(Action.RecordCompanyProfileUpdate(cps.map(_.ticker)))
 }
 
 object CompanyProfileService:

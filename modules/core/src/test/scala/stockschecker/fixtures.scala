@@ -21,7 +21,7 @@ object fixtures {
     exchange = Exchange.NASDAQ,
     name = "Apple Inc.",
     kind = SecurityKind.Stock,
-    companyProfileLastUpdated = Some(Instant.parse("2024-01-15T10:00:00Z"))
+    companyProfileLastUpdatedAt = Some(Instant.parse("2024-01-15T10:00:00Z"))
   )
 
   val MSFTSecurity: Security = Security(

@@ -26,7 +26,6 @@ trait SecurityRepository[F[_]]:
   def streamAll: Stream[F, Security]
   def getAllTickers: F[List[Ticker]]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
-  def updateCompanyProfileLastUpdated(ticker: Ticker): F[Unit]
   def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit]
 
 final private class LiveSecurityRepository[F[_]](
@@ -37,15 +36,15 @@ final private class LiveSecurityRepository[F[_]](
 ) extends SecurityRepository[F] {
 
   private object Field:
-    val Id                        = "_id"
-    val Exchange                  = "exchange"
-    val Ticker                    = "ticker"
-    val Name                      = "name"
-    val Kind                      = "kind"
-    val IsActive                  = "isActive"
-    val CompanyProfileLastUpdated = "companyProfileLastUpdated"
-    val CreatedAt                 = "createdAt"
-    val UpdatedAt                 = "updatedAt"
+    val Id                          = "_id"
+    val Exchange                    = "exchange"
+    val Ticker                      = "ticker"
+    val Name                        = "name"
+    val Kind                        = "kind"
+    val IsActive                    = "isActive"
+    val CompanyProfileLastUpdatedAt = "companyProfileLastUpdatedAt"
+    val CreatedAt                   = "createdAt"
+    val UpdatedAt                   = "updatedAt"
 
   extension (security: Security)
     private def toUpdateCommand(now: Instant): WriteCommand[Nothing] =
@@ -59,7 +58,7 @@ final private class LiveSecurityRepository[F[_]](
         .set(Field.Name, security.name)
         .set(Field.Kind, security.kind)
         .set(Field.IsActive, security.isActive)
-      update = security.companyProfileLastUpdated.fold(update)(ts => update.set(Field.CompanyProfileLastUpdated, ts))
+      update = security.companyProfileLastUpdatedAt.fold(update)(ts => update.set(Field.CompanyProfileLastUpdatedAt, ts))
       WriteCommand.UpdateOne(Filter.idEq(id), update, UpdateOptions(upsert = true))
 
   override def save(securities: List[Security]): F[Unit] =
@@ -100,15 +99,12 @@ final private class LiveSecurityRepository[F[_]](
         .mapList(_._id)
     }
 
-  override def updateCompanyProfileLastUpdated(ticker: Ticker): F[Unit] =
-    collection.updateOne(Filter.idEq(ticker.value), Update.currentDate(Field.CompanyProfileLastUpdated)).void
-
   override def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit] =
     F.whenA(tickers.nonEmpty) {
       collection
         .updateMany(
           Filter.in(Field.Id, tickers.map(_.value)),
-          Update.currentDate(Field.CompanyProfileLastUpdated)
+          Update.currentDate(Field.CompanyProfileLastUpdatedAt)
         )
         .void
     }
@@ -126,7 +122,8 @@ final private class LiveSecurityRepository[F[_]](
       case SecurityFilter.NotUpdatedFor(duration) =>
         clock.now.map(now => Filter.lt(Field.UpdatedAt, now.minus(duration)))
       case SecurityFilter.CompanyProfileNotUpdatedFor(duration) =>
-        clock.now.map(now => Filter.isNull(Field.CompanyProfileLastUpdated) || Filter.lt(Field.CompanyProfileLastUpdated, now.minus(duration)))
+        val isNullOrLt = (ts: Instant) => Filter.isNull(Field.CompanyProfileLastUpdatedAt) || Filter.lt(Field.CompanyProfileLastUpdatedAt, ts)
+        clock.now.map(now => isNullOrLt(now.minus(duration)))
       case SecurityFilter.Composite(filters) =>
         filters.traverse(_.toFilter).map(_.toList.foldLeft(Filter.empty)(_ && _))
 }
@@ -137,3 +134,4 @@ object SecurityRepository extends MongoJsonCodecs:
       .getCollectionWithCodec[SecurityEntity]("securities")
       .map(_.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity])
       .map(LiveSecurityRepository[F](_))
+

@@ -60,7 +60,7 @@ package object domain {
       name: String,
       kind: SecurityKind,
       isActive: Boolean = true,
-      companyProfileLastUpdated: Option[Instant] = None
+      companyProfileLastUpdatedAt: Option[Instant] = None
   ) derives CirceCodec.AsObject
 
   final case class CompanyProfile(
@@ -72,7 +72,8 @@ package object domain {
       website: String,
       ipoDate: LocalDate,
       currency: String,
-      marketCap: Long
+      marketCap: Long,
+      pricePerformanceLastUpdatedAt: Option[Instant] = None
   ) derives CirceCodec.AsObject
 
   final case class Stock(

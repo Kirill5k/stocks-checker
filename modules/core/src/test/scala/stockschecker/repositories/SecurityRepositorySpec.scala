@@ -186,14 +186,14 @@ class SecurityRepositorySpec extends RepositorySpec {
     }
 
     "updateCompanyProfileLastUpdated" should {
-      "update the companyProfileLastUpdated field" in {
+      "update the companyProfileLastUpdated field for single ticker" in {
         withEmbeddedMongoDatabase { db =>
           for
             repo    <- SecurityRepository.make(db)
             _       <- repo.save(AAPLSecurity)
-            _       <- repo.updateCompanyProfileLastUpdated(AAPL)
+            _       <- repo.updateCompanyProfileLastUpdated(List(AAPL))
             updated <- repo.find(AAPL)
-          yield updated.flatMap(_.companyProfileLastUpdated) mustBe defined
+          yield updated.flatMap(_.companyProfileLastUpdatedAt) mustBe defined
         }
       }
 
@@ -201,7 +201,7 @@ class SecurityRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- SecurityRepository.make(db)
-            _    <- repo.updateCompanyProfileLastUpdated(AAPL)
+            _    <- repo.updateCompanyProfileLastUpdated(List(AAPL))
             res  <- repo.find(AAPL)
           yield res mustBe None
         }
@@ -217,8 +217,8 @@ class SecurityRepositorySpec extends RepositorySpec {
             updatedAAPL  <- repo.find(AAPL)
             updatedMSFT  <- repo.find(MSFT)
           yield {
-            updatedAAPL.flatMap(_.companyProfileLastUpdated) mustBe defined
-            updatedMSFT.flatMap(_.companyProfileLastUpdated) mustBe defined
+            updatedAAPL.flatMap(_.companyProfileLastUpdatedAt) mustBe defined
+            updatedMSFT.flatMap(_.companyProfileLastUpdatedAt) mustBe defined
           }
         }
       }
@@ -244,7 +244,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             updatedAAPL  <- repo.find(AAPL)
             updatedOther <- repo.find(nonExistent)
           yield {
-            updatedAAPL.flatMap(_.companyProfileLastUpdated) mustBe defined
+            updatedAAPL.flatMap(_.companyProfileLastUpdatedAt) mustBe defined
             updatedOther mustBe None
           }
         }

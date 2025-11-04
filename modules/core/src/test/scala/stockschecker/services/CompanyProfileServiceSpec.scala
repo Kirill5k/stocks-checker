@@ -46,7 +46,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         res.asserting { cp =>
           verify(client).getCompanyProfile(AAPL)
           verify(repo).save(List(AAPLCompanyProfile))
-          verify(dispatcher).dispatch(Action.MarkSecuritiesAsEnriched(List(AAPL)))
+          verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(List(AAPL)))
           verifyNoMoreInteractions(repo) // ensure repo.find wasn't called
           cp mustBe AAPLCompanyProfile
         }
@@ -137,7 +137,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
     }
 
     "fetchLatest" should {
-      "fetch company profiles and dispatch MarkSecuritiesAsEnriched action" in {
+      "fetch company profiles and dispatch RecordCompanyProfileUpdate action" in {
         val (repo, client, dispatcher) = mocks
         val tickers                    = NonEmptyList.of(AAPL, MSFT)
         when(client.getCompanyProfile(any[Ticker]))
@@ -153,7 +153,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
           verify(client).getCompanyProfile(AAPL)
           verify(client).getCompanyProfile(MSFT)
           verify(repo).save(List(AAPLCompanyProfile, MSFTCompanyProfile))
-          verify(dispatcher).dispatch(Action.MarkSecuritiesAsEnriched(List(AAPL, MSFT)))
+          verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(List(AAPL, MSFT)))
           succeed
         }
       }
@@ -173,7 +173,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
           verify(client).getCompanyProfile(AAPL)
           verify(client).getCompanyProfile(MSFT)
           verify(repo).save(List(AAPLCompanyProfile))
-          verify(dispatcher).dispatch(Action.MarkSecuritiesAsEnriched(List(AAPL)))
+          verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(List(AAPL)))
           succeed
         }
       }

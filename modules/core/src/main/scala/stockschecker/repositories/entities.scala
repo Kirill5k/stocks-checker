@@ -20,7 +20,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       name: String,
       kind: SecurityKind,
       isActive: Boolean,
-      companyProfileLastUpdated: Option[Instant],
+      companyProfileLastUpdatedAt: Option[Instant],
       createdAt: Instant,
       updatedAt: Instant
   ) derives Codec.AsObject:
@@ -31,7 +31,7 @@ private[repositories] object entities extends MongoJsonCodecs {
         name = name,
         kind = kind,
         isActive = isActive,
-        companyProfileLastUpdated = companyProfileLastUpdated
+        companyProfileLastUpdatedAt = companyProfileLastUpdatedAt
       )
 
   object SecurityEntity:
@@ -44,7 +44,7 @@ private[repositories] object entities extends MongoJsonCodecs {
         name = security.name,
         kind = security.kind,
         isActive = security.isActive,
-        companyProfileLastUpdated = security.companyProfileLastUpdated,
+        companyProfileLastUpdatedAt = security.companyProfileLastUpdatedAt,
         createdAt = now,
         updatedAt = now
       )
@@ -59,6 +59,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       ipoDate: LocalDate,
       currency: String,
       marketCap: Long,
+      pricePerformanceLastUpdatedAt: Option[Instant],
       createdAt: Instant,
       updatedAt: Instant
   ) derives Codec.AsObject:
@@ -72,7 +73,8 @@ private[repositories] object entities extends MongoJsonCodecs {
         website = website,
         ipoDate = ipoDate,
         currency = currency,
-        marketCap = marketCap
+        marketCap = marketCap,
+        pricePerformanceLastUpdatedAt = pricePerformanceLastUpdatedAt
       )
 
   object CompanyProfileEntity:
@@ -88,6 +90,7 @@ private[repositories] object entities extends MongoJsonCodecs {
         ipoDate = profile.ipoDate,
         currency = profile.currency,
         marketCap = profile.marketCap,
+        pricePerformanceLastUpdatedAt = profile.pricePerformanceLastUpdatedAt,
         createdAt = now,
         updatedAt = now
       )

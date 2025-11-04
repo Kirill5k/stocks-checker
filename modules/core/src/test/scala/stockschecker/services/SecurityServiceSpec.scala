@@ -40,7 +40,7 @@ class SecurityServiceSpec extends IOWordSpec {
         
         val res = for
           svc <- SecurityService.make(repo, client)
-          _   <- svc.markAsEnriched(tickers)
+          _   <- svc.recordCompanyProfileUpdate(tickers)
         yield ()
 
         res.asserting { r =>
@@ -55,7 +55,7 @@ class SecurityServiceSpec extends IOWordSpec {
         
         val res = for
           svc <- SecurityService.make(repo, client)
-          _   <- svc.markAsEnriched(List.empty)
+          _   <- svc.recordCompanyProfileUpdate(List.empty)
         yield ()
 
         res.asserting { r =>
