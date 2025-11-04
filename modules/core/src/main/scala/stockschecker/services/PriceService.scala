@@ -41,21 +41,23 @@ final private class LivePriceService[F[_]](
         .unNone
         .chunkN(512)
         .evalMap { chunk =>
-          logger.info(s"Saving batch of ${chunk.size} price performance summaries") >>
-            repository.save(chunk.toList)
+          logger.info(s"Saving batch of ${chunk.size} price performance summaries") >> save(chunk.toList)
         }
         .compile
         .drain >>
       logger.info(s"Finished fetching price performance summaries for ${tickers.size} tickers")
 
   override def findPerformanceSummary(ticker: Ticker, fetch: Boolean): F[PricePerformanceSummary] =
-    if (fetch) fetchPerformanceSummary(ticker).flatTap(repository.save)
+    if (fetch) fetchPerformanceSummary(ticker).flatTap(pps => save(List(pps)))
     else repository.find(ticker).flatMap(pps => F.fromOption(pps, AppError.PricePerformanceSummaryNotFound(ticker)))
 
   private def fetchPerformanceSummary(ticker: Ticker): F[PricePerformanceSummary] =
     marketDataClient
       .getMonthlyPriceCandles(ticker)
       .map(candles => PricePerformanceSummary.from(ticker, candles))
+
+  private def save(ppss: List[PricePerformanceSummary]): F[Unit] =
+    repository.save(ppss)
 }
 
 object PriceService:
