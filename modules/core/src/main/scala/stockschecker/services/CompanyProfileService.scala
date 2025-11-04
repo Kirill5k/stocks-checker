@@ -15,7 +15,6 @@ import stockschecker.repositories.CompanyProfileRepository
 import scala.concurrent.duration.*
 
 trait CompanyProfileService[F[_]]:
-  def save(cps: List[CompanyProfile]): F[Unit]
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
   def getAll(limit: Option[Int]): F[List[CompanyProfile]]
   def fetchLatest(tickers: NonEmptyList[Ticker]): F[Unit]
@@ -43,8 +42,7 @@ final private class LiveCompanyProfileService[F[_]](
         .unNone
         .chunkN(512)
         .evalMap { chunk =>
-          logger.info(s"Saving batch of ${chunk.size} company profiles") >>
-            repository.save(chunk.toList)
+          logger.info(s"Saving batch of ${chunk.size} company profiles") >> save(chunk.toList)
         }
         .compile
         .drain >>
@@ -52,7 +50,7 @@ final private class LiveCompanyProfileService[F[_]](
 
   override def get(ticker: Ticker, fetch: Boolean = false): F[CompanyProfile] = {
     val cpOpt =
-      if (fetch) fetchCompanyProfile(ticker).flatTap(cp => F.whenA(cp.nonEmpty)(repository.save(cp.get)))
+      if (fetch) fetchCompanyProfile(ticker).flatTap(cp => F.whenA(cp.nonEmpty)(save(cp.toList)))
       else repository.find(ticker)
 
     cpOpt.flatMap(cp => F.fromOption(cp, AppError.CompanyProfileNotFound(ticker)))
@@ -67,7 +65,7 @@ final private class LiveCompanyProfileService[F[_]](
   override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
 
-  override def save(cps: List[CompanyProfile]): F[Unit] =
+  private def save(cps: List[CompanyProfile]): F[Unit] =
     repository.save(cps)
 }
 
