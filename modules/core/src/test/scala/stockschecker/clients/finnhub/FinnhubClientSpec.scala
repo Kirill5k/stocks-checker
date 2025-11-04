@@ -6,6 +6,7 @@ import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.{CompanyProfile, Exchange, Security, SecurityKind, Ticker}
 import sttp.client4.testing.ResponseStub
 import fs2.Stream
+import sttp.model.StatusCode
 
 import java.time.LocalDate
 
@@ -114,6 +115,36 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
         result.asserting { cp =>
           cp mustBe None
+        }
+      }
+
+      "retry on 429 Too Many Requests and succeed on second attempt" in {
+        val testingBackend = fs2BackendStub
+          .whenAnyRequest
+          .thenRespondCyclic(
+            ResponseStub.adjust("""{"error":"API limit exceeded"}""", StatusCode.TooManyRequests),
+            ResponseStub.adjust(readJson("finnhub/company-profile-success.json"))
+          )
+
+        val result = for
+          client <- FinnhubClient.make[IO](config, testingBackend)
+          profile <- client.getCompanyProfile(Ticker("AAPL"))
+        yield profile
+
+        result.asserting { cp =>
+          cp mustBe Some(
+            CompanyProfile(
+              ticker = Ticker("AAPL"),
+              name = "APPLE INC",
+              country = "US",
+              industry = "Technology",
+              description = Some("Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide."),
+              website = "https://www.apple.com/",
+              ipoDate = LocalDate.parse("1980-12-12"),
+              currency = "USD",
+              marketCap = 3989245252568L
+            )
+          )
         }
       }
     }

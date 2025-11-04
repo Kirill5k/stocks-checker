@@ -3,7 +3,7 @@ package stockschecker.clients.finnhub
 import cats.effect.Async
 import cats.syntax.flatMap.*
 import fs2.Stream
-import io.circe.Codec
+import io.circe.{Codec, JsonObject}
 import io.circe.fs2.{byteArrayParser, decoder}
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
@@ -11,6 +11,7 @@ import stockschecker.domain.{CompanyProfile, Exchange, Security, SecurityKind, T
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 import sttp.client4.circe.asJson
+import sttp.model.StatusCode
 
 import scala.concurrent.duration.*
 
@@ -28,7 +29,7 @@ final private class LiveFinnhubClient[F[_]](
   override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v1/stock/profile2?token=${config.apiKey}&symbol=$ticker")
-      .response(asJson[io.circe.JsonObject])
+      .response(asJson[JsonObject])
 
     backend.send(request).flatMap { response =>
       response.body match
@@ -40,14 +41,16 @@ final private class LiveFinnhubClient[F[_]](
               F.pure(Some(profile.toDomain))
             case Left(err) =>
               F.raiseError(AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile for $ticker: ${err.getMessage}"))
+        case Left(ResponseException.UnexpectedStatusCode(body, meta)) if meta.code == StatusCode.TooManyRequests =>
+          F.sleep(2.second) >> getCompanyProfile(ticker)
         case Left(err) =>
           F.raiseError(AppError.Http(response.code.code, s"Error retrieving company profile for $ticker: ${err.getMessage}"))
     }
   }
 
   override def getListedSecurities(exchange: Exchange): Stream[F, Security] = {
-    val mic  = mapExchangeToFinnhubMic(exchange)
-    val code = mapExchangeToFinnhubCode(exchange)
+    val mic     = mapExchangeToFinnhubMic(exchange)
+    val code    = mapExchangeToFinnhubCode(exchange)
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v1/stock/symbol?token=${config.apiKey}&exchange=$code&mic=$mic")
       .response(asStreamUnsafe(Fs2Streams[F]))
@@ -55,7 +58,7 @@ final private class LiveFinnhubClient[F[_]](
 
     for
       response <- Stream.eval(backend.send(request))
-      data <- response.body match
+      data     <- response.body match
         case Right(stream) =>
           stream
             .through(byteArrayParser[F])
