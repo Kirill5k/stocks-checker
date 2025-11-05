@@ -67,6 +67,24 @@ class AlphaVantageClientSpec extends Sttp4WordSpec {
         result.attempt.asserting(_ mustBe Left(AppError.Http(429, "All Alpha Vantage API keys exhausted due to rate limiting: api-key")))
       }
 
+      "retry on 429 errors when one of the keys is exhausted" in {
+        val testingBackend = fs2BackendStub
+          .whenRequestMatchesPartial {
+            case r if r.isGet && r.hasPath("/query") && r.hasParams(Map("apikey" -> "key1")) =>
+              ResponseStub.adjust(readJson("alpha-vantage/monthly-data-error.json"))
+            case r if r.isGet && r.hasPath("/query") && r.hasParams(Map("apikey" -> "key2")) =>
+              ResponseStub.adjust(readJson("alpha-vantage/monthly-data-success.json"))
+            case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
+          }
+
+        val result = for
+          client <- AlphaVantageClient.make[IO](config.copy(apiKey = "key1,key2"), testingBackend)
+          candles <- client.getMonthlyPriceCandles(Ticker("AAPL"))
+        yield candles
+
+        result.asserting(_.size mustBe 311)
+      }
+
       "return error when no time series data is returned" in {
         val expectedParams = Map("function" -> "TIME_SERIES_MONTHLY", "symbol" -> "INVALID", "apikey" -> "api-key")
         val testingBackend = fs2BackendStub
@@ -98,12 +116,7 @@ class AlphaVantageClientSpec extends Sttp4WordSpec {
           candles <- client.getMonthlyPriceCandles(Ticker("EMPTY"))
         yield candles
 
-        result.attempt.asserting {
-          case Left(AppError.Http(500, msg)) =>
-            msg must include("No time series data returned for ticker EMPTY")
-          case other =>
-            fail(s"Expected AppError.Http with message about no candle data, got: $other")
-        }
+        result.attempt.asserting(_ mustBe Left(AppError.Http(500, "No time series data returned for ticker EMPTY")))
       }
     }
   }

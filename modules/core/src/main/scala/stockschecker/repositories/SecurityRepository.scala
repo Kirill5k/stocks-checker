@@ -1,5 +1,6 @@
 package stockschecker.repositories
 
+import cats.Monad
 import cats.effect.Concurrent
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
@@ -31,7 +32,7 @@ trait SecurityRepository[F[_]]:
 final private class LiveSecurityRepository[F[_]](
     private val collection: MongoCollection[F, SecurityEntity]
 )(using
-    F: Concurrent[F],
+    F: Monad[F],
     clock: Clock[F]
 ) extends SecurityRepository[F] {
 
@@ -48,7 +49,7 @@ final private class LiveSecurityRepository[F[_]](
 
   extension (security: Security)
     private def toUpdateCommand(now: Instant): WriteCommand[Nothing] =
-      val id = security.ticker.value
+      val id     = security.ticker.value
       var update = Update
         .setOnInsert(Field.Id, id)
         .setOnInsert(Field.CreatedAt, now)
@@ -122,16 +123,16 @@ final private class LiveSecurityRepository[F[_]](
       case SecurityFilter.NotUpdatedFor(duration) =>
         clock.now.map(now => Filter.lt(Field.UpdatedAt, now.minus(duration)))
       case SecurityFilter.CompanyProfileNotUpdatedFor(duration) =>
-        val isNullOrLt = (ts: Instant) => Filter.isNull(Field.CompanyProfileLastUpdatedAt) || Filter.lt(Field.CompanyProfileLastUpdatedAt, ts)
+        val isNullOrLt = (ts: Instant) =>
+          Filter.isNull(Field.CompanyProfileLastUpdatedAt) || Filter.lt(Field.CompanyProfileLastUpdatedAt, ts)
         clock.now.map(now => isNullOrLt(now.minus(duration)))
       case SecurityFilter.Composite(filters) =>
         filters.traverse(_.toFilter).map(_.toList.foldLeft(Filter.empty)(_ && _))
 }
 
 object SecurityRepository extends MongoJsonCodecs:
-  def make[F[_]](database: MongoDatabase[F])(using Concurrent[F], Clock[F]): F[SecurityRepository[F]] =
+  def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[SecurityRepository[F]] =
     database
       .getCollectionWithCodec[SecurityEntity]("securities")
       .map(_.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity])
       .map(LiveSecurityRepository[F](_))
-
