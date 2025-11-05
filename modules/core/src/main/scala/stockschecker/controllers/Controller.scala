@@ -26,6 +26,11 @@ trait Controller[F[_]] extends TapirJsonCirce with SchemaDerivation {
 
   def routes: HttpRoutes[F]
 
+  protected def secured[I, O](endpoint: Endpoint[String, I, (StatusCode, ErrorResponse), O, Any], apiKey: String) =
+    endpoint.serverSecurityLogicPure { key =>
+      Either.cond(key == apiKey, (), (StatusCode.Unauthorized, ErrorResponse("Invalid API key")))
+    }
+  
   extension [A](fa: F[A])(using F: MonadThrow[F])
     def voidResponse: F[Either[(StatusCode, ErrorResponse), Unit]] = mapResponse(_ => ())
     def mapResponse[B](fab: A => B): F[Either[(StatusCode, ErrorResponse), B]] =
@@ -44,6 +49,9 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
 
   val publicEndpoint: PublicEndpoint[Unit, (StatusCode, ErrorResponse), Unit, Any] =
     endpoint.errorOut(error)
+
+  val secureEndpoint: Endpoint[String, Unit, (StatusCode, ErrorResponse), Unit, Any] =
+    publicEndpoint.securityIn(auth.apiKey(header[String]("X-API-Key")))
 
   def serverOptions[F[_]](using F: Sync[F]): Http4sServerOptions[F] = {
     val errorEndpointOut = (e: Throwable) => Some(ValuedEndpointOutput(error, Controller.mapError(e)))
