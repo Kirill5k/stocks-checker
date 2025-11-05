@@ -13,12 +13,13 @@ import org.http4s.server.Router
 trait Controllers[F[_]]:
   def security: Controller[F]
   def companyProfile: Controller[F]
+  def price: Controller[F]
   def command: Controller[F]
   def health: Controller[F]
 
   def routes(using M: Monad[F]): HttpRoutes[F] =
     Router(
-      "api" -> (security.routes <+> companyProfile.routes <+> command.routes),
+      "api" -> (security.routes <+> companyProfile.routes <+> price.routes <+> command.routes),
       ""    -> health.routes
     )
 
@@ -26,11 +27,13 @@ object Controllers:
   def make[F[_]: {Async, Clock}](services: Services[F]): F[Controllers[F]] =
     for
       s  <- SecurityController.make(services.security)
+      p  <- PriceController.make(services.price)
       cp <- CompanyProfileController.make(services.companyProfile)
       h  <- HealthController.make[F]
       c  <- CommandController.make[F](services.command)
     yield new Controllers[F]:
       override val security: Controller[F]       = s
+      override val price: Controller[F]          = p
       override val companyProfile: Controller[F] = cp
       override val health: Controller[F]         = h
       override val command: Controller[F]        = c
