@@ -14,6 +14,7 @@ import sttp.model.StatusCode
 import sttp.tapir.DecodeResult.Error.JsonDecodeException
 import sttp.tapir.generic.auto.SchemaDerivation
 import sttp.tapir.json.circe.TapirJsonCirce
+import sttp.tapir.server.PartialServerEndpoint
 import sttp.tapir.server.http4s.Http4sServerOptions
 import sttp.tapir.server.interceptor.DecodeFailureContext
 import sttp.tapir.server.interceptor.exception.{ExceptionContext, ExceptionHandler}
@@ -22,17 +23,40 @@ import sttp.tapir.server.interceptor.decodefailure.DecodeFailureHandler
 
 final case class ErrorResponse(message: String) derives Codec.AsObject
 
-trait Controller[F[_]] extends TapirJsonCirce with SchemaDerivation {
+sealed trait ApiKeyRequirement
+
+object ApiKeyRequirement:
+  case object NotRequired                                        extends ApiKeyRequirement
+  final class Required private (private val expectedKey: String) extends ApiKeyRequirement {
+    def authenticate(providedKey: String): Boolean =
+      java.security.MessageDigest.isEqual(
+        expectedKey.getBytes("UTF-8"),
+        providedKey.getBytes("UTF-8")
+      )
+  }
+
+  object Required:
+    def apply(key: String): Required = new Required(key)
+
+trait Controller[F[_]](protected val apiKeyRequirement: ApiKeyRequirement) extends TapirJsonCirce with SchemaDerivation {
 
   def routes: HttpRoutes[F]
 
-  protected def secured[I, O](endpoint: Endpoint[String, I, (StatusCode, ErrorResponse), O, Any], apiKey: String) =
-    endpoint.serverSecurityLogicPure { key =>
-      Either.cond(key == apiKey, (), (StatusCode.Unauthorized, ErrorResponse("Invalid API key")))
+  protected def secured[I, O](
+      endpoint: Endpoint[Option[String], I, (StatusCode, ErrorResponse), O, Any]
+  ): PartialServerEndpoint[Option[String], Unit, I, (StatusCode, ErrorResponse), O, Any, F] =
+    endpoint.serverSecurityLogicPure { providedKeyOpt =>
+      apiKeyRequirement match
+        case req: ApiKeyRequirement.Required =>
+          providedKeyOpt match
+            case Some(providedKey) if req.authenticate(providedKey) => Right(())
+            case _ => Left((StatusCode.Unauthorized, ErrorResponse("Invalid API key")))
+        case ApiKeyRequirement.NotRequired =>
+          Left((StatusCode.Forbidden, ErrorResponse("API key authentication is not configured for this endpoint")))
     }
-  
+
   extension [A](fa: F[A])(using F: MonadThrow[F])
-    def voidResponse: F[Either[(StatusCode, ErrorResponse), Unit]] = mapResponse(_ => ())
+    def voidResponse: F[Either[(StatusCode, ErrorResponse), Unit]]             = mapResponse(_ => ())
     def mapResponse[B](fab: A => B): F[Either[(StatusCode, ErrorResponse), B]] =
       fa
         .map(fab(_).asRight[(StatusCode, ErrorResponse)])
@@ -50,8 +74,8 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
   val publicEndpoint: PublicEndpoint[Unit, (StatusCode, ErrorResponse), Unit, Any] =
     endpoint.errorOut(error)
 
-  val secureEndpoint: Endpoint[String, Unit, (StatusCode, ErrorResponse), Unit, Any] =
-    publicEndpoint.securityIn(auth.apiKey(header[String]("X-API-Key")))
+  val secureEndpoint: Endpoint[Option[String], Unit, (StatusCode, ErrorResponse), Unit, Any] =
+    publicEndpoint.securityIn(auth.apiKey(header[Option[String]]("X-API-Key")))
 
   def serverOptions[F[_]](using F: Sync[F]): Http4sServerOptions[F] = {
     val errorEndpointOut = (e: Throwable) => Some(ValuedEndpointOutput(error, Controller.mapError(e)))
@@ -59,7 +83,7 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
       .exceptionHandler(ExceptionHandler.pure((ctx: ExceptionContext) => errorEndpointOut(ctx.e)))
       .decodeFailureHandler(DecodeFailureHandler.pure { (ctx: DecodeFailureContext) =>
         ctx.failure match
-          case DecodeResult.Error(_, e) => errorEndpointOut(e)
+          case DecodeResult.Error(_, e)     => errorEndpointOut(e)
           case DecodeResult.InvalidValue(e) =>
             val msgs = e.collect { case ValidationError(_, _, _, Some(msg)) => msg }
             errorEndpointOut(AppError.FailedValidation(msgs.mkString(", ")))

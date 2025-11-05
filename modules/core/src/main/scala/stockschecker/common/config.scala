@@ -5,6 +5,10 @@ import pureconfig.*
 import kirill5k.common.http4s.*
 
 object config {
+  final case class ApiConfig(
+      key: String
+  ) derives ConfigReader
+
   final case class ServerConfig(
       host: String,
       port: Int
@@ -32,7 +36,7 @@ object config {
   final case class ClientsConfig(
       financialModelingPrep: FinancialModelingPrepConfig,
       finnhub: FinnhubClientConfig,
-      alphaVantage: AlphaVantageClientConfig,
+      alphaVantage: AlphaVantageClientConfig
   ) derives ConfigReader
 
   final case class MongoConfig(
@@ -41,6 +45,7 @@ object config {
   ) derives ConfigReader
 
   final case class AppConfig(
+      api: ApiConfig,
       server: ServerConfig,
       clients: ClientsConfig,
       mongo: MongoConfig

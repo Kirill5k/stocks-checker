@@ -4,6 +4,7 @@ import cats.effect.Async
 import io.circe.Codec
 import org.http4s.HttpRoutes
 import stockschecker.actions.Action
+import stockschecker.common.config.ApiConfig
 import stockschecker.controllers.CommandController.CreateCommandResponse
 import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule, UpdateCommand}
 import stockschecker.services.CommandService
@@ -14,35 +15,38 @@ import sttp.tapir.json.circe.TapirJsonCirce
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
 final private class CommandController[F[_]: Async](
-    private val service: CommandService[F]
-) extends Controller[F] {
+    private val service: CommandService[F],
+    apiKeyRequirement: ApiKeyRequirement
+) extends Controller[F](apiKeyRequirement) {
 
-  private val getAllCommands = CommandController.getAllCommandsEndpoint
-    .serverLogic { _ =>
+  private val getAllCommands = secured(CommandController.getAllCommandsEndpoint)
+    .serverLogic { _ => _ =>
       service.getAll
         .mapResponse(identity)
     }
 
-  private val createCommand = CommandController.createCommandEndpoint
-    .serverLogic { req =>
+  private val createCommand = secured(CommandController.createCommandEndpoint)
+    .serverLogic { _ => req =>
       service
         .create(CreateCommand(req.action, req.schedule, req.maxExecutions))
         .mapResponse(cmd => CreateCommandResponse(cmd.id))
     }
 
-  private val activateCommand = CommandController.activateCommandEndpoint
-    .serverLogic { (cid, req) =>
-      service
-        .activate(cid, req.isActive)
-        .voidResponse
-    }
+  private val activateCommand = secured(CommandController.activateCommandEndpoint)
+    .serverLogic { _ => { 
+      case (cid, req) =>
+        service
+          .activate(cid, req.isActive)
+          .voidResponse
+    }}
 
-  private val updateCommand = CommandController.updateCommandEndpoint
-    .serverLogic { (cid, req) =>
-      service
-        .update(UpdateCommand(cid, req.isActive, req.action, req.schedule, req.maxExecutions))
-        .mapResponse(identity)
-    }
+  private val updateCommand = secured(CommandController.updateCommandEndpoint)
+    .serverLogic { _ => {
+      case (cid, req) =>
+        service
+          .update(UpdateCommand(cid, req.isActive, req.action, req.schedule, req.maxExecutions))
+          .mapResponse(identity)
+    }}
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
@@ -66,7 +70,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .map((s: String) => CommandId(s))(_.value)
     .name("command-id")
 
-  private val getAllCommandsEndpoint = Controller.publicEndpoint.get
+  private val getAllCommandsEndpoint = Controller.secureEndpoint.get
     .in(basePath)
     .out(jsonBody[List[Command]])
     .description("Get all commands")
@@ -81,7 +85,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
       id: CommandId
   ) derives Codec.AsObject
 
-  private val createCommandEndpoint = Controller.publicEndpoint.post
+  private val createCommandEndpoint = Controller.secureEndpoint.post
     .in(basePath)
     .in(jsonBody[CreateCommandRequest])
     .out(jsonBody[CreateCommandResponse].and(statusCode(StatusCode.Created)))
@@ -91,7 +95,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
       isActive: Boolean
   ) derives Codec.AsObject
 
-  private val activateCommandEndpoint = Controller.publicEndpoint.put
+  private val activateCommandEndpoint = Controller.secureEndpoint.put
     .in(commandIdPath / "active")
     .in(jsonBody[ActivateCommandRequest])
     .out(statusCode(StatusCode.NoContent))
@@ -104,12 +108,12 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
       maxExecutions: Option[Int]
   ) derives Codec.AsObject
 
-  private val updateCommandEndpoint = Controller.publicEndpoint.put
+  private val updateCommandEndpoint = Controller.secureEndpoint.put
     .in(commandIdPath)
     .in(jsonBody[UpdateCommandRequest])
     .out(jsonBody[Command])
     .description("Update an existing command")
 
-  def make[F[_]: Async](service: CommandService[F]): F[Controller[F]] =
-    Async[F].pure(CommandController[F](service))
+  def make[F[_]: Async](config: ApiConfig, service: CommandService[F]): F[Controller[F]] =
+    Async[F].pure(CommandController[F](service, ApiKeyRequirement.Required(config.key)))
 }

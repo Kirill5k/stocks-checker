@@ -27,7 +27,7 @@ object Application extends IOApp.Simple {
             clients          <- Clients.make(config.clients, res.httpBackend)
             repositories     <- Repositories.make(res.mongoDatabase)
             services         <- Services.make(clients, repositories, actionDispatcher)
-            controllers      <- Controllers.make(services)
+            controllers      <- Controllers.make(services, config.api)
             actionExecutor   <- ActionExecutor.make(actionDispatcher, services)
             _                <- actionDispatcher.dispatch(Action.RescheduleAll)
             _                <- Stream(

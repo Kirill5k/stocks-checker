@@ -6,6 +6,7 @@ import cats.implicits.toSemigroupKOps
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
 import kirill5k.common.cats.Clock
+import stockschecker.common.config.ApiConfig
 import stockschecker.services.Services
 import org.http4s.HttpRoutes
 import org.http4s.server.Router
@@ -24,13 +25,13 @@ trait Controllers[F[_]]:
     )
 
 object Controllers:
-  def make[F[_]: {Async, Clock}](services: Services[F]): F[Controllers[F]] =
+  def make[F[_]: {Async, Clock}](services: Services[F], apiConfig: ApiConfig): F[Controllers[F]] =
     for
-      s  <- SecurityController.make(services.security)
-      p  <- PriceController.make(services.price)
-      cp <- CompanyProfileController.make(services.companyProfile)
+      s  <- SecurityController.make(services.security, apiConfig)
+      p  <- PriceController.make(services.price, apiConfig)
+      cp <- CompanyProfileController.make(services.companyProfile, apiConfig)
       h  <- HealthController.make[F]
-      c  <- CommandController.make[F](services.command)
+      c  <- CommandController.make[F](apiConfig, services.command)
     yield new Controllers[F]:
       override val security: Controller[F]       = s
       override val price: Controller[F]          = p

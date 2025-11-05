@@ -24,7 +24,7 @@ final class HealthController[F[_]: Async](
     private val appVersion: Option[String]
 )(using
     clock: Clock[F]
-) extends Controller[F] {
+) extends Controller[F](ApiKeyRequirement.NotRequired) {
 
   private val statusEndpoint: ServerEndpoint[Fs2Streams[F], F] =
     HealthController.statusEndpoint

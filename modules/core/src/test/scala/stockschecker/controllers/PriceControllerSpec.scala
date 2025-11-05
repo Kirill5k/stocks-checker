@@ -4,12 +4,18 @@ import cats.effect.IO
 import kirill5k.common.http4s.test.HttpRoutesWordSpec
 import org.http4s.*
 import org.http4s.implicits.*
+import org.typelevel.ci.CIString
+import stockschecker.common.config.ApiConfig
 import stockschecker.domain.Ticker
 import stockschecker.domain.errors.AppError
 import stockschecker.services.PriceService
 import stockschecker.fixtures.*
 
 class PriceControllerSpec extends HttpRoutesWordSpec {
+
+  val testApiKey   = "test-api-key-12345"
+  val apiConfig    = ApiConfig(testApiKey)
+  val apiKeyHeader = Header.Raw(CIString("X-API-Key"), testApiKey)
 
   "A PriceController" when {
     "GET /price/performance-summary/:ticker" should {
@@ -18,8 +24,8 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
         when(svc.findPerformanceSummary(any[Ticker], anyBoolean)).thenReturnIO(AAPLPricePerformanceSummary)
 
         val res = for
-          controller <- PriceController.make(svc)
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL?fetchLatest=true", method = Method.GET)
+          controller <- PriceController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/price/performance-summary/AAPL?fetchLatest=true", method = Method.GET).withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -45,8 +51,8 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
         when(svc.findPerformanceSummary(any[Ticker], anyBoolean)).thenReturnIO(AAPLPricePerformanceSummary)
 
         val res = for
-          controller <- PriceController.make(svc)
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET)
+          controller <- PriceController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET).withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -72,8 +78,8 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
         when(svc.findPerformanceSummary(any[Ticker], anyBoolean)).thenRaiseError(AppError.PricePerformanceSummaryNotFound(AAPL))
 
         val res = for
-          controller <- PriceController.make(svc)
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET)
+          controller <- PriceController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET).withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -86,17 +92,43 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
         when(svc.findPerformanceSummary(any[Ticker], anyBoolean)).thenRaiseError(AppError.PricePerformanceSummaryNotFound(AAPL))
 
         val res = for
-          controller <- PriceController.make(svc)
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL?fetchLatest=true", method = Method.GET)
+          controller <- PriceController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/price/performance-summary/AAPL?fetchLatest=true", method = Method.GET).withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
         res mustHaveStatus (Status.NotFound, Some("""{"message":"Could not find price performance summary for AAPL"}"""))
         verify(svc).findPerformanceSummary(AAPL, true)
       }
+
+      "return 401 when API key is missing" in {
+        val svc = mocks
+
+        val res = for
+          controller <- PriceController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
+        verifyNoInteractions(svc)
+      }
+
+      "return 401 when API key is invalid" in {
+        val svc = mocks
+
+        val res = for
+          controller <- PriceController.make(svc, apiConfig)
+          invalidApiKeyHeader = Header.Raw(CIString("X-API-Key"), "wrong-key")
+          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET).withHeaders(invalidApiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
+        verifyNoInteractions(svc)
+      }
     }
   }
 
-  def mocks: PriceService[IO] = mock[PriceService[IO]]
+  def mocks = mock[PriceService[IO]]
 }
-
