@@ -114,8 +114,8 @@ package object domain {
         prevCandle.flatMap { lastCandle =>
           val earliestPrice = lastCandle.close
           Option.when(earliestPrice > 0) {
-            val change = (latestPrice - earliestPrice) / earliestPrice
-            change.setScale(4, RoundingMode.HALF_UP)
+            val change = (latestPrice - earliestPrice) / earliestPrice * 100
+            change.setScale(2, RoundingMode.HALF_UP)
           }
         }
 
