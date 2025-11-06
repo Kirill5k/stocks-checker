@@ -4,7 +4,6 @@ import cats.Monad
 import cats.data.NonEmptyList
 import stockschecker.domain.{CompanyProfile, Exchange, PriceCandle, Security, Ticker}
 import fs2.Stream
-import stockschecker.clients.alphavantage.AlphaVantageClient
 import stockschecker.clients.finnhub.FinnhubClient
 import stockschecker.clients.twelvedata.TwelveDataClient
 
