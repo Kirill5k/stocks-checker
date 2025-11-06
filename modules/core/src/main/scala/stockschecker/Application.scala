@@ -1,5 +1,6 @@
 package stockschecker
 
+import cats.effect.unsafe.IORuntimeConfig
 import cats.effect.{IO, IOApp}
 import fs2.Stream
 import kirill5k.common.http4s.Server
@@ -12,8 +13,13 @@ import stockschecker.controllers.Controllers
 import stockschecker.repositories.Repositories
 import stockschecker.services.Services
 
+import scala.concurrent.duration.*
+
 object Application extends IOApp.Simple {
   given logger: Logger[IO] = Slf4jLogger.getLogger[IO]
+
+  override def runtimeConfig: IORuntimeConfig =
+    super.runtimeConfig.copy(cpuStarvationCheckInitialDelay = 10.seconds)
 
   override val run: IO[Unit] =
     for
