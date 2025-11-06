@@ -131,6 +131,8 @@ final private class LiveCompanyProfileRepository[F[_]](
       case CompanyProfileFilter.PricePerformanceNotUpdatedFor(duration) =>
         val isNullOrLt = (ts: Instant) => Filter.isNull(Field.PricePerformanceLastUpdatedAt) || Filter.lt(Field.PricePerformanceLastUpdatedAt, ts)
         C.now.map(currentTime => isNullOrLt(currentTime.minus(duration)))
+      case CompanyProfileFilter.TickerMatching(pattern) =>
+        Filter.regex(Field.Id, pattern).pure
       case CompanyProfileFilter.Composite(filters) =>
         filters.traverse(_.toFilter).map(_.toList.foldLeft(Filter.empty)(_ && _))
 }

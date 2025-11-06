@@ -167,6 +167,28 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
       }
 
+      "return tickers filtered by TickerMatching with regex pattern" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            _    <- repo.save(AAPLCompanyProfile)
+            _    <- repo.save(MSFTCompanyProfile)
+            res  <- repo.findTickersBy(CompanyProfileFilter.TickerMatching(".*SFT"), None)
+          yield res mustBe List(MSFT)
+        }
+      }
+
+      "return empty list when TickerMatching pattern matches nothing" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            _    <- repo.save(AAPLCompanyProfile)
+            _    <- repo.save(MSFTCompanyProfile)
+            res  <- repo.findTickersBy(CompanyProfileFilter.TickerMatching("^XYZ.*"), None)
+          yield res mustBe List.empty
+        }
+      }
+
       "return tickers filtered by Composite filter" in {
         withEmbeddedMongoDatabase { db =>
           val composite = CompanyProfileFilter.Composite(
