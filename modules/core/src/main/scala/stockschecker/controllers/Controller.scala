@@ -45,18 +45,17 @@ trait Controller[F[_]](protected val apiKeyRequirement: ApiKeyRequirement) exten
   protected def secured[I, O](
       endpoint: Endpoint[Option[String], I, (StatusCode, ErrorResponse), O, Any]
   ): PartialServerEndpoint[Option[String], Unit, I, (StatusCode, ErrorResponse), O, Any, F] =
-    endpoint.serverSecurityLogicPure { providedKeyOpt =>
+    endpoint.serverSecurityLogicPure { providedApiKey =>
       apiKeyRequirement match
         case req: ApiKeyRequirement.Required =>
-          providedKeyOpt match
-            case Some(providedKey) if req.authenticate(providedKey) => Right(())
-            case _ => Left((StatusCode.Unauthorized, ErrorResponse("Invalid API key")))
+          Either.cond(providedApiKey.exists(req.authenticate), (), (StatusCode.Unauthorized, ErrorResponse("Invalid API key")))
         case ApiKeyRequirement.NotRequired =>
           Left((StatusCode.Forbidden, ErrorResponse("API key authentication is not configured for this endpoint")))
     }
 
   extension [A](fa: F[A])(using F: MonadThrow[F])
-    def voidResponse: F[Either[(StatusCode, ErrorResponse), Unit]]             = mapResponse(_ => ())
+    def voidResponse: F[Either[(StatusCode, ErrorResponse), Unit]] =
+      mapResponse(_ => ())
     def mapResponse[B](fab: A => B): F[Either[(StatusCode, ErrorResponse), B]] =
       fa
         .map(fab(_).asRight[(StatusCode, ErrorResponse)])
@@ -111,22 +110,21 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
       }
       .mkString(", ")
 
-  def mapError(error: Throwable): (StatusCode, ErrorResponse) =
-    error match
-      case err: AppError.Conflict =>
-        (StatusCode.Conflict, ErrorResponse(err.getMessage))
-      case err: AppError.BadReq =>
-        (StatusCode.BadRequest, ErrorResponse(err.getMessage))
-      case err: AppError.NotFound =>
-        (StatusCode.NotFound, ErrorResponse(err.getMessage))
-      case err: AppError.Forbidden =>
-        (StatusCode.Forbidden, ErrorResponse(err.getMessage))
-      case err: AppError.Unauth =>
-        (StatusCode.Unauthorized, ErrorResponse(err.getMessage))
-      case err: AppError.Unprocessable =>
-        (StatusCode.UnprocessableEntity, ErrorResponse(err.getMessage))
-      case err: JsonDecodeException =>
-        (StatusCode.UnprocessableEntity, ErrorResponse(formatJsonError(err)))
-      case err =>
-        (StatusCode.InternalServerError, ErrorResponse(err.getMessage))
+  def mapError(error: Throwable): (StatusCode, ErrorResponse) = error match
+    case err: AppError.Conflict =>
+      (StatusCode.Conflict, ErrorResponse(err.getMessage))
+    case err: AppError.BadReq =>
+      (StatusCode.BadRequest, ErrorResponse(err.getMessage))
+    case err: AppError.NotFound =>
+      (StatusCode.NotFound, ErrorResponse(err.getMessage))
+    case err: AppError.Forbidden =>
+      (StatusCode.Forbidden, ErrorResponse(err.getMessage))
+    case err: AppError.Unauth =>
+      (StatusCode.Unauthorized, ErrorResponse(err.getMessage))
+    case err: AppError.Unprocessable =>
+      (StatusCode.UnprocessableEntity, ErrorResponse(err.getMessage))
+    case err: JsonDecodeException =>
+      (StatusCode.UnprocessableEntity, ErrorResponse(formatJsonError(err)))
+    case err =>
+      (StatusCode.InternalServerError, ErrorResponse(err.getMessage))
 }
