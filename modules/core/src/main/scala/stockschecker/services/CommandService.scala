@@ -14,6 +14,7 @@ trait CommandService[F[_]]:
   def rescheduleAll: F[Unit]
   def create(cc: CreateCommand): F[Command]
   def execute(cid: CommandId): F[Unit]
+  def executeManually(cid: CommandId): F[Unit]
   def getAll: F[List[Command]]
   def activate(cid: CommandId, isActive: Boolean): F[Unit]
   def update(uc: UpdateCommand): F[Command]
@@ -54,7 +55,10 @@ final private class LiveCommandService[F[_]](
       nextExecTime = cmd.schedule.nextExecutionTime(now)
       _ <- actionDispatcher.dispatch(Action.Schedule(cid, nextExecTime.durationBetween(now)))
     yield ()
-
+    
+  override def executeManually(cid: CommandId): F[Unit] =
+    repo.find(cid).flatMap(cmd => actionDispatcher.dispatch(cmd.action))
+  
   override def getAll: F[List[Command]] =
     repo.all
 

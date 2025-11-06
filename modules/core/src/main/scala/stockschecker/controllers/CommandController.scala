@@ -33,7 +33,7 @@ final private class CommandController[F[_]: Async](
     }
 
   private val activateCommand = secured(CommandController.activateCommandEndpoint)
-    .serverLogic { _ => { 
+    .serverLogic { _ => {
       case (cid, req) =>
         service
           .activate(cid, req.isActive)
@@ -48,13 +48,21 @@ final private class CommandController[F[_]: Async](
           .mapResponse(identity)
     }}
 
+  private val executeManuallyCommand = secured(CommandController.executeManuallyCommandEndpoint)
+    .serverLogic { _ => cid =>
+      service
+        .executeManually(cid)
+        .voidResponse
+    }
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
       List(
         getAllCommands,
         createCommand,
         activateCommand,
-        updateCommand
+        updateCommand,
+        executeManuallyCommand
       )
     )
 }
@@ -113,6 +121,11 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .in(jsonBody[UpdateCommandRequest])
     .out(jsonBody[Command])
     .description("Update an existing command")
+
+  private val executeManuallyCommandEndpoint = Controller.secureEndpoint.post
+    .in(commandIdPath / "execute")
+    .out(statusCode(StatusCode.NoContent))
+    .description("Manually execute a command without affecting its schedule or execution count")
 
   def make[F[_]: Async](config: ApiConfig, service: CommandService[F]): F[Controller[F]] =
     Async[F].pure(CommandController[F](service, ApiKeyRequirement.Required(config.key)))

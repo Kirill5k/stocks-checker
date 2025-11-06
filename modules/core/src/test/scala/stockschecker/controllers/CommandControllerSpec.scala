@@ -140,6 +140,80 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
         verifyNoInteractions(svc)
       }
     }
+
+    "POST /commands/{id}/execute" should {
+      "return 204 on success" in {
+        val svc       = mocks
+        val commandId = FetchLatestSecuritiesCommand.id
+        when(svc.executeManually(commandId)).thenReturnIO(())
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          req = Request[IO](uri = uri"/commands" / commandId.value / "execute", method = Method.POST).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.NoContent, None)
+        verify(svc).executeManually(commandId)
+      }
+
+      "return 404 when command not found" in {
+        val svc       = mocks
+        val commandId = FetchLatestSecuritiesCommand.id
+        when(svc.executeManually(commandId)).thenRaiseError(new Exception("Command not found"))
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          req = Request[IO](uri = uri"/commands" / commandId.value / "execute", method = Method.POST).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.InternalServerError, Some("""{"message":"Command not found"}"""))
+        verify(svc).executeManually(commandId)
+      }
+
+      "return 401 when API key is missing" in {
+        val svc       = mocks
+        val commandId = FetchLatestSecuritiesCommand.id
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          req = Request[IO](uri = uri"/commands" / commandId.value / "execute", method = Method.POST)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
+        verifyNoInteractions(svc)
+      }
+
+      "return 401 when API key is invalid" in {
+        val svc       = mocks
+        val commandId = FetchLatestSecuritiesCommand.id
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          invalidApiKeyHeader = Header.Raw(CIString("X-API-Key"), "invalid-api-key")
+          req = Request[IO](uri = uri"/commands" / commandId.value / "execute", method = Method.POST).withHeaders(invalidApiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
+        verifyNoInteractions(svc)
+      }
+
+      "return 400 for invalid command id format" in {
+        val svc = mocks
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          req = Request[IO](uri = uri"/commands/invalid-id/execute", method = Method.POST).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.UnprocessableContent, Some("""{"message":"Invalid hexadecimal representation of an id: invalid-id"}"""))
+        verifyNoInteractions(svc)
+      }
+    }
   }
 
   def mocks = mock[CommandService[IO]]
