@@ -16,9 +16,9 @@ trait Clients[F[_]]:
 object Clients:
   def make[F[_]: Async](config: ClientsConfig, backend: WebSocketStreamBackend[F, Fs2Streams[F]]): F[Clients[F]] =
     for
-      finnhubClient      <- FinnhubClient.make[F](config.finnhub, backend)
-      alphaVantageClient <- AlphaVantageClient.make(config.alphaVantage, backend)
-      _                  <- TwelveDataClient.make(config.twelveData, backend)
-      marketDataClient   <- MarketDataClient.make[F](finnhubClient, alphaVantageClient)
+      finnhubClient    <- FinnhubClient.make[F](config.finnhub, backend)
+      _                <- AlphaVantageClient.make(config.alphaVantage, backend)
+      twelveDataClient <- TwelveDataClient.make(config.twelveData, backend)
+      marketDataClient <- MarketDataClient.make[F](finnhubClient, twelveDataClient)
     yield new Clients[F]:
       def marketData: MarketDataClient[F] = marketDataClient
