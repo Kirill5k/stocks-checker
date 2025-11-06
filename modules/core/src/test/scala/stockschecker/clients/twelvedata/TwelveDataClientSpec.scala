@@ -64,7 +64,14 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           candles <- client.getMonthlyPriceCandles(Ticker("INVALID"))
         yield candles
 
-        result.attempt.asserting(_ mustBe Left(AppError.Http(500, "TwelveData API returned status: error")))
+        result.attempt.asserting(
+          _ mustBe Left(
+            AppError.Http(
+              500,
+              "TwelveData API error for getting time series data for INVALID: Unknown error from TwelveData API"
+            )
+          )
+        )
       }
 
       "return error when no values are returned" in {
@@ -82,6 +89,84 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         yield candles
 
         result.attempt.asserting(_ mustBe Left(AppError.Http(500, "No values returned for ticker INVALID")))
+      }
+
+      "return error when API returns status 200 with error in response body" in {
+        val expectedParams = Map("symbol" -> "INVALID", "interval" -> "1month", "apikey" -> "api-key", "outputsize" -> "150")
+        val testingBackend = fs2BackendStub
+          .whenRequestMatchesPartial {
+            case r if r.isGet && r.hasPath("/time_series") && r.hasParams(expectedParams) =>
+              ResponseStub.adjust(
+                """{"code": 404, "message": "**symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data", "status": "error"}"""
+              )
+            case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
+          }
+
+        val result = for
+          client  <- TwelveDataClient.make[IO](config, testingBackend)
+          candles <- client.getMonthlyPriceCandles(Ticker("INVALID"))
+        yield candles
+
+        result.attempt.asserting(
+          _ mustBe Left(
+            AppError.Http(
+              404,
+              "TwelveData API error for getting time series data for INVALID: **symbol** or **figi** parameter is missing or invalid. Please provide a valid symbol according to API documentation: https://twelvedata.com/docs#reference-data"
+            )
+          )
+        )
+      }
+
+      "return error with default code when API returns error status without code" in {
+        val expectedParams = Map("symbol" -> "INVALID", "interval" -> "1month", "apikey" -> "api-key", "outputsize" -> "150")
+        val testingBackend = fs2BackendStub
+          .whenRequestMatchesPartial {
+            case r if r.isGet && r.hasPath("/time_series") && r.hasParams(expectedParams) =>
+              ResponseStub.adjust(
+                """{"message": "Some error occurred", "status": "error"}"""
+              )
+            case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
+          }
+
+        val result = for
+          client  <- TwelveDataClient.make[IO](config, testingBackend)
+          candles <- client.getMonthlyPriceCandles(Ticker("INVALID"))
+        yield candles
+
+        result.attempt.asserting(
+          _ mustBe Left(
+            AppError.Http(
+              500,
+              "TwelveData API error for getting time series data for INVALID: Some error occurred"
+            )
+          )
+        )
+      }
+
+      "return error with default message when API returns error status without message" in {
+        val expectedParams = Map("symbol" -> "INVALID", "interval" -> "1month", "apikey" -> "api-key", "outputsize" -> "150")
+        val testingBackend = fs2BackendStub
+          .whenRequestMatchesPartial {
+            case r if r.isGet && r.hasPath("/time_series") && r.hasParams(expectedParams) =>
+              ResponseStub.adjust(
+                """{"code": 400, "status": "error"}"""
+              )
+            case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
+          }
+
+        val result = for
+          client  <- TwelveDataClient.make[IO](config, testingBackend)
+          candles <- client.getMonthlyPriceCandles(Ticker("INVALID"))
+        yield candles
+
+        result.attempt.asserting(
+          _ mustBe Left(
+            AppError.Http(
+              400,
+              "TwelveData API error for getting time series data for INVALID: Unknown error from TwelveData API"
+            )
+          )
+        )
       }
     }
   }

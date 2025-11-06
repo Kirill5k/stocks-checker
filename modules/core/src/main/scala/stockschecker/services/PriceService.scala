@@ -37,7 +37,7 @@ final private class LivePriceService[F[_]](
           fetchPerformanceSummary(ticker)
             .map(pps => Some(pps))
             .handleErrorWith { error =>
-              logger.error(error)(s"Error fetching price performance summary for $ticker").as(None)
+              logger.error(s"Error fetching price performance summary for $ticker: ${error.getMessage}").as(None)
             }
         }
         .unNone

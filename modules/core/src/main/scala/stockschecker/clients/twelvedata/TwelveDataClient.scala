@@ -41,13 +41,15 @@ final private class LiveTwelveDataClient[F[_]](
     yield result
 
   private def processData(data: TwelveDataClient.TimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
-    if data.status == "ok" then
+    if data.isOk then
       data.values match
-        case Some(values) if values.nonEmpty =>
-          F.pure(NonEmptyList.fromListUnsafe(values.map(_.toDomain)))
-        case _ =>
-          F.raiseError(AppError.Http(500, s"No values returned for ticker ${ticker.value}"))
-    else F.raiseError(AppError.Http(500, s"TwelveData API returned status: ${data.status}"))
+        case Some(values) if values.nonEmpty => F.pure(NonEmptyList.fromListUnsafe(values.map(_.toDomain)))
+        case _                               => F.raiseError(AppError.Http(500, s"No values returned for ticker $ticker"))
+    else if data.isError then
+      val errorCode    = data.code.getOrElse(500)
+      val errorMessage = data.message.getOrElse("Unknown error from TwelveData API")
+      F.raiseError(AppError.Http(errorCode, s"TwelveData API error for getting time series data for $ticker: $errorMessage"))
+    else F.raiseError(AppError.Http(500, s"TwelveData time series API for $ticker returned status: ${data.status}"))
 }
 
 object TwelveDataClient {
@@ -83,8 +85,13 @@ object TwelveDataClient {
   final case class TimeSeriesResponse(
       meta: Option[Meta],
       values: Option[List[CandleData]],
-      status: String
-  ) derives Codec.AsObject
+      status: String,
+      code: Option[Int],
+      message: Option[String]
+  ) derives Codec.AsObject {
+    def isOk: Boolean    = status == "ok"
+    def isError: Boolean = status == "error"
+  }
 
   def make[F[_]](
       config: TwelveDataConfig,
