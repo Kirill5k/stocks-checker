@@ -1,0 +1,94 @@
+package stockschecker.clients.twelvedata
+
+import cats.data.NonEmptyList
+import cats.effect.kernel.Async
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
+import io.circe.Codec
+import stockschecker.common.config.TwelveDataConfig
+import stockschecker.domain.{PriceCandle, Ticker}
+import stockschecker.domain.errors.AppError
+import sttp.capabilities.fs2.Fs2Streams
+import sttp.client4.*
+import sttp.client4.circe.asJson
+
+import java.time.LocalDate
+
+trait TwelveDataClient[F[_]]:
+  def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]]
+
+final private class LiveTwelveDataClient[F[_]](
+    private val config: TwelveDataConfig,
+    private val backend: WebSocketStreamBackend[F, Fs2Streams[F]]
+)(using
+    F: Async[F]
+) extends TwelveDataClient[F] {
+
+  override def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]] =
+    for
+      response <- backend.send {
+        emptyRequest
+          .get(uri"${config.baseUri}/time_series?symbol=$ticker&interval=1month&apikey=${config.apiKey}&outputsize=150")
+          .response(asJson[TwelveDataClient.TimeSeriesResponse])
+      }
+      result <- response.body match
+        case Right(data) =>
+          processData(data, ticker)
+        case Left(ResponseException.DeserializationException(responseBody, error, _)) =>
+          F.raiseError(AppError.JsonParsingFailure(responseBody, s"TwelveData client returned ${error.getMessage}"))
+        case Left(ResponseException.UnexpectedStatusCode(body, meta)) =>
+          F.raiseError(AppError.Http(meta.code.code, s"TwelveData client returned unexpected status ${meta.code.code} with body: $body"))
+    yield result
+
+  private def processData(data: TwelveDataClient.TimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
+    if data.status == "ok" then
+      data.values match
+        case Some(values) if values.nonEmpty =>
+          F.pure(NonEmptyList.fromListUnsafe(values.map(_.toDomain)))
+        case _ =>
+          F.raiseError(AppError.Http(500, s"No values returned for ticker ${ticker.value}"))
+    else F.raiseError(AppError.Http(500, s"TwelveData API returned status: ${data.status}"))
+}
+
+object TwelveDataClient {
+  final case class CandleData(
+      datetime: LocalDate,
+      open: BigDecimal,
+      high: BigDecimal,
+      low: BigDecimal,
+      close: BigDecimal,
+      volume: String
+  ) derives Codec.AsObject {
+    def toDomain: PriceCandle =
+      PriceCandle(
+        date = datetime,
+        open = open,
+        high = high,
+        low = low,
+        close = close,
+        volume = volume.toLong
+      )
+  }
+
+  final case class Meta(
+      symbol: String,
+      interval: String,
+      currency: String,
+      exchange_timezone: String,
+      exchange: String,
+      mic_code: String,
+      `type`: String
+  ) derives Codec.AsObject
+
+  final case class TimeSeriesResponse(
+      meta: Option[Meta],
+      values: Option[List[CandleData]],
+      status: String
+  ) derives Codec.AsObject
+
+  def make[F[_]](
+      config: TwelveDataConfig,
+      backend: WebSocketStreamBackend[F, Fs2Streams[F]]
+  )(using F: Async[F]): F[TwelveDataClient[F]] =
+    F.pure(LiveTwelveDataClient[F](config, backend))
+}

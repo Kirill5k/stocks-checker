@@ -1,0 +1,31 @@
+{
+    "meta": {
+        "symbol": "AAPL",
+        "interval": "1month",
+        "currency": "USD",
+        "exchange_timezone": "America/New_York",
+        "exchange": "NASDAQ",
+        "mic_code": "XNGS",
+        "type": "Common Stock"
+    },
+    "values": [
+        {
+            "datetime": "2025-11-01",
+            "open": "270.42001",
+            "high": "271.70001",
+            "low": "266.25",
+            "close": "270.14001",
+            "volume": "139848687"
+        },
+        {
+            "datetime": "2025-10-01",
+            "open": "255.039993",
+            "high": "277.32001",
+            "low": "244",
+            "close": "270.37000",
+            "volume": "1097142200"
+        }
+    ],
+    "status": "ok"
+}
+
