@@ -16,6 +16,7 @@ import stockschecker.repositories.PricePerformanceSummaryRepository
 import scala.concurrent.duration.*
 
 trait PriceService[F[_]]:
+  def getAllPerformanceSummaries(limit: Option[Int]): F[List[PricePerformanceSummary]]
   def findPerformanceSummariesBy(filter: PricePerformanceFilter, limit: Option[Int]): F[List[PricePerformanceSummary]]
   def findPerformanceSummary(ticker: Ticker, fetch: Boolean): F[PricePerformanceSummary]
   def fetchLatestPerformanceSummaries(tickers: NonEmptyList[Ticker]): F[Unit]
@@ -63,6 +64,9 @@ final private class LivePriceService[F[_]](
     repository.save(ppss) >> dispatcher.dispatch(Action.RecordPricePerformanceUpdate(ppss.map(_.ticker)))
 
   override def findPerformanceSummariesBy(filter: PricePerformanceFilter, limit: Option[Int]): F[List[PricePerformanceSummary]] =
+    F.pure(Nil)
+
+  override def getAllPerformanceSummaries(limit: Option[Int]): F[List[PricePerformanceSummary]] =
     F.pure(Nil)
 }
 
