@@ -10,12 +10,13 @@ import org.typelevel.log4cats.Logger
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{PricePerformanceSummary, Ticker}
+import stockschecker.domain.{PricePerformanceFilter, PricePerformanceSummary, Ticker}
 import stockschecker.repositories.PricePerformanceSummaryRepository
 
 import scala.concurrent.duration.*
 
 trait PriceService[F[_]]:
+  def findPerformanceSummariesBy(filter: PricePerformanceFilter, limit: Option[Int]): F[List[PricePerformanceSummary]]
   def findPerformanceSummary(ticker: Ticker, fetch: Boolean): F[PricePerformanceSummary]
   def fetchLatestPerformanceSummaries(tickers: NonEmptyList[Ticker]): F[Unit]
 
@@ -60,6 +61,9 @@ final private class LivePriceService[F[_]](
 
   private def save(ppss: List[PricePerformanceSummary]): F[Unit] =
     repository.save(ppss) >> dispatcher.dispatch(Action.RecordPricePerformanceUpdate(ppss.map(_.ticker)))
+
+  override def findPerformanceSummariesBy(filter: PricePerformanceFilter, limit: Option[Int]): F[List[PricePerformanceSummary]] =
+    F.pure(Nil)
 }
 
 object PriceService:
