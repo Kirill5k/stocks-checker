@@ -64,10 +64,10 @@ final private class LivePriceService[F[_]](
     repository.save(ppss) >> dispatcher.dispatch(Action.RecordPricePerformanceUpdate(ppss.map(_.ticker)))
 
   override def findPerformanceSummariesBy(filter: PricePerformanceFilter, limit: Option[Int]): F[List[PricePerformanceSummary]] =
-    F.pure(Nil)
+    repository.findBy(filter, limit)
 
   override def getAllPerformanceSummaries(limit: Option[Int]): F[List[PricePerformanceSummary]] =
-    F.pure(Nil)
+    repository.findAll(limit)
 }
 
 object PriceService:
