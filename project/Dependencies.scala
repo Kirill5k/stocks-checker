@@ -10,7 +10,7 @@ object Dependencies {
     val sttp           = "4.0.13"
     val logback        = "1.5.20"
     val log4cats       = "2.7.1"
-    val tapir          = "1.11.50"
+    val tapir          = "1.12.2"
     val cronUtils      = "9.2.1"
     val http4s         = "0.23.17"
     val taggedAdtCodec = "0.11.0"
