@@ -44,6 +44,7 @@ final private class PriceController[F[_]: Async](
 object PriceController extends TapirJsonCirce with SchemaDerivation {
 
   private val basePath = "price"
+  private val performanceSummariesPath = basePath / "performance-summaries"
 
   private case class PricePerformanceQueryParams(
       minLatestPrice: Option[BigDecimal] = None,
@@ -92,13 +93,13 @@ object PriceController extends TapirJsonCirce with SchemaDerivation {
   }
 
   private val getPricePerformanceSummaryByTickerEndpoint = Controller.secureEndpoint.get
-    .in(basePath / "performance-summary" / path[Ticker])
+    .in(performanceSummariesPath / path[Ticker])
     .in(query[Option[Boolean]]("fetchLatest"))
     .out(jsonBody[PricePerformanceSummary])
     .description("Get price performance summary by ticker")
 
   private val getPricePerformanceSummariesEndpoint = Controller.secureEndpoint.get
-    .in(basePath / "performance-summaries")
+    .in(performanceSummariesPath)
     .in(
       query[Option[BigDecimal]]("minLatestPrice")
         .and(query[Option[BigDecimal]]("maxLatestPrice"))

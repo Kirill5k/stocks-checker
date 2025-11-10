@@ -19,14 +19,14 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
   val apiKeyHeader = Header.Raw(CIString("X-API-Key"), testApiKey)
 
   "A PriceController" when {
-    "GET /price/performance-summary/:ticker" should {
+    "GET /price/performance-summaries/:ticker" should {
       "return 200 and price performance summary on success" in {
         val svc = mocks
         when(svc.findPerformanceSummary(any[Ticker], anyBoolean)).thenReturnIO(AAPLPricePerformanceSummary)
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL?fetchLatest=true", method = Method.GET).withHeaders(apiKeyHeader)
+          req = Request[IO](uri = uri"/price/performance-summaries/AAPL?fetchLatest=true", method = Method.GET).withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -53,7 +53,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET).withHeaders(apiKeyHeader)
+          req = Request[IO](uri = uri"/price/performance-summaries/AAPL", method = Method.GET).withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -80,7 +80,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET).withHeaders(apiKeyHeader)
+          req = Request[IO](uri = uri"/price/performance-summaries/AAPL", method = Method.GET).withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -94,7 +94,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL?fetchLatest=true", method = Method.GET).withHeaders(apiKeyHeader)
+          req = Request[IO](uri = uri"/price/performance-summaries/AAPL?fetchLatest=true", method = Method.GET).withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -107,7 +107,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET)
+          req = Request[IO](uri = uri"/price/performance-summaries/AAPL", method = Method.GET)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -121,7 +121,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
         val res = for
           controller <- PriceController.make(svc, apiConfig)
           invalidApiKeyHeader = Header.Raw(CIString("X-API-Key"), "wrong-key")
-          req = Request[IO](uri = uri"/price/performance-summary/AAPL", method = Method.GET).withHeaders(invalidApiKeyHeader)
+          req = Request[IO](uri = uri"/price/performance-summaries/AAPL", method = Method.GET).withHeaders(invalidApiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
