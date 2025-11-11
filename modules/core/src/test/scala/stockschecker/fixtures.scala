@@ -55,16 +55,6 @@ object fixtures {
     marketCap = 3100000000000L
   )
 
-  val AAPLStock: Stock = Stock(
-    security = AAPLSecurity,
-    profile = AAPLCompanyProfile
-  )
-
-  val MSFTStock: Stock = Stock(
-    security = MSFTSecurity,
-    profile = MSFTCompanyProfile
-  )
-
   val AAPLPriceCandles: NonEmptyList[PriceCandle] = NonEmptyList.of(
     PriceCandle(
       date = LocalDate.parse("2025-10-01"),
@@ -102,5 +92,17 @@ object fixtures {
     lastExecutedAt = Some(ts),
     executionCount = 1,
     maxExecutions = Some(10)
+  )
+
+  val AAPLStock: Stock = Stock(
+    security = AAPLSecurity,
+    profile = Some(AAPLCompanyProfile),
+    performanceSummary = Some(AAPLPricePerformanceSummary)
+  )
+
+  val MSFTStock: Stock = Stock(
+    security = MSFTSecurity,
+    profile = Some(MSFTCompanyProfile),
+    performanceSummary = None
   )
 }
