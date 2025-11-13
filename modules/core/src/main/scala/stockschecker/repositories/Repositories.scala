@@ -11,6 +11,7 @@ trait Repositories[F[_]]:
   def companyProfile: CompanyProfileRepository[F]
   def pricePerformanceSummary: PricePerformanceSummaryRepository[F]
   def command: CommandRepository[F]
+  def stock: StockRepository[F]
 
 object Repositories:
   def make[F[_]: Clock](db: MongoDatabase[F])(using F: Concurrent[F]): F[Repositories[F]] =
@@ -19,8 +20,10 @@ object Repositories:
       cp <- CompanyProfileRepository.make(db)
       pps <- PricePerformanceSummaryRepository.make(db)
       c  <- CommandRepository.make(db)
+      st <- StockRepository.make(db)
     yield new Repositories[F]:
       override def security: SecurityRepository[F]                 = s
       override def companyProfile: CompanyProfileRepository[F] = cp
       override def pricePerformanceSummary: PricePerformanceSummaryRepository[F] = pps
       override def command: CommandRepository[F]               = c
+      override def stock: StockRepository[F]                   = st

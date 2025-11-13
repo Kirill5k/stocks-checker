@@ -138,8 +138,10 @@ final private class LiveCompanyProfileRepository[F[_]](
 }
 
 object CompanyProfileRepository extends MongoJsonCodecs:
+  val CollectionName = "company-profiles"
+  
   def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[CompanyProfileRepository[F]] =
     database
-      .getCollectionWithCodec[CompanyProfileEntity]("company-profiles")
+      .getCollectionWithCodec[CompanyProfileEntity](CollectionName)
       .map(_.withAddedCodec[Ticker].withAddedCodec[Entity])
       .map(LiveCompanyProfileRepository[F](_))

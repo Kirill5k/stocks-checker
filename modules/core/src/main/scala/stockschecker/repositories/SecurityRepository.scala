@@ -131,8 +131,10 @@ final private class LiveSecurityRepository[F[_]](
 }
 
 object SecurityRepository extends MongoJsonCodecs:
+  val CollectionName = "securities"
+  
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[SecurityRepository[F]] =
     database
-      .getCollectionWithCodec[SecurityEntity]("securities")
+      .getCollectionWithCodec[SecurityEntity](CollectionName)
       .map(_.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity])
       .map(LiveSecurityRepository[F](_))

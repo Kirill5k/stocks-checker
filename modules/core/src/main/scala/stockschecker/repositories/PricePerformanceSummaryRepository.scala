@@ -125,8 +125,10 @@ final private class LivePricePerformanceSummaryRepository[F[_]](
 }
 
 object PricePerformanceSummaryRepository extends MongoJsonCodecs:
+  val CollectionName = "price-performance-summaries"
+  
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[PricePerformanceSummaryRepository[F]] =
     database
-      .getCollectionWithCodec[PricePerformanceSummaryEntity]("price-performance-summaries")
+      .getCollectionWithCodec[PricePerformanceSummaryEntity](CollectionName)
       .map(_.withAddedCodec[Ticker])
       .map(LivePricePerformanceSummaryRepository[F](_))
