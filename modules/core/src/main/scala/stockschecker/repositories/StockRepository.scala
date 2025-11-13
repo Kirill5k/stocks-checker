@@ -5,6 +5,8 @@ import cats.data.NonEmptyList
 import cats.effect.Concurrent
 import cats.syntax.functor.*
 import kirill5k.common.cats.syntax.applicative.*
+import mongo4cats.bson.Document
+import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
@@ -31,7 +33,7 @@ final private class LiveStockRepository[F[_]](
   private def buildAggregation(filter: Filter, limit: Int): Aggregate =
     Aggregate
       .matchBy(filter)
-      .replaceWith("""{"security": "$$ROOT"}""")
+      .replaceWith(Document("security" := "$$ROOT"))
       .lookup(CompanyProfileRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.Profile)
       .lookup(PricePerformanceSummaryRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.PerformanceSummary)
       .limit(limit)
