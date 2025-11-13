@@ -5,14 +5,14 @@ import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, PricePerformanceSummary, Schedule, Security, SecurityKind, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
 
 private[repositories] object entities extends MongoJsonCodecs {
 
   final case class Entity(_id: Ticker) derives Codec.AsObject
-  
+
   final case class SecurityEntity(
       _id: Ticker,
       ticker: Ticker,
@@ -35,7 +35,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       )
 
   object SecurityEntity:
-    given MongoCodecProvider[SecurityEntity] = deriveCirceCodecProvider[SecurityEntity]
+    given MongoCodecProvider[SecurityEntity]                   = deriveCirceCodecProvider[SecurityEntity]
     def from(security: Security, now: Instant): SecurityEntity =
       SecurityEntity(
         _id = security.ticker,
@@ -78,7 +78,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       )
 
   object CompanyProfileEntity:
-    given MongoCodecProvider[CompanyProfileEntity] = deriveCirceCodecProvider[CompanyProfileEntity]
+    given MongoCodecProvider[CompanyProfileEntity]                        = deriveCirceCodecProvider[CompanyProfileEntity]
     def from(profile: CompanyProfile, now: Instant): CompanyProfileEntity =
       CompanyProfileEntity(
         _id = profile.ticker,
@@ -168,7 +168,7 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   object CommandEntity:
     given MongoCodecProvider[CommandEntity] = deriveCirceCodecProvider[CommandEntity]
-    def from(cmd: Command): CommandEntity =
+    def from(cmd: Command): CommandEntity   =
       CommandEntity(
         _id = cmd.id.toObjectId,
         isActive = cmd.isActive,
@@ -189,4 +189,15 @@ private[repositories] object entities extends MongoJsonCodecs {
         maxExecutions = cmd.maxExecutions
       )
 
+  final case class StockEntity(
+      security: SecurityEntity,
+      profile: List[CompanyProfileEntity],
+      performanceSummary: List[PricePerformanceSummaryEntity]
+  ) derives Codec.AsObject:
+    def toDomain: Stock =
+      Stock(
+        security = security.toDomain,
+        profile = profile.headOption.map(_.toDomain),
+        performanceSummary = performanceSummary.headOption.map(_.toDomain)
+      )
 }
