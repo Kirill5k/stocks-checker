@@ -2,56 +2,54 @@ package stockschecker.repositories
 
 import cats.data.NonEmptyList
 import cats.effect.IO
-import stockschecker.domain.{Stock, Ticker}
+import stockschecker.domain.Ticker
 import stockschecker.fixtures.{AAPL, AAPLCompanyProfile, AAPLPricePerformanceSummary, AAPLSecurity, AAPLStock, MSFT, MSFTCompanyProfile, MSFTSecurity, MSFTStock}
 
 class StockRepositorySpec extends RepositorySpec {
 
-  override def port: Int = 12148
+  override def port: Int = 12150
 
   "A StockRepository" when {
     "find" should {
       "return stock with all associated data" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map(
+          "securities" -> List(toDoc(AAPLSecurity)),
+          "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
+          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
           for
-            securityRepo    <- SecurityRepository.make[IO](db)
-            profileRepo     <- CompanyProfileRepository.make[IO](db)
-            performanceRepo <- PricePerformanceSummaryRepository.make[IO](db)
-            stockRepo       <- StockRepository.make[IO](db)
-            _               <- securityRepo.save(AAPLSecurity)
-            _               <- profileRepo.save(AAPLCompanyProfile)
-            _               <- performanceRepo.save(AAPLPricePerformanceSummary)
-            res             <- stockRepo.find(AAPL)
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.find(AAPL)
           yield res mustBe Some(AAPLStock)
         }
       }
 
       "return stock with only security data when profile and performance don't exist" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map("securities" -> List(toDoc(MSFTSecurity)))
+        withEmbeddedMongoDatabase(seedData) { db =>
           for
-            securityRepo <- SecurityRepository.make[IO](db)
-            stockRepo    <- StockRepository.make[IO](db)
-            _            <- securityRepo.save(MSFTSecurity)
-            res          <- stockRepo.find(MSFT)
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.find(MSFT)
           yield res mustBe Some(MSFTStock.copy(profile = None, performanceSummary = None))
         }
       }
 
       "return stock with partial data when only profile exists" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map(
+          "securities" -> List(toDoc(MSFTSecurity)),
+          "company-profiles" -> List(toDoc(MSFTCompanyProfile))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
           for
-            securityRepo <- SecurityRepository.make[IO](db)
-            profileRepo  <- CompanyProfileRepository.make[IO](db)
-            stockRepo    <- StockRepository.make[IO](db)
-            _            <- securityRepo.save(MSFTSecurity)
-            _            <- profileRepo.save(MSFTCompanyProfile)
-            res          <- stockRepo.find(MSFT)
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.find(MSFT)
           yield res mustBe Some(MSFTStock.copy(performanceSummary = None))
         }
       }
 
       "return None when ticker doesn't exist" in {
-        withEmbeddedMongoDatabase { db =>
+        withEmbeddedMongoDatabase(Map.empty) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.find(AAPL)
@@ -62,39 +60,34 @@ class StockRepositorySpec extends RepositorySpec {
 
     "findAll" should {
       "return all stocks with associated data" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map(
+          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
+          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
           for
-            securityRepo    <- SecurityRepository.make[IO](db)
-            profileRepo     <- CompanyProfileRepository.make[IO](db)
-            performanceRepo <- PricePerformanceSummaryRepository.make[IO](db)
-            stockRepo       <- StockRepository.make[IO](db)
-            _               <- securityRepo.save(AAPLSecurity)
-            _               <- securityRepo.save(MSFTSecurity)
-            _               <- profileRepo.save(AAPLCompanyProfile)
-            _               <- profileRepo.save(MSFTCompanyProfile)
-            _               <- performanceRepo.save(AAPLPricePerformanceSummary)
-            res             <- stockRepo.findAll(None)
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(None)
           yield res.size mustBe 2
         }
       }
 
       "return limited number of stocks when limit is specified" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map(
+          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
           for
-            securityRepo <- SecurityRepository.make[IO](db)
-            profileRepo  <- CompanyProfileRepository.make[IO](db)
-            stockRepo    <- StockRepository.make[IO](db)
-            _            <- securityRepo.save(AAPLSecurity)
-            _            <- securityRepo.save(MSFTSecurity)
-            _            <- profileRepo.save(AAPLCompanyProfile)
-            _            <- profileRepo.save(MSFTCompanyProfile)
-            res          <- stockRepo.findAll(Some(1))
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(Some(1))
           yield res.size mustBe 1
         }
       }
 
       "return empty list when no securities exist" in {
-        withEmbeddedMongoDatabase { db =>
+        withEmbeddedMongoDatabase(Map.empty) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(None)
@@ -103,13 +96,11 @@ class StockRepositorySpec extends RepositorySpec {
       }
 
       "return all stocks when limit is greater than available stocks" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)))
+        withEmbeddedMongoDatabase(seedData) { db =>
           for
-            securityRepo <- SecurityRepository.make[IO](db)
-            stockRepo    <- StockRepository.make[IO](db)
-            _            <- securityRepo.save(AAPLSecurity)
-            _            <- securityRepo.save(MSFTSecurity)
-            res          <- stockRepo.findAll(Some(10))
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(Some(10))
           yield res.size mustBe 2
         }
       }
@@ -117,32 +108,29 @@ class StockRepositorySpec extends RepositorySpec {
 
     "findByTickers" should {
       "return stocks for all specified tickers" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map(
+          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
+          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
           for
-            securityRepo    <- SecurityRepository.make[IO](db)
-            profileRepo     <- CompanyProfileRepository.make[IO](db)
-            performanceRepo <- PricePerformanceSummaryRepository.make[IO](db)
-            stockRepo       <- StockRepository.make[IO](db)
-            _               <- securityRepo.save(AAPLSecurity)
-            _               <- securityRepo.save(MSFTSecurity)
-            _               <- profileRepo.save(AAPLCompanyProfile)
-            _               <- profileRepo.save(MSFTCompanyProfile)
-            _               <- performanceRepo.save(AAPLPricePerformanceSummary)
-            res             <- stockRepo.findByTickers(NonEmptyList.of(AAPL, MSFT))
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findByTickers(NonEmptyList.of(AAPL, MSFT))
           yield res.size mustBe 2
         }
       }
 
       "return only existing stocks when some tickers don't exist" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map(
+          "securities" -> List(toDoc(AAPLSecurity)),
+          "company-profiles" -> List(toDoc(AAPLCompanyProfile))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
           val nonExistent = Ticker("GOOG")
           for
-            securityRepo <- SecurityRepository.make[IO](db)
-            profileRepo  <- CompanyProfileRepository.make[IO](db)
-            stockRepo    <- StockRepository.make[IO](db)
-            _            <- securityRepo.save(AAPLSecurity)
-            _            <- profileRepo.save(AAPLCompanyProfile)
-            res          <- stockRepo.findByTickers(NonEmptyList.of(AAPL, nonExistent))
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findByTickers(NonEmptyList.of(AAPL, nonExistent))
           yield
             res.size mustBe 1
             res.head.security.ticker mustBe AAPL
@@ -150,16 +138,15 @@ class StockRepositorySpec extends RepositorySpec {
       }
 
       "return stock for single ticker" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map(
+          "securities" -> List(toDoc(AAPLSecurity)),
+          "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
+          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
           for
-            securityRepo    <- SecurityRepository.make[IO](db)
-            profileRepo     <- CompanyProfileRepository.make[IO](db)
-            performanceRepo <- PricePerformanceSummaryRepository.make[IO](db)
-            stockRepo       <- StockRepository.make[IO](db)
-            _               <- securityRepo.save(AAPLSecurity)
-            _               <- profileRepo.save(AAPLCompanyProfile)
-            _               <- performanceRepo.save(AAPLPricePerformanceSummary)
-            res             <- stockRepo.findByTickers(NonEmptyList.of(AAPL))
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findByTickers(NonEmptyList.of(AAPL))
           yield
             res.size mustBe 1
             res.head mustBe AAPLStock
@@ -167,7 +154,7 @@ class StockRepositorySpec extends RepositorySpec {
       }
 
       "return empty list when no tickers exist" in {
-        withEmbeddedMongoDatabase { db =>
+        withEmbeddedMongoDatabase(Map.empty) { db =>
           val nonExistent1 = Ticker("GOOG")
           val nonExistent2 = Ticker("AMZN")
           for
@@ -178,15 +165,14 @@ class StockRepositorySpec extends RepositorySpec {
       }
 
       "return stocks with partial data when profile or performance missing" in {
-        withEmbeddedMongoDatabase { db =>
+        val seedData = Map(
+          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "company-profiles" -> List(toDoc(AAPLCompanyProfile))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
           for
-            securityRepo <- SecurityRepository.make[IO](db)
-            profileRepo  <- CompanyProfileRepository.make[IO](db)
-            stockRepo    <- StockRepository.make[IO](db)
-            _            <- securityRepo.save(AAPLSecurity)
-            _            <- securityRepo.save(MSFTSecurity)
-            _            <- profileRepo.save(AAPLCompanyProfile)
-            res          <- stockRepo.findByTickers(NonEmptyList.of(AAPL, MSFT))
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findByTickers(NonEmptyList.of(AAPL, MSFT))
           yield
             res.size mustBe 2
             res.exists(s => s.security.ticker == AAPL && s.profile.isDefined) mustBe true
