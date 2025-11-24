@@ -10,18 +10,17 @@ import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
-import mongo4cats.operations.{Filter, Update}
+import mongo4cats.operations.{Filter, Index, Sort, Update}
 import stockschecker.domain.{LatestPrice, Ticker}
 import stockschecker.repositories.entities.LatestPriceEntity
 
-import java.time.{Instant, LocalDate}
+import java.time.Instant
 
 trait LatestPriceRepository[F[_]]:
   def save(latestPrice: LatestPrice): F[Unit]
   def save(latestPrices: List[LatestPrice]): F[Unit]
-  def find(ticker: Ticker, date: LocalDate): F[Option[LatestPrice]]
-  def findLatestByTicker(ticker: Ticker): F[Option[LatestPrice]]
-  def findAllByTicker(ticker: Ticker): F[List[LatestPrice]]
+  def findLatest(ticker: Ticker): F[Option[LatestPrice]]
+  def getAll(ticker: Ticker): F[List[LatestPrice]]
 
 final private class LiveLatestPriceRepository[F[_]](
     private val collection: MongoCollection[F, LatestPriceEntity]
@@ -39,7 +38,7 @@ final private class LiveLatestPriceRepository[F[_]](
     val UpdatedAt = "updatedAt"
 
   extension (latestPrice: LatestPrice)
-    private def toId: String = s"${latestPrice.ticker.value}-${latestPrice.date}"
+    private def toId: String                   = s"${latestPrice.ticker.value}-${latestPrice.date}"
     private def toUpdate(now: Instant): Update =
       Update
         .setOnInsert(Field.Id, latestPrice.toId)
@@ -49,9 +48,6 @@ final private class LiveLatestPriceRepository[F[_]](
         .set(Field.Price, latestPrice.price)
         .set(Field.Date, latestPrice.date)
 
-  private def compositeId(ticker: Ticker, date: LocalDate): String =
-    s"${ticker.value}-${date}"
-
   override def save(latestPrice: LatestPrice): F[Unit] =
     clock.now.flatMap { now =>
       collection.updateOne(Filter.idEq(latestPrice.toId), latestPrice.toUpdate(now), UpdateOptions(upsert = true)).void
@@ -59,30 +55,23 @@ final private class LiveLatestPriceRepository[F[_]](
 
   override def save(latestPrices: List[LatestPrice]): F[Unit] =
     clock.now.flatMap { now =>
-      val updates = latestPrices.map { lp =>
-        WriteCommand.UpdateOne(
-          Filter.idEq(lp.toId),
-          lp.toUpdate(now),
-          UpdateOptions(upsert = true)
-        )
+      val updateOpt = UpdateOptions(upsert = true)
+      val updates   = latestPrices.map { lp =>
+        WriteCommand.UpdateOne(Filter.idEq(lp.toId), lp.toUpdate(now), updateOpt)
       }
       collection.bulkWrite(updates).void
     }
 
-  override def find(ticker: Ticker, date: LocalDate): F[Option[LatestPrice]] =
-    collection.find(Filter.idEq(compositeId(ticker, date))).first.mapOpt(_.toDomain)
-
-  override def findLatestByTicker(ticker: Ticker): F[Option[LatestPrice]] =
-    import mongo4cats.operations.Sort
-    collection.find(Filter.eq(Field.Ticker, ticker))
+  override def findLatest(ticker: Ticker): F[Option[LatestPrice]] =
+    collection
+      .find(Filter.eq(Field.Ticker, ticker))
       .sort(Sort.desc(Field.Date))
       .first
       .mapOpt(_.toDomain)
 
-  override def findAllByTicker(ticker: Ticker): F[List[LatestPrice]] =
-    import mongo4cats.operations.Sort
-    import kirill5k.common.cats.syntax.applicative.*
-    collection.find(Filter.eq(Field.Ticker, ticker))
+  override def getAll(ticker: Ticker): F[List[LatestPrice]] =
+    collection
+      .find(Filter.eq(Field.Ticker, ticker))
       .sort(Sort.desc(Field.Date))
       .all
       .mapList(_.toDomain)
@@ -92,8 +81,7 @@ object LatestPriceRepository extends MongoJsonCodecs:
   val CollectionName = "latest-prices"
 
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[LatestPriceRepository[F]] =
-    database
-      .getCollectionWithCodec[LatestPriceEntity](CollectionName)
-      .map(_.withAddedCodec[Ticker])
-      .map(LiveLatestPriceRepository[F](_))
-
+    for
+      collection <- database.getCollectionWithCodec[LatestPriceEntity](CollectionName)
+      _          <- collection.createIndex(Index.ascending("ticker"))
+    yield LiveLatestPriceRepository[F](collection.withAddedCodec[Ticker])
