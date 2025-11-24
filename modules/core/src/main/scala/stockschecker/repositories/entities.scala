@@ -5,7 +5,7 @@ import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, LatestPrice, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
 
@@ -91,6 +91,33 @@ private[repositories] object entities extends MongoJsonCodecs {
         currency = profile.currency,
         marketCap = profile.marketCap,
         pricePerformanceLastUpdatedAt = profile.pricePerformanceLastUpdatedAt,
+        createdAt = now,
+        updatedAt = now
+      )
+
+  final case class LatestPriceEntity(
+      _id: Ticker,
+      ticker: Ticker,
+      price: BigDecimal,
+      date: LocalDate,
+      createdAt: Instant,
+      updatedAt: Instant
+  ) derives Codec.AsObject:
+    def toDomain: LatestPrice =
+      LatestPrice(
+        ticker = ticker,
+        price = price,
+        date = date
+      )
+
+  object LatestPriceEntity:
+    given MongoCodecProvider[LatestPriceEntity]                 = deriveCirceCodecProvider[LatestPriceEntity]
+    def from(latestPrice: LatestPrice, now: Instant): LatestPriceEntity =
+      LatestPriceEntity(
+        _id = latestPrice.ticker,
+        ticker = latestPrice.ticker,
+        price = latestPrice.price,
+        date = latestPrice.date,
         createdAt = now,
         updatedAt = now
       )

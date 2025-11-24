@@ -91,6 +91,12 @@ package object domain {
       volume: Long
   ) derives CirceCodec.AsObject
 
+  final case class LatestPrice(
+      ticker: Ticker,
+      price: BigDecimal,
+      date: LocalDate
+  ) derives CirceCodec.AsObject
+
   final case class PricePerformanceSummary(
       ticker: Ticker,
       latestPrice: BigDecimal,
@@ -139,4 +145,7 @@ package object domain {
         maxChange = calculateChange(priceCandles.tail.lastOption)
       )
     }
+
+    extension (pps: PricePerformanceSummary)
+      def toLatestPrice: LatestPrice = LatestPrice(pps.ticker, pps.latestPrice, pps.latestPriceDate)
 }
