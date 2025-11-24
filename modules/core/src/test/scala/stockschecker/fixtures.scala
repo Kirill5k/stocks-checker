@@ -3,7 +3,7 @@ package stockschecker
 import cats.data.NonEmptyList
 import mongo4cats.bson.ObjectId
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, Exchange, PriceCandle, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, Exchange, LatestPrice, PriceCandle, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
 import java.time.temporal.ChronoUnit
@@ -83,6 +83,30 @@ object fixtures {
   )
 
   val AAPLPricePerformanceSummary: PricePerformanceSummary = PricePerformanceSummary.from(AAPL, AAPLPriceCandles)
+
+  val AAPLLatestPrice1: LatestPrice = LatestPrice(
+    ticker = AAPL,
+    price = BigDecimal("228.50"),
+    date = LocalDate.parse("2025-10-01")
+  )
+
+  val AAPLLatestPrice2: LatestPrice = LatestPrice(
+    ticker = AAPL,
+    price = BigDecimal("230.00"),
+    date = LocalDate.parse("2025-10-02")
+  )
+
+  val AAPLLatestPrice3: LatestPrice = LatestPrice(
+    ticker = AAPL,
+    price = BigDecimal("232.50"),
+    date = LocalDate.parse("2025-10-03")
+  )
+
+  val MSFTLatestPrice1: LatestPrice = LatestPrice(
+    ticker = MSFT,
+    price = BigDecimal("380.00"),
+    date = LocalDate.parse("2025-10-01")
+  )
 
   val FetchLatestSecuritiesCommand: Command = Command(
     id = CommandId(ObjectId.gen),
