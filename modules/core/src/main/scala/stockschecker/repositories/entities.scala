@@ -96,7 +96,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       )
 
   final case class LatestPriceEntity(
-      _id: Ticker,
+      _id: String,
       ticker: Ticker,
       price: BigDecimal,
       date: LocalDate,
@@ -114,7 +114,7 @@ private[repositories] object entities extends MongoJsonCodecs {
     given MongoCodecProvider[LatestPriceEntity]                 = deriveCirceCodecProvider[LatestPriceEntity]
     def from(latestPrice: LatestPrice, now: Instant): LatestPriceEntity =
       LatestPriceEntity(
-        _id = latestPrice.ticker,
+        _id = s"${latestPrice.ticker.value}-${latestPrice.date}",
         ticker = latestPrice.ticker,
         price = latestPrice.price,
         date = latestPrice.date,
