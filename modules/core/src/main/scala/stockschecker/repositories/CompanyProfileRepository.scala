@@ -8,7 +8,7 @@ import kirill5k.common.cats.Clock
 import kirill5k.common.syntax.time.*
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.operations.{Aggregate, Filter, Projection, Sort, Update}
+import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort, Update}
 import mongo4cats.circe.MongoJsonCodecs
 import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.entities.{CompanyProfileEntity, Entity}
@@ -141,7 +141,13 @@ object CompanyProfileRepository extends MongoJsonCodecs:
   val CollectionName = "company-profiles"
   
   def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[CompanyProfileRepository[F]] =
-    database
-      .getCollectionWithCodec[CompanyProfileEntity](CollectionName)
-      .map(_.withAddedCodec[Ticker].withAddedCodec[Entity])
-      .map(LiveCompanyProfileRepository[F](_))
+    for
+      collection <- database.getCollectionWithCodec[CompanyProfileEntity](CollectionName)
+      _          <- collection.createIndex(Index.descending("marketCap"))
+      _          <- collection.createIndex(Index.ascending("country"))
+      _          <- collection.createIndex(Index.ascending("ipoDate"))
+      _          <- collection.createIndex(Index.ascending("updatedAt"))
+      _          <- collection.createIndex(Index.ascending("pricePerformanceLastUpdatedAt"))
+    yield LiveCompanyProfileRepository[F](
+      collection.withAddedCodec[Ticker].withAddedCodec[Entity]
+    )

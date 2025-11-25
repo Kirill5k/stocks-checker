@@ -13,7 +13,7 @@ import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
-import mongo4cats.operations.{Filter, Sort, Update}
+import mongo4cats.operations.{Filter, Index, Sort, Update}
 import stockschecker.domain.{PricePerformanceSummary, PricePerformanceFilter, Ticker}
 import stockschecker.repositories.entities.PricePerformanceSummaryEntity
 
@@ -128,7 +128,12 @@ object PricePerformanceSummaryRepository extends MongoJsonCodecs:
   val CollectionName = "price-performance-summaries"
   
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[PricePerformanceSummaryRepository[F]] =
-    database
-      .getCollectionWithCodec[PricePerformanceSummaryEntity](CollectionName)
-      .map(_.withAddedCodec[Ticker])
-      .map(LivePricePerformanceSummaryRepository[F](_))
+    for
+      collection <- database.getCollectionWithCodec[PricePerformanceSummaryEntity](CollectionName)
+      _          <- collection.createIndex(Index.descending("oneYearChange"))
+      _          <- collection.createIndex(Index.ascending("latestPrice"))
+      _          <- collection.createIndex(Index.ascending("updatedAt"))
+      _          <- collection.createIndex(Index.ascending("oneMonthChange"))
+      _          <- collection.createIndex(Index.ascending("threeMonthChange"))
+      _          <- collection.createIndex(Index.ascending("sixMonthChange"))
+    yield LivePricePerformanceSummaryRepository[F](collection.withAddedCodec[Ticker])

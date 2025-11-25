@@ -8,7 +8,7 @@ import com.mongodb.client.result.UpdateResult
 import fs2.Stream
 import mongo4cats.collection.MongoCollection
 import mongo4cats.models.collection.FindOneAndUpdateOptions
-import mongo4cats.operations.{Filter, Update}
+import mongo4cats.operations.{Filter, Index, Update}
 import mongo4cats.circe.given
 import mongo4cats.database.MongoDatabase
 import stockschecker.actions.Action
@@ -101,7 +101,7 @@ final private class LiveCommandRepository[F[_]](
 
 object CommandRepository:
   def make[F[_]](db: MongoDatabase[F])(using F: MonadThrow[F]): F[CommandRepository[F]] =
-    db
-      .getCollectionWithCodec[CommandEntity]("commands")
-      .map(_.withAddedCodec[Schedule].withAddedCodec[Action])
-      .map(LiveCommandRepository(_))
+    for
+      collection <- db.getCollectionWithCodec[CommandEntity]("commands")
+      _          <- collection.createIndex(Index.ascending("isActive"))
+    yield LiveCommandRepository(collection.withAddedCodec[Schedule].withAddedCodec[Action])

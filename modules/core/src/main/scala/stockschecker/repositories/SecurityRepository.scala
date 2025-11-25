@@ -13,7 +13,7 @@ import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
-import mongo4cats.operations.{Aggregate, Filter, Projection, Update}
+import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Update}
 import stockschecker.domain.{Exchange, Security, SecurityFilter, SecurityKind, Ticker}
 import stockschecker.repositories.entities.{Entity, SecurityEntity}
 
@@ -134,7 +134,14 @@ object SecurityRepository extends MongoJsonCodecs:
   val CollectionName = "securities"
   
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[SecurityRepository[F]] =
-    database
-      .getCollectionWithCodec[SecurityEntity](CollectionName)
-      .map(_.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity])
-      .map(LiveSecurityRepository[F](_))
+    for
+      collection <- database.getCollectionWithCodec[SecurityEntity](CollectionName)
+      _          <- collection.createIndex(Index.ascending("ticker"))
+      _          <- collection.createIndex(Index.ascending("exchange"))
+      _          <- collection.createIndex(Index.ascending("kind"))
+      _          <- collection.createIndex(Index.ascending("isActive"))
+      _          <- collection.createIndex(Index.ascending("updatedAt"))
+      _          <- collection.createIndex(Index.ascending("companyProfileLastUpdatedAt"))
+    yield LiveSecurityRepository[F](
+      collection.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity]
+    )
