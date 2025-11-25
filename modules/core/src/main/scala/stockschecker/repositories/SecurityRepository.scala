@@ -134,7 +134,7 @@ object SecurityRepository extends MongoJsonCodecs:
     val CompanyProfileLastUpdatedAt = "companyProfileLastUpdatedAt"
     val CreatedAt                   = "createdAt"
     val UpdatedAt                   = "updatedAt"
-  
+
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[SecurityRepository[F]] =
     for
       collection <- database.getCollectionWithCodec[SecurityEntity](CollectionName)
@@ -144,6 +144,5 @@ object SecurityRepository extends MongoJsonCodecs:
       _          <- collection.createIndex(Index.ascending(Field.IsActive))
       _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
       _          <- collection.createIndex(Index.ascending(Field.CompanyProfileLastUpdatedAt))
-    yield LiveSecurityRepository[F](
-      collection.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity]
-    )
+      collWithCodecs = collection.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity]
+    yield LiveSecurityRepository[F](collWithCodecs)

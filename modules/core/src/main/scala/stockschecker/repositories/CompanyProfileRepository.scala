@@ -89,7 +89,7 @@ final private class LiveCompanyProfileRepository[F[_]](
         .all
         .mapList(_._id)
     }
-    
+
   override def updatePricePerformanceLastUpdated(tickers: List[Ticker]): F[Unit] =
     M.whenA(tickers.nonEmpty) {
       collection
@@ -117,7 +117,8 @@ final private class LiveCompanyProfileRepository[F[_]](
       case CompanyProfileFilter.NotUpdatedFor(duration) =>
         C.now.map(currentTime => Filter.lt(Field.UpdatedAt, currentTime.minus(duration)))
       case CompanyProfileFilter.PricePerformanceNotUpdatedFor(duration) =>
-        val isNullOrLt = (ts: Instant) => Filter.isNull(Field.PricePerformanceLastUpdatedAt) || Filter.lt(Field.PricePerformanceLastUpdatedAt, ts)
+        val isNullOrLt = (ts: Instant) =>
+          Filter.isNull(Field.PricePerformanceLastUpdatedAt) || Filter.lt(Field.PricePerformanceLastUpdatedAt, ts)
         C.now.map(currentTime => isNullOrLt(currentTime.minus(duration)))
       case CompanyProfileFilter.TickerMatching(pattern) =>
         Filter.regex(Field.Id, pattern).pure
@@ -141,7 +142,7 @@ object CompanyProfileRepository extends MongoJsonCodecs:
     val PricePerformanceLastUpdatedAt = "pricePerformanceLastUpdatedAt"
     val UpdatedAt                     = "updatedAt"
     val CreatedAt                     = "createdAt"
-  
+
   def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[CompanyProfileRepository[F]] =
     for
       collection <- database.getCollectionWithCodec[CompanyProfileEntity](CollectionName)
@@ -150,6 +151,4 @@ object CompanyProfileRepository extends MongoJsonCodecs:
       _          <- collection.createIndex(Index.ascending(Field.IpoDate))
       _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
       _          <- collection.createIndex(Index.ascending(Field.PricePerformanceLastUpdatedAt))
-    yield LiveCompanyProfileRepository[F](
-      collection.withAddedCodec[Ticker].withAddedCodec[Entity]
-    )
+    yield LiveCompanyProfileRepository[F](collection.withAddedCodec[Ticker].withAddedCodec[Entity])
