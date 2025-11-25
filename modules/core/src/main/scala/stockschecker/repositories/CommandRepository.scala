@@ -32,13 +32,7 @@ final private class LiveCommandRepository[F[_]](
     F: MonadThrow[F]
 ) extends CommandRepository[F] {
 
-  private object Field:
-    val isActive       = "isActive"
-    val action         = "action"
-    val schedule       = "schedule"
-    val lastExecutedAt = "lastExecutedAt"
-    val executionCount = "executionCount"
-    val maxExecutions  = "maxExecutions"
+  import CommandRepository.Field
 
   override def all: F[List[Command]] =
     collection.find.all.mapList(_.toDomain)
@@ -100,8 +94,17 @@ final private class LiveCommandRepository[F[_]](
 }
 
 object CommandRepository:
+
+  object Field:
+    val isActive       = "isActive"
+    val action         = "action"
+    val schedule       = "schedule"
+    val lastExecutedAt = "lastExecutedAt"
+    val executionCount = "executionCount"
+    val maxExecutions  = "maxExecutions"
+  
   def make[F[_]](db: MongoDatabase[F])(using F: MonadThrow[F]): F[CommandRepository[F]] =
     for
       collection <- db.getCollectionWithCodec[CommandEntity]("commands")
-      _          <- collection.createIndex(Index.ascending("isActive"))
+      _          <- collection.createIndex(Index.ascending(Field.isActive))
     yield LiveCommandRepository(collection.withAddedCodec[Schedule].withAddedCodec[Action])

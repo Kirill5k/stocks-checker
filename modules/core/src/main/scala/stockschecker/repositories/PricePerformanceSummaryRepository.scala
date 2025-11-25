@@ -33,21 +33,7 @@ final private class LivePricePerformanceSummaryRepository[F[_]](
     clock: Clock[F]
 ) extends PricePerformanceSummaryRepository[F] {
 
-  private object Field:
-    val Id               = "_id"
-    val Ticker           = "ticker"
-    val LatestPrice      = "latestPrice"
-    val LatestPriceDate  = "latestPriceDate"
-    val OneMonthChange   = "oneMonthChange"
-    val ThreeMonthChange = "threeMonthChange"
-    val SixMonthChange   = "sixMonthChange"
-    val OneYearChange    = "oneYearChange"
-    val ThreeYearChange  = "threeYearChange"
-    val FiveYearChange   = "fiveYearChange"
-    val TenYearChange    = "tenYearChange"
-    val MaxChange        = "maxChange"
-    val CreatedAt        = "createdAt"
-    val UpdatedAt        = "updatedAt"
+  import PricePerformanceSummaryRepository.Field
 
   extension (summary: PricePerformanceSummary)
     private def toUpdate(now: Instant): Update =
@@ -126,14 +112,30 @@ final private class LivePricePerformanceSummaryRepository[F[_]](
 
 object PricePerformanceSummaryRepository extends MongoJsonCodecs:
   val CollectionName = "price-performance-summaries"
+
+  object Field:
+    val Id               = "_id"
+    val Ticker           = "ticker"
+    val LatestPrice      = "latestPrice"
+    val LatestPriceDate  = "latestPriceDate"
+    val OneMonthChange   = "oneMonthChange"
+    val ThreeMonthChange = "threeMonthChange"
+    val SixMonthChange   = "sixMonthChange"
+    val OneYearChange    = "oneYearChange"
+    val ThreeYearChange  = "threeYearChange"
+    val FiveYearChange   = "fiveYearChange"
+    val TenYearChange    = "tenYearChange"
+    val MaxChange        = "maxChange"
+    val CreatedAt        = "createdAt"
+    val UpdatedAt        = "updatedAt"
   
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[PricePerformanceSummaryRepository[F]] =
     for
       collection <- database.getCollectionWithCodec[PricePerformanceSummaryEntity](CollectionName)
-      _          <- collection.createIndex(Index.descending("oneYearChange"))
-      _          <- collection.createIndex(Index.ascending("latestPrice"))
-      _          <- collection.createIndex(Index.ascending("updatedAt"))
-      _          <- collection.createIndex(Index.ascending("oneMonthChange"))
-      _          <- collection.createIndex(Index.ascending("threeMonthChange"))
-      _          <- collection.createIndex(Index.ascending("sixMonthChange"))
+      _          <- collection.createIndex(Index.descending(Field.OneYearChange))
+      _          <- collection.createIndex(Index.ascending(Field.LatestPrice))
+      _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
+      _          <- collection.createIndex(Index.ascending(Field.OneMonthChange))
+      _          <- collection.createIndex(Index.ascending(Field.ThreeMonthChange))
+      _          <- collection.createIndex(Index.ascending(Field.SixMonthChange))
     yield LivePricePerformanceSummaryRepository[F](collection.withAddedCodec[Ticker])

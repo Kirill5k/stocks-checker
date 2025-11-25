@@ -32,19 +32,7 @@ final private class LiveCompanyProfileRepository[F[_]](
     C: Clock[F]
 ) extends CompanyProfileRepository[F] {
 
-  private object Field:
-    val Id                            = "_id"
-    val Name                          = "name"
-    val Country                       = "country"
-    val Industry                      = "industry"
-    val Description                   = "description"
-    val Website                       = "website"
-    val IpoDate                       = "ipoDate"
-    val Currency                      = "currency"
-    val MarketCap                     = "marketCap"
-    val PricePerformanceLastUpdatedAt = "pricePerformanceLastUpdatedAt"
-    val UpdatedAt                     = "updatedAt"
-    val CreatedAt                     = "createdAt"
+  import CompanyProfileRepository.Field
 
   extension (cp: CompanyProfile)
     private def toUpdate(now: Instant): Update =
@@ -139,15 +127,29 @@ final private class LiveCompanyProfileRepository[F[_]](
 
 object CompanyProfileRepository extends MongoJsonCodecs:
   val CollectionName = "company-profiles"
+
+  object Field:
+    val Id                            = "_id"
+    val Name                          = "name"
+    val Country                       = "country"
+    val Industry                      = "industry"
+    val Description                   = "description"
+    val Website                       = "website"
+    val IpoDate                       = "ipoDate"
+    val Currency                      = "currency"
+    val MarketCap                     = "marketCap"
+    val PricePerformanceLastUpdatedAt = "pricePerformanceLastUpdatedAt"
+    val UpdatedAt                     = "updatedAt"
+    val CreatedAt                     = "createdAt"
   
   def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[CompanyProfileRepository[F]] =
     for
       collection <- database.getCollectionWithCodec[CompanyProfileEntity](CollectionName)
-      _          <- collection.createIndex(Index.descending("marketCap"))
-      _          <- collection.createIndex(Index.ascending("country"))
-      _          <- collection.createIndex(Index.ascending("ipoDate"))
-      _          <- collection.createIndex(Index.ascending("updatedAt"))
-      _          <- collection.createIndex(Index.ascending("pricePerformanceLastUpdatedAt"))
+      _          <- collection.createIndex(Index.descending(Field.MarketCap))
+      _          <- collection.createIndex(Index.ascending(Field.Country))
+      _          <- collection.createIndex(Index.ascending(Field.IpoDate))
+      _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
+      _          <- collection.createIndex(Index.ascending(Field.PricePerformanceLastUpdatedAt))
     yield LiveCompanyProfileRepository[F](
       collection.withAddedCodec[Ticker].withAddedCodec[Entity]
     )

@@ -29,13 +29,7 @@ final private class LiveLatestPriceRepository[F[_]](
     clock: Clock[F]
 ) extends LatestPriceRepository[F] {
 
-  private object Field:
-    val Id        = "_id"
-    val Ticker    = "ticker"
-    val Price     = "price"
-    val Date      = "date"
-    val CreatedAt = "createdAt"
-    val UpdatedAt = "updatedAt"
+  import LatestPriceRepository.Field
 
   extension (latestPrice: LatestPrice)
     private def toId: String                   = s"${latestPrice.ticker.value}-${latestPrice.date}"
@@ -80,8 +74,16 @@ final private class LiveLatestPriceRepository[F[_]](
 object LatestPriceRepository extends MongoJsonCodecs:
   val CollectionName = "latest-prices"
 
+  object Field:
+    val Id        = "_id"
+    val Ticker    = "ticker"
+    val Price     = "price"
+    val Date      = "date"
+    val CreatedAt = "createdAt"
+    val UpdatedAt = "updatedAt"
+
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[LatestPriceRepository[F]] =
     for
       collection <- database.getCollectionWithCodec[LatestPriceEntity](CollectionName)
-      _          <- collection.createIndex(Index.ascending("ticker"))
+      _          <- collection.createIndex(Index.ascending(Field.Ticker))
     yield LiveLatestPriceRepository[F](collection.withAddedCodec[Ticker])

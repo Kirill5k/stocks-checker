@@ -36,16 +36,7 @@ final private class LiveSecurityRepository[F[_]](
     clock: Clock[F]
 ) extends SecurityRepository[F] {
 
-  private object Field:
-    val Id                          = "_id"
-    val Exchange                    = "exchange"
-    val Ticker                      = "ticker"
-    val Name                        = "name"
-    val Kind                        = "kind"
-    val IsActive                    = "isActive"
-    val CompanyProfileLastUpdatedAt = "companyProfileLastUpdatedAt"
-    val CreatedAt                   = "createdAt"
-    val UpdatedAt                   = "updatedAt"
+  import SecurityRepository.Field
 
   extension (security: Security)
     private def toUpdateCommand(now: Instant): WriteCommand[Nothing] =
@@ -85,7 +76,7 @@ final private class LiveSecurityRepository[F[_]](
       .mapList(_.toDomain)
 
   override def getAllTickers: F[List[Ticker]] =
-    collection.distinct[Ticker]("ticker").all.map(_.toList)
+    collection.distinct[Ticker](Field.Ticker).all.map(_.toList)
 
   override def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]] =
     filter.toFilter.flatMap { mongoFilter =>
@@ -132,16 +123,27 @@ final private class LiveSecurityRepository[F[_]](
 
 object SecurityRepository extends MongoJsonCodecs:
   val CollectionName = "securities"
+
+  object Field:
+    val Id                          = "_id"
+    val Exchange                    = "exchange"
+    val Ticker                      = "ticker"
+    val Name                        = "name"
+    val Kind                        = "kind"
+    val IsActive                    = "isActive"
+    val CompanyProfileLastUpdatedAt = "companyProfileLastUpdatedAt"
+    val CreatedAt                   = "createdAt"
+    val UpdatedAt                   = "updatedAt"
   
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[SecurityRepository[F]] =
     for
       collection <- database.getCollectionWithCodec[SecurityEntity](CollectionName)
-      _          <- collection.createIndex(Index.ascending("ticker"))
-      _          <- collection.createIndex(Index.ascending("exchange"))
-      _          <- collection.createIndex(Index.ascending("kind"))
-      _          <- collection.createIndex(Index.ascending("isActive"))
-      _          <- collection.createIndex(Index.ascending("updatedAt"))
-      _          <- collection.createIndex(Index.ascending("companyProfileLastUpdatedAt"))
+      _          <- collection.createIndex(Index.ascending(Field.Ticker))
+      _          <- collection.createIndex(Index.ascending(Field.Exchange))
+      _          <- collection.createIndex(Index.ascending(Field.Kind))
+      _          <- collection.createIndex(Index.ascending(Field.IsActive))
+      _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
+      _          <- collection.createIndex(Index.ascending(Field.CompanyProfileLastUpdatedAt))
     yield LiveSecurityRepository[F](
       collection.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity]
     )
