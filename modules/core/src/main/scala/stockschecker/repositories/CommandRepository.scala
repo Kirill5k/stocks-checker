@@ -94,7 +94,7 @@ final private class LiveCommandRepository[F[_]](
 }
 
 object CommandRepository:
-
+  val CollectionName = "commands"
   object Field:
     val isActive       = "isActive"
     val action         = "action"
@@ -105,6 +105,6 @@ object CommandRepository:
   
   def make[F[_]](db: MongoDatabase[F])(using F: MonadThrow[F]): F[CommandRepository[F]] =
     for
-      collection <- db.getCollectionWithCodec[CommandEntity]("commands")
+      collection <- db.getCollectionWithCodec[CommandEntity](CollectionName)
       _          <- collection.createIndex(Index.ascending(Field.isActive))
     yield LiveCommandRepository(collection.withAddedCodec[Schedule].withAddedCodec[Action])

@@ -128,7 +128,6 @@ final private class LiveCompanyProfileRepository[F[_]](
 
 object CompanyProfileRepository extends MongoJsonCodecs:
   val CollectionName = "company-profiles"
-
   object Field:
     val Id                            = "_id"
     val Name                          = "name"

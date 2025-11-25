@@ -73,7 +73,6 @@ final private class LiveLatestPriceRepository[F[_]](
 
 object LatestPriceRepository extends MongoJsonCodecs:
   val CollectionName = "latest-prices"
-
   object Field:
     val Id        = "_id"
     val Ticker    = "ticker"

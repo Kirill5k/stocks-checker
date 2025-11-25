@@ -123,7 +123,6 @@ final private class LiveSecurityRepository[F[_]](
 
 object SecurityRepository extends MongoJsonCodecs:
   val CollectionName = "securities"
-
   object Field:
     val Id                          = "_id"
     val Exchange                    = "exchange"

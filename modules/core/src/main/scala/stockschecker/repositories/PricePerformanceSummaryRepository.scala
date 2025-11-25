@@ -112,7 +112,6 @@ final private class LivePricePerformanceSummaryRepository[F[_]](
 
 object PricePerformanceSummaryRepository extends MongoJsonCodecs:
   val CollectionName = "price-performance-summaries"
-
   object Field:
     val Id               = "_id"
     val Ticker           = "ticker"
