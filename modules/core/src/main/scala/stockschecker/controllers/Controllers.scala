@@ -33,7 +33,7 @@ object Controllers:
       cp <- CompanyProfileController.make(services.companyProfile, apiConfig)
       h  <- HealthController.make[F]
       c  <- CommandController.make[F](apiConfig, services.command)
-      st <- StockController.make(services.stock)
+      st <- StockController.make(services.stock, apiConfig)
     yield new Controllers[F]:
       override val security: Controller[F]       = s
       override val price: Controller[F]          = p
