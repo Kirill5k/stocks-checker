@@ -48,6 +48,11 @@ The application follows a functional architecture with a clear separation of con
     sbt test
     ```
 
+*   **Run Specific Test:**
+    ```bash
+    sbt "testOnly *YourTestClassName*"
+    ```
+
 *   **Run Application:**
     ```bash
     sbt "project core" run
