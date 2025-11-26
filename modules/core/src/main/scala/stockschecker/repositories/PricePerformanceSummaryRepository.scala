@@ -14,7 +14,7 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Filter, Index, Sort, Update}
-import stockschecker.domain.{PricePerformanceSummary, PricePerformanceFilter, Ticker}
+import stockschecker.domain.{PricePerformanceFilter, PricePerformanceSummary, Ticker}
 import stockschecker.repositories.entities.PricePerformanceSummaryEntity
 
 import java.time.Instant
@@ -127,14 +127,14 @@ object PricePerformanceSummaryRepository extends MongoJsonCodecs:
     val MaxChange        = "maxChange"
     val CreatedAt        = "createdAt"
     val UpdatedAt        = "updatedAt"
-  
+
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[PricePerformanceSummaryRepository[F]] =
     for
-      collection <- database.getCollectionWithCodec[PricePerformanceSummaryEntity](CollectionName)
-      _          <- collection.createIndex(Index.descending(Field.OneYearChange))
-      _          <- collection.createIndex(Index.ascending(Field.LatestPrice))
-      _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
-      _          <- collection.createIndex(Index.ascending(Field.OneMonthChange))
-      _          <- collection.createIndex(Index.ascending(Field.ThreeMonthChange))
-      _          <- collection.createIndex(Index.ascending(Field.SixMonthChange))
-    yield LivePricePerformanceSummaryRepository[F](collection.withAddedCodec[Ticker])
+      coll <- database.getCollectionWithCodec[PricePerformanceSummaryEntity](CollectionName)
+      _    <- coll.createIndex(Index.descending(Field.OneYearChange))
+      _    <- coll.createIndex(Index.ascending(Field.LatestPrice))
+      _    <- coll.createIndex(Index.ascending(Field.UpdatedAt))
+      _    <- coll.createIndex(Index.ascending(Field.OneMonthChange))
+      _    <- coll.createIndex(Index.ascending(Field.ThreeMonthChange))
+      _    <- coll.createIndex(Index.ascending(Field.SixMonthChange))
+    yield LivePricePerformanceSummaryRepository[F](coll.withAddedCodec[Ticker])

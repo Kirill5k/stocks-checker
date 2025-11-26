@@ -6,7 +6,7 @@
 
 ### Key Technologies
 
-*   **Language:** Scala 3.7.2
+*   **Language:** Scala 3.7.4
 *   **Runtime:** Java 25 (Temurin)
 *   **Build Tool:** sbt
 *   **Core Stack:**
