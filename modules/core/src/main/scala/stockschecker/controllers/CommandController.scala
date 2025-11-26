@@ -21,15 +21,14 @@ final private class CommandController[F[_]: Async](
 
   private val getAllCommands = secured(CommandController.getAllCommandsEndpoint)
     .serverLogic { _ => _ =>
-      service.getAll
-        .mapResponse(identity)
+      service.getAll.asResponse
     }
 
   private val createCommand = secured(CommandController.createCommandEndpoint)
     .serverLogic { _ => req =>
       service
         .create(CreateCommand(req.action, req.schedule, req.maxExecutions))
-        .mapResponse(cmd => CreateCommandResponse(cmd.id))
+        .mapToResponse(cmd => CreateCommandResponse(cmd.id))
     }
 
   private val activateCommand = secured(CommandController.activateCommandEndpoint)
@@ -37,7 +36,7 @@ final private class CommandController[F[_]: Async](
       case (cid, req) =>
         service
           .activate(cid, req.isActive)
-          .voidResponse
+          .asVoidResponse
     }}
 
   private val updateCommand = secured(CommandController.updateCommandEndpoint)
@@ -45,14 +44,14 @@ final private class CommandController[F[_]: Async](
       case (cid, req) =>
         service
           .update(UpdateCommand(cid, req.isActive, req.action, req.schedule, req.maxExecutions))
-          .mapResponse(identity)
+          .asResponse
     }}
 
   private val executeManuallyCommand = secured(CommandController.executeManuallyCommandEndpoint)
     .serverLogic { _ => cid =>
       service
         .executeManually(cid)
-        .voidResponse
+        .asVoidResponse
     }
 
   val routes: HttpRoutes[F] =

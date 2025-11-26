@@ -19,21 +19,21 @@ final private class SecurityController[F[_]: Async](
     .serverLogic { _ => ticker =>
       securityService
         .find(ticker)
-        .mapResponse(identity)
+        .asResponse
     }
 
   private val getSecuritiesByExchange = secured(SecurityController.getSecuritiesByExchangeEndpoint)
     .serverLogic { _ => exchange =>
       securityService
         .findByExchange(exchange)
-        .mapResponse(identity)
+        .asResponse
     }
 
   private val getAllTickers = secured(SecurityController.getAllTickersEndpoint)
     .serverLogic { _ => _ =>
       securityService
         .getAllTickers
-        .mapResponse(identity)
+        .asResponse
     }
 
   val routes: HttpRoutes[F] =

@@ -17,7 +17,7 @@ final private class StockController[F[_]: Async](
 
   private val getStockByTicker = secured(StockController.getStockByTickerEndpoint)
     .serverLogic { _ => ticker =>
-      stockService.findByTicker(ticker).mapResponse(identity)
+      stockService.findByTicker(ticker).asResponse
     }
 
   override val routes: HttpRoutes[F] =

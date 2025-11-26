@@ -20,7 +20,7 @@ final private class PriceController[F[_]: Async](
     .serverLogic { _ => (ticker, fetchLatest) =>
       priceService
         .findPerformanceSummary(ticker, fetchLatest.getOrElse(false))
-        .mapResponse(identity)
+        .asResponse
     }
 
   private val getPricePerformanceSummaries = secured(PriceController.getPricePerformanceSummariesEndpoint)
@@ -29,7 +29,7 @@ final private class PriceController[F[_]: Async](
         case Some(filter) => priceService.findPerformanceSummariesBy(filter, queryParams.limit)
         case None         => priceService.getAllPerformanceSummaries(queryParams.limit)
 
-      summaries.mapResponse(identity)
+      summaries.asResponse
     }
 
   val routes: HttpRoutes[F] =

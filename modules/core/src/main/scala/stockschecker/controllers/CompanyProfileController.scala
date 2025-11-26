@@ -20,14 +20,12 @@ final private class CompanyProfileController[F[_]: Async](
       case (ticker, fetchLatest) =>
         companyProfileService
           .get(ticker, fetchLatest.getOrElse(false))
-          .mapResponse(identity)
+          .asResponse
     }}
 
   private val getCompanyProfile = secured(CompanyProfileController.getCompanyProfileEndpoint)
     .serverLogic { _ => limit =>
-      companyProfileService
-        .getAll(limit)
-        .mapResponse(identity)
+      companyProfileService.getAll(limit).asResponse
     }
 
   val routes: HttpRoutes[F] =
