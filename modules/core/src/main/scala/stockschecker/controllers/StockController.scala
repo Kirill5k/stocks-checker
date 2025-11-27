@@ -39,7 +39,37 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
   ) derives CirceCodec.AsObject
 
   private object StockView:
-    def from(stock: Stock): StockView = ???
+    def from(stock: Stock): StockView = StockView(
+      ticker = stock.security.ticker,
+      name = stock.security.name,
+      security = StockSecurityView(
+        exchange = stock.security.exchange,
+        kind = stock.security.kind
+      ),
+      profile = stock.profile.map(p => StockCompanyProfileView(
+        country = p.country,
+        industry = p.industry,
+        description = p.description,
+        website = p.website,
+        ipoDate = p.ipoDate,
+        currency = p.currency,
+        marketCap = p.marketCap,
+        lastUpdatedAt = stock.security.companyProfileLastUpdatedAt
+      )),
+      performanceSummary = stock.performanceSummary.map(ps => StockPricePerformanceSummaryView(
+        latestPrice = ps.latestPrice,
+        latestPriceDate = ps.latestPriceDate,
+        oneMonthChange = ps.oneMonthChange,
+        threeMonthChange = ps.threeMonthChange,
+        sixMonthChange = ps.sixMonthChange,
+        oneYearChange = ps.oneYearChange,
+        threeYearChange = ps.threeYearChange,
+        fiveYearChange = ps.fiveYearChange,
+        tenYearChange = ps.tenYearChange,
+        maxChange = ps.maxChange,
+        lastUpdatedAt = stock.profile.flatMap(_.pricePerformanceLastUpdatedAt)
+      ))
+    )
 
   final private case class StockSecurityView(
       exchange: Exchange,
