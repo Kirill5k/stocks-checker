@@ -47,7 +47,7 @@ final class HealthController[F[_]: Async](
 
 object HealthController extends TapirJsonCirce with SchemaDerivation {
 
-  final case class AppStatus(
+  private final case class AppStatus(
       service: String,
       startupTime: Instant,
       upTime: String,
@@ -55,7 +55,7 @@ object HealthController extends TapirJsonCirce with SchemaDerivation {
       serverIpAddress: String
   ) derives Codec.AsObject
 
-  val statusEndpoint = infallibleEndpoint.get
+  private val statusEndpoint = infallibleEndpoint.get
     .in("health" / "status")
     .out(jsonBody[AppStatus])
 

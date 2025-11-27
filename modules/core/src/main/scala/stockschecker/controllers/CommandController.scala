@@ -82,13 +82,13 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .out(jsonBody[List[Command]])
     .description("Get all commands")
 
-  final case class CreateCommandRequest(
+  private final case class CreateCommandRequest(
       action: Action,
       schedule: Schedule,
       maxExecutions: Option[Int] = None
   ) derives Codec.AsObject
 
-  final case class CreateCommandResponse(
+  private final case class CreateCommandResponse(
       id: CommandId
   ) derives Codec.AsObject
 
@@ -98,7 +98,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .out(jsonBody[CreateCommandResponse].and(statusCode(StatusCode.Created)))
     .description("Create new command")
 
-  final case class ActivateCommandRequest(
+  private final case class ActivateCommandRequest(
       isActive: Boolean
   ) derives Codec.AsObject
 
@@ -108,7 +108,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .out(statusCode(StatusCode.NoContent))
     .description("Change active status of a command")
 
-  final case class UpdateCommandRequest(
+  private final case class UpdateCommandRequest(
       isActive: Boolean,
       action: Action,
       schedule: Schedule,

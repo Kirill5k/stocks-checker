@@ -21,8 +21,7 @@ final private class StockController[F[_]: Async](
     }
 
   override val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](Controller.serverOptions)
-      .toRoutes(List(getStockByTicker))
+    Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(getStockByTicker))
 }
 
 object StockController extends TapirJsonCirce with SchemaDerivation {
