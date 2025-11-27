@@ -9,12 +9,13 @@ import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
+import mongo4cats.models.collection.{IndexOptions, UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Filter, Index, Sort, Update}
 import stockschecker.domain.{LatestPrice, Ticker}
 import stockschecker.repositories.entities.LatestPriceEntity
 
 import java.time.Instant
+import java.util.concurrent.TimeUnit
 
 trait LatestPriceRepository[F[_]]:
   def save(latestPrice: LatestPrice): F[Unit]
@@ -85,4 +86,5 @@ object LatestPriceRepository extends MongoJsonCodecs:
     for
       collection <- database.getCollectionWithCodec[LatestPriceEntity](CollectionName)
       _          <- collection.createIndex(Index.ascending(Field.Ticker))
+      _          <- collection.createIndex(Index.ascending(Field.Date), IndexOptions().expireAfter(45, TimeUnit.DAYS))
     yield LiveLatestPriceRepository[F](collection.withAddedCodec[Ticker])
