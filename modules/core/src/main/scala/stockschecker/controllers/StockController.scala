@@ -4,8 +4,9 @@ import cats.effect.kernel.Async
 import io.circe.Codec as CirceCodec
 import org.http4s.HttpRoutes
 import stockschecker.common.config.ApiConfig
-import stockschecker.controllers.StockController.StockView
-import stockschecker.domain.{Exchange, SecurityKind, Stock, Ticker}
+import stockschecker.controllers.StockController.{StockQueryParams, StockView}
+import stockschecker.domain.{Exchange, SecurityKind, Stock, Ticker, TimePeriod}
+import stockschecker.repositories.StockFilters
 import stockschecker.services.StockService
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
@@ -25,8 +26,20 @@ final private class StockController[F[_]: Async](
     }
 
   private val getAllStocks = secured(StockController.getAllStocksEndpoint)
-    .serverLogic { _ => limit =>
-      stockService.findAll(limit).mapToResponse(_.map(StockView.from))
+    .serverLogic { _ => (params: StockQueryParams) =>
+      val filters = StockFilters(
+        exchange = params.exchange,
+        kind = params.kind,
+        country = params.country,
+        minMarketCap = params.minMarketCap,
+        maxMarketCap = params.maxMarketCap,
+        minPrice = params.minPrice,
+        maxPrice = params.maxPrice,
+        minChange = params.minChange,
+        maxChange = params.maxChange,
+        period = params.period
+      )
+      stockService.findAll(filters, params.limit).mapToResponse(_.map(StockView.from))
     }
 
   override val routes: HttpRoutes[F] =
@@ -34,6 +47,20 @@ final private class StockController[F[_]: Async](
 }
 
 object StockController extends TapirJsonCirce with SchemaDerivation {
+
+  final case class StockQueryParams(
+      limit: Option[Int],
+      exchange: Option[Exchange],
+      kind: Option[SecurityKind],
+      country: Option[String],
+      minMarketCap: Option[Long],
+      maxMarketCap: Option[Long],
+      minPrice: Option[BigDecimal],
+      maxPrice: Option[BigDecimal],
+      minChange: Option[BigDecimal],
+      maxChange: Option[BigDecimal],
+      period: Option[TimePeriod]
+  )
 
   final private case class StockView(
       ticker: Ticker,
@@ -113,6 +140,17 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
   private val getAllStocksEndpoint = Controller.secureEndpoint.get
     .in("stocks")
     .in(query[Option[Int]]("limit"))
+    .in(query[Option[Exchange]]("exchange"))
+    .in(query[Option[SecurityKind]]("kind"))
+    .in(query[Option[String]]("country"))
+    .in(query[Option[Long]]("minMarketCap"))
+    .in(query[Option[Long]]("maxMarketCap"))
+    .in(query[Option[BigDecimal]]("minPrice"))
+    .in(query[Option[BigDecimal]]("maxPrice"))
+    .in(query[Option[BigDecimal]]("minChange"))
+    .in(query[Option[BigDecimal]]("maxChange"))
+    .in(query[Option[TimePeriod]]("period"))
+    .mapInTo[StockQueryParams]
     .out(jsonBody[List[StockView]])
 
   def make[F[_]: Async](stockService: StockService[F], config: ApiConfig): F[Controller[F]] =

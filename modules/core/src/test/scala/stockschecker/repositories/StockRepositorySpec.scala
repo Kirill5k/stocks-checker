@@ -68,7 +68,7 @@ class StockRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(None)
+            res       <- stockRepo.findAll(StockFilters(), None)
           yield res.size mustBe 2
         }
       }
@@ -81,7 +81,7 @@ class StockRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(Some(1))
+            res       <- stockRepo.findAll(StockFilters(), Some(1))
           yield res.size mustBe 1
         }
       }
@@ -90,7 +90,7 @@ class StockRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase(Map.empty) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(None)
+            res       <- stockRepo.findAll(StockFilters(), None)
           yield res mustBe List.empty
         }
       }
@@ -100,7 +100,7 @@ class StockRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(Some(10))
+            res       <- stockRepo.findAll(StockFilters(), Some(10))
           yield res.size mustBe 2
         }
       }

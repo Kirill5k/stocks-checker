@@ -8,6 +8,7 @@ import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
 import stockschecker.domain.Ticker
 import stockschecker.domain.errors.AppError
+import stockschecker.repositories.StockFilters
 import stockschecker.services.StockService
 import stockschecker.fixtures.*
 
@@ -80,7 +81,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
     "GET /stocks" should {
       "return 200 and all stocks without limit" in {
         val svc = mocks
-        when(svc.findAll(None)).thenReturnIO(List(AAPLStock, MSFTStock))
+        when(svc.findAll(StockFilters(), None)).thenReturnIO(List(AAPLStock, MSFTStock))
 
         val res = for
           controller <- StockController.make(svc, apiConfig)
@@ -108,12 +109,12 @@ class StockControllerSpec extends HttpRoutesWordSpec {
             |"performanceSummary":null
             | }]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(expectedJson))
-        verify(svc).findAll(None)
+        verify(svc).findAll(StockFilters(), None)
       }
 
       "return 200 and limited stocks with limit parameter" in {
         val svc = mocks
-        when(svc.findAll(Some(10))).thenReturnIO(List(AAPLStock))
+        when(svc.findAll(StockFilters(), Some(10))).thenReturnIO(List(AAPLStock))
 
         val res = for
           controller <- StockController.make(svc, apiConfig)
@@ -123,12 +124,12 @@ class StockControllerSpec extends HttpRoutesWordSpec {
 
         val expectedJson = s"""[${applStockJson}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(expectedJson))
-        verify(svc).findAll(Some(10))
+        verify(svc).findAll(StockFilters(), Some(10))
       }
 
       "return 200 and empty list when no stocks found" in {
         val svc = mocks
-        when(svc.findAll(None)).thenReturnIO(List.empty)
+        when(svc.findAll(StockFilters(), None)).thenReturnIO(List.empty)
 
         val res = for
           controller <- StockController.make(svc, apiConfig)
@@ -137,7 +138,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
         yield res
 
         res mustHaveStatus (Status.Ok, Some("[]"))
-        verify(svc).findAll(None)
+        verify(svc).findAll(StockFilters(), None)
       }
 
       "return 401 when accessed without API key" in {
@@ -151,6 +152,74 @@ class StockControllerSpec extends HttpRoutesWordSpec {
 
         res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
         verifyNoInteractions(svc)
+      }
+
+      "return 200 and filter by exchange" in {
+        val svc = mocks
+        val filters = StockFilters(exchange = Some(stockschecker.domain.Exchange.NASDAQ))
+        when(svc.findAll(filters, None)).thenReturnIO(List(AAPLStock))
+
+        val res = for
+          controller <- StockController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/stocks?exchange=nasdaq", method = Method.GET).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        val expectedJson = s"""[${applStockJson}]""".stripMargin
+        res mustHaveStatus (Status.Ok, Some(expectedJson))
+        verify(svc).findAll(filters, None)
+      }
+
+      "return 200 and filter by kind" in {
+        val svc = mocks
+        val filters = StockFilters(kind = Some(stockschecker.domain.SecurityKind.Stock))
+        when(svc.findAll(filters, None)).thenReturnIO(List(AAPLStock))
+
+        val res = for
+          controller <- StockController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/stocks?kind=stock", method = Method.GET).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        val expectedJson = s"""[${applStockJson}]""".stripMargin
+        res mustHaveStatus (Status.Ok, Some(expectedJson))
+        verify(svc).findAll(filters, None)
+      }
+
+      "return 200 and filter by minMarketCap" in {
+        val svc = mocks
+        val filters = StockFilters(minMarketCap = Some(1000000000000L))
+        when(svc.findAll(filters, None)).thenReturnIO(List(AAPLStock))
+
+        val res = for
+          controller <- StockController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/stocks?minMarketCap=1000000000000", method = Method.GET).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        val expectedJson = s"""[${applStockJson}]""".stripMargin
+        res mustHaveStatus (Status.Ok, Some(expectedJson))
+        verify(svc).findAll(filters, None)
+      }
+
+      "return 200 and filter by multiple parameters" in {
+        val svc = mocks
+        val filters = StockFilters(
+          exchange = Some(stockschecker.domain.Exchange.NASDAQ),
+          kind = Some(stockschecker.domain.SecurityKind.Stock),
+          minMarketCap = Some(1000000000000L)
+        )
+        when(svc.findAll(filters, Some(10))).thenReturnIO(List(AAPLStock))
+
+        val res = for
+          controller <- StockController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/stocks?exchange=nasdaq&kind=stock&minMarketCap=1000000000000&limit=10", method = Method.GET).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        val expectedJson = s"""[${applStockJson}]""".stripMargin
+        res mustHaveStatus (Status.Ok, Some(expectedJson))
+        verify(svc).findAll(filters, Some(10))
       }
     }
   }

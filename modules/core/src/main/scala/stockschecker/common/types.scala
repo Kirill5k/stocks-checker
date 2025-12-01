@@ -2,6 +2,8 @@ package stockschecker.common
 
 import io.circe.{Decoder, Encoder, KeyDecoder, KeyEncoder}
 import mongo4cats.bson.ObjectId
+import stockschecker.domain.errors.AppError
+import sttp.tapir.{Codec, DecodeResult}
 
 import scala.reflect.ClassTag
 
@@ -16,6 +18,9 @@ object types {
     given Decoder[E]    = Decoder[String].emap(from)
     given KeyEncoder[E] = (e: E) => unwrap(e)
     given KeyDecoder[E] = (key: String) => from(key).toOption
+
+    given Codec.PlainCodec[E] = Codec.string
+      .mapDecode[E](s => from(s).fold(e => DecodeResult.Error(s, AppError.FailedValidation(e)), k => DecodeResult.Value(k)))(_.print)
 
     def from(kind: String): Either[String, E] =
       enums()
