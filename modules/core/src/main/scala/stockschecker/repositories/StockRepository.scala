@@ -10,7 +10,7 @@ import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.operations.{Aggregate, Filter}
+import mongo4cats.operations.{Aggregate, Filter, Sort}
 import stockschecker.domain.{Stock, Ticker}
 import stockschecker.repositories.entities.StockEntity
 
@@ -24,11 +24,7 @@ final private class LiveStockRepository[F[_]](
 )(using
     F: Monad[F]
 ) extends StockRepository[F] {
-
-  private object Field:
-    val Id                 = "_id"
-    val Profile            = "profile"
-    val PerformanceSummary = "performanceSummary"
+  import StockRepository.Field
 
   private def buildAggregation(filter: Filter, limit: Int): Aggregate =
     Aggregate
@@ -36,6 +32,7 @@ final private class LiveStockRepository[F[_]](
       .replaceWith(Document("security" := "$$ROOT"))
       .lookup(CompanyProfileRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.Profile)
       .lookup(PricePerformanceSummaryRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.PerformanceSummary)
+      .sort(Sort.desc(s"${Field.Profile}.${CompanyProfileRepository.Field.MarketCap}"))
       .limit(limit)
 
   override def find(ticker: Ticker): F[Option[Stock]] =
@@ -58,6 +55,11 @@ final private class LiveStockRepository[F[_]](
 }
 
 object StockRepository extends MongoJsonCodecs:
+  object Field:
+    val Id                 = "_id"
+    val Profile            = "profile"
+    val PerformanceSummary = "performanceSummary"
+
   def make[F[_]: Concurrent](database: MongoDatabase[F]): F[StockRepository[F]] =
     database
       .getCollectionWithCodec[StockEntity](SecurityRepository.CollectionName)
