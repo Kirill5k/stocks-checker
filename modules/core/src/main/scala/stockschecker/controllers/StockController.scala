@@ -24,8 +24,13 @@ final private class StockController[F[_]: Async](
       stockService.findByTicker(ticker).mapToResponse(StockView.from)
     }
 
+  private val getAllStocks = secured(StockController.getAllStocksEndpoint)
+    .serverLogic { _ => limit =>
+      stockService.findAll(limit).mapToResponse(_.map(StockView.from))
+    }
+
   override val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(getStockByTicker))
+    Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(getStockByTicker, getAllStocks))
 }
 
 object StockController extends TapirJsonCirce with SchemaDerivation {
@@ -104,6 +109,11 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
   private val getStockByTickerEndpoint = Controller.secureEndpoint.get
     .in("stocks" / path[Ticker]("ticker"))
     .out(jsonBody[StockView])
+
+  private val getAllStocksEndpoint = Controller.secureEndpoint.get
+    .in("stocks")
+    .in(query[Option[Int]]("limit"))
+    .out(jsonBody[List[StockView]])
 
   def make[F[_]: Async](stockService: StockService[F], config: ApiConfig): F[Controller[F]] =
     Async[F].pure(StockController[F](stockService, ApiKeyRequirement.Required(config.key)))

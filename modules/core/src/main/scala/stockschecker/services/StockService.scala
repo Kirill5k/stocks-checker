@@ -8,6 +8,7 @@ import stockschecker.repositories.StockRepository
 
 trait StockService[F[_]]:
   def findByTicker(ticker: Ticker): F[Stock]
+  def findAll(limit: Option[Int]): F[List[Stock]]
 
 final private class LiveStockService[F[_]](
     stockRepository: StockRepository[F]
@@ -16,6 +17,9 @@ final private class LiveStockService[F[_]](
 ) extends StockService[F] {
   override def findByTicker(ticker: Ticker): F[Stock] =
     stockRepository.find(ticker).flatMap(s => F.fromOption(s, AppError.SecurityNotFound(ticker)))
+
+  override def findAll(limit: Option[Int]): F[List[Stock]] =
+    stockRepository.findAll(limit)
 }
 
 object StockService:
