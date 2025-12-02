@@ -70,8 +70,8 @@ final private class LiveStockRepository[F[_]](
 
   extension (sf: StockFilters)
     private def toSecurityFilter: Filter = List(
-      sf.exchange.map(e => Filter.eq(SecurityRepository.Field.Exchange, e.code)),
-      sf.kind.map(k => Filter.eq(SecurityRepository.Field.Kind, k.toString.toLowerCase))
+      sf.exchange.map(e => Filter.eq(SecurityRepository.Field.Exchange, e)),
+      sf.kind.map(k => Filter.eq(SecurityRepository.Field.Kind, k))
     ).flatten.foldLeft(Filter.empty)(_ && _)
 
     private def toProfileFilter: Filter = List(
@@ -105,4 +105,5 @@ object StockRepository extends MongoJsonCodecs:
   def make[F[_]: Concurrent](database: MongoDatabase[F]): F[StockRepository[F]] =
     database
       .getCollectionWithCodec[StockEntity](SecurityRepository.CollectionName)
+      .map(_.withAddedCodec[Exchange].withAddedCodec[SecurityKind])
       .map(LiveStockRepository[F](_))
