@@ -138,5 +138,7 @@ package object domain {
       )
     }
 
-    extension (pps: PricePerformanceSummary) def toLatestPrice: LatestPrice = LatestPrice(pps.ticker, pps.latestPrice, pps.latestPriceDate)
+    extension (pps: PricePerformanceSummary)
+      def toLatestPrice: LatestPrice =
+        LatestPrice(pps.ticker, pps.latestPrice, pps.latestPriceDate)
 }
