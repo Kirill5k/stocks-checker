@@ -13,7 +13,9 @@ import sttp.client4.*
 import sttp.client4.circe.asJson
 import sttp.model.StatusCode
 
+import java.time.LocalDate
 import scala.concurrent.duration.*
+import scala.util.Try
 
 trait FinnhubClient[F[_]]:
   def getListedSecurities(exchange: Exchange): Stream[F, Security]
@@ -125,7 +127,7 @@ object FinnhubClient {
         industry = finnhubIndustry,
         description = description,
         website = weburl,
-        ipoDate = java.time.LocalDate.parse(ipo),
+        ipoDate = if (ipo.trim.isEmpty) None else Try(LocalDate.parse(ipo)).toOption,
         currency = estimateCurrency,
         marketCap = (marketCapitalization * 1_000_000).longValue
       )

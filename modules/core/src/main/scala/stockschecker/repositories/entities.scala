@@ -56,7 +56,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       industry: String,
       description: Option[String],
       website: String,
-      ipoDate: LocalDate,
+      ipoDate: Option[LocalDate],
       currency: String,
       marketCap: Long,
       pricePerformanceLastUpdatedAt: Option[Instant],

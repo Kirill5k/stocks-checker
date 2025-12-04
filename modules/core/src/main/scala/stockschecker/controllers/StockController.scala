@@ -113,7 +113,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       industry: String,
       description: Option[String],
       website: String,
-      ipoDate: LocalDate,
+      ipoDate: Option[LocalDate],
       currency: String,
       marketCap: Long,
       lastUpdatedAt: Option[Instant]

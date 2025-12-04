@@ -91,7 +91,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
               industry = "Technology",
               description = Some("Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide."),
               website = "https://www.apple.com/",
-              ipoDate = LocalDate.parse("1980-12-12"),
+              ipoDate = Some(LocalDate.parse("1980-12-12")),
               currency = "USD",
               marketCap = 3989245252568L
             )
@@ -140,7 +140,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
               industry = "Technology",
               description = Some("Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide."),
               website = "https://www.apple.com/",
-              ipoDate = LocalDate.parse("1980-12-12"),
+              ipoDate = Some(LocalDate.parse("1980-12-12")),
               currency = "USD",
               marketCap = 3989245252568L
             )
