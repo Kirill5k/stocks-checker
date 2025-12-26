@@ -1,4 +1,5 @@
 import com.typesafe.sbt.packager.docker.*
+import org.typelevel.scalacoptions.ScalacOptions
 import sbtghactions.JavaSpec
 
 ThisBuild / scalaVersion                        := "3.7.4"
@@ -42,7 +43,7 @@ val core = project
     name       := "stocks-checker-core",
     moduleName := "stocks-checker-core",
     libraryDependencies ++= Dependencies.core ++ Dependencies.test,
-    Test / scalacOptions += "-Wconf:msg=unused value of type:silent"
+    Test / tpolecatExcludeOptions += ScalacOptions.warnNonUnitStatement
   )
 
 val root = project
