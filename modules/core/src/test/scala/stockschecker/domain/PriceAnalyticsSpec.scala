@@ -112,8 +112,8 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         val metrics = analytics.metrics
 
         metrics.cagr3Year.must(be(defined))
-        metrics.cagr3Year.get.toDouble.must(be > 20.0) // Should be around 26% CAGR for doubling in 3 years
-        metrics.cagr3Year.get.toDouble.must(be < 30.0)
+        // (200/100)^(1/3) - 1 = 25.99%
+        metrics.cagr3Year.get.mustBe(BigDecimal("25.99"))
         metrics.cagr5Year.mustBe(None) // Still need 60 months
 
         metrics.totalYears.mustBe(3)
@@ -244,7 +244,8 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         val metrics = analytics.metrics
 
         metrics.maxDrawdown.must(be(defined))
-        metrics.maxDrawdown.get.toDouble.must(be >= 50.0) // ~60% drawdown from 150 to 60
+        // Peak 150 -> Low 60. (150-60)/150 = 60.00%
+        metrics.maxDrawdown.get.mustBe(BigDecimal("60.00"))
 
         val scores = analytics.scores
         scores.drawdownScore.toDouble.must(be < 30.0) // Low score for high drawdown

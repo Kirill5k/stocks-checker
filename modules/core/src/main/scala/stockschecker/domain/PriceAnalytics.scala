@@ -97,8 +97,8 @@ object PriceAnalytics:
     val prices      = candles.map(_.close).toList
 
     // Calculate CAGR from actual price data
-    val cagr3Year = if (candles.size >= 36) Some(calculateCAGR(prices(35), latestPrice, 3)) else None
-    val cagr5Year = if (candles.size >= 60) Some(calculateCAGR(prices(59), latestPrice, 5)) else None
+    val cagr3Year = if (candles.size >= 37) Some(calculateCAGR(prices(36), latestPrice, 3)) else None
+    val cagr5Year = if (candles.size >= 61) Some(calculateCAGR(prices(60), latestPrice, 5)) else None
 
     // Calculate volatility from monthly returns
     val volatility = calculateVolatility(prices)
@@ -141,7 +141,7 @@ object PriceAnalytics:
 
     // Calculate monthly returns
     val returns = prices.sliding(2).flatMap {
-      case List(older, newer) =>
+      case List(newer, older) =>
         if (older <= 0) Some(0.0)
         else Some(((newer - older) / older * 100).toDouble)
       case _ => None
@@ -161,13 +161,16 @@ object PriceAnalytics:
   private def calculateMaxDrawdown(prices: List[BigDecimal]): Option[BigDecimal] = {
     if (prices.isEmpty) return None
 
-    var maxDrawdown = BigDecimal(0)
-    var peak        = prices.head
+    val chronologicalPrices = prices.reverse
+    var maxDrawdown         = BigDecimal(0)
+    var peak                = chronologicalPrices.head
 
-    prices.foreach { price =>
+    chronologicalPrices.foreach { price =>
       if (price > peak) peak = price
-      val drawdown = ((peak - price) / peak * 100).setScale(2, RoundingMode.HALF_UP)
-      if (drawdown > maxDrawdown) maxDrawdown = drawdown
+      if (peak > 0) {
+        val drawdown = ((peak - price) / peak * 100).setScale(2, RoundingMode.HALF_UP)
+        if (drawdown > maxDrawdown) maxDrawdown = drawdown
+      }
     }
 
     Some(maxDrawdown)
