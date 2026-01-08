@@ -22,7 +22,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
     "GET /price/performance-summaries/:ticker" should {
       "return 200 and price performance summary on success" in {
         val svc = mocks
-        when(svc.findPriceAnalytics(any[Ticker], anyBoolean)).thenReturnIO(AAPLPricePerformanceSummary)
+        when(svc.findPriceAnalytics(any[Ticker], anyBoolean)).thenReturnIO(AAPLPriceAnalytics)
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -32,16 +32,34 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val responseBody = s"""{
                               |  "ticker" : "AAPL",
-                              |  "latestPrice" : 228.50,
-                              |  "latestPriceDate" : "2025-10-01",
-                              |  "oneMonthChange" : 2.47,
-                              |  "threeMonthChange" : null,
-                              |  "sixMonthChange" : null,
-                              |  "oneYearChange" : null,
-                              |  "threeYearChange" : null,
-                              |  "fiveYearChange" : null,
-                              |  "tenYearChange" : null,
-                              |  "maxChange" : 4.82
+                              |  "performanceSummary" : {
+                              |    "latestPrice" : 228.50,
+                              |    "latestPriceDate" : "2025-10-01",
+                              |    "oneMonthChange" : 2.47,
+                              |    "threeMonthChange" : null,
+                              |    "sixMonthChange" : null,
+                              |    "oneYearChange" : null,
+                              |    "threeYearChange" : null,
+                              |    "fiveYearChange" : null,
+                              |    "tenYearChange" : null,
+                              |    "maxChange" : 4.82
+                              |  },
+                              |  "metrics" : {
+                              |    "cagr3Year" : null,
+                              |    "cagr5Year" : null,
+                              |    "volatility" : null,
+                              |    "maxDrawdown" : 4.60,
+                              |    "consistencyScore" : 0.9992,
+                              |    "positiveYears" : 0,
+                              |    "totalYears" : 0
+                              |  },
+                              |  "scores" : {
+                              |    "overallScore" : 32.49,
+                              |    "cagrScore" : 0,
+                              |    "volatilityScore" : 0,
+                              |    "drawdownScore" : 100,
+                              |    "consistencyScore" : 49.96
+                              |  }
                               |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).findPriceAnalytics(AAPL, true)
@@ -49,7 +67,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
       "return 200 and price performance summary when fetchLatest is not provided" in {
         val svc = mocks
-        when(svc.findPriceAnalytics(any[Ticker], anyBoolean)).thenReturnIO(AAPLPricePerformanceSummary)
+        when(svc.findPriceAnalytics(any[Ticker], anyBoolean)).thenReturnIO(AAPLPriceAnalytics)
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -59,16 +77,34 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val responseBody = s"""{
                               |  "ticker" : "AAPL",
-                              |  "latestPrice" : 228.50,
-                              |  "latestPriceDate" : "2025-10-01",
-                              |  "oneMonthChange" : 2.47,
-                              |  "threeMonthChange" : null,
-                              |  "sixMonthChange" : null,
-                              |  "oneYearChange" : null,
-                              |  "threeYearChange" : null,
-                              |  "fiveYearChange" : null,
-                              |  "tenYearChange" : null,
-                              |  "maxChange" : 4.82
+                              |  "performanceSummary" : {
+                              |    "latestPrice" : 228.50,
+                              |    "latestPriceDate" : "2025-10-01",
+                              |    "oneMonthChange" : 2.47,
+                              |    "threeMonthChange" : null,
+                              |    "sixMonthChange" : null,
+                              |    "oneYearChange" : null,
+                              |    "threeYearChange" : null,
+                              |    "fiveYearChange" : null,
+                              |    "tenYearChange" : null,
+                              |    "maxChange" : 4.82
+                              |  },
+                              |  "metrics" : {
+                              |    "cagr3Year" : null,
+                              |    "cagr5Year" : null,
+                              |    "volatility" : null,
+                              |    "maxDrawdown" : 4.60,
+                              |    "consistencyScore" : 0.9992,
+                              |    "positiveYears" : 0,
+                              |    "totalYears" : 0
+                              |  },
+                              |  "scores" : {
+                              |    "overallScore" : 32.49,
+                              |    "cagrScore" : 0,
+                              |    "volatilityScore" : 0,
+                              |    "drawdownScore" : 100,
+                              |    "consistencyScore" : 49.96
+                              |  }
                               |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).findPriceAnalytics(AAPL, false)
@@ -84,7 +120,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
           res <- controller.routes.orNotFound.run(req)
         yield res
 
-        res mustHaveStatus (Status.NotFound, Some("""{"message":"Could not find price performance summary for AAPL"}"""))
+        res mustHaveStatus (Status.NotFound, Some("""{"message":"Could not find price analytics for AAPL"}"""))
         verify(svc).findPriceAnalytics(AAPL, false)
       }
 
@@ -98,7 +134,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
           res <- controller.routes.orNotFound.run(req)
         yield res
 
-        res mustHaveStatus (Status.NotFound, Some("""{"message":"Could not find price performance summary for AAPL"}"""))
+        res mustHaveStatus (Status.NotFound, Some("""{"message":"Could not find price analytics for AAPL"}"""))
         verify(svc).findPriceAnalytics(AAPL, true)
       }
 
@@ -158,28 +194,64 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val responseBody = """[{
                              |  "ticker" : "AAPL",
-                             |  "latestPrice" : 228.50,
-                             |  "latestPriceDate" : "2025-10-01",
-                             |  "oneMonthChange" : 2.47,
-                             |  "threeMonthChange" : null,
-                             |  "sixMonthChange" : null,
-                             |  "oneYearChange" : null,
-                             |  "threeYearChange" : null,
-                             |  "fiveYearChange" : null,
-                             |  "tenYearChange" : null,
-                             |  "maxChange" : 4.82
+                             |  "performanceSummary" : {
+                             |    "latestPrice" : 228.50,
+                             |    "latestPriceDate" : "2025-10-01",
+                             |    "oneMonthChange" : 2.47,
+                             |    "threeMonthChange" : null,
+                             |    "sixMonthChange" : null,
+                             |    "oneYearChange" : null,
+                             |    "threeYearChange" : null,
+                             |    "fiveYearChange" : null,
+                             |    "tenYearChange" : null,
+                             |    "maxChange" : 4.82
+                             |  },
+                             |  "metrics" : {
+                             |    "cagr3Year" : null,
+                             |    "cagr5Year" : null,
+                             |    "volatility" : null,
+                             |    "maxDrawdown" : 4.60,
+                             |    "consistencyScore" : 0.9992,
+                             |    "positiveYears" : 0,
+                             |    "totalYears" : 0
+                             |  },
+                             |  "scores" : {
+                             |    "overallScore" : 32.49,
+                             |    "cagrScore" : 0,
+                             |    "volatilityScore" : 0,
+                             |    "drawdownScore" : 100,
+                             |    "consistencyScore" : 49.96
+                             |  }
                              |},{
                              |  "ticker" : "MSFT",
-                             |  "latestPrice" : 400.00,
-                             |  "latestPriceDate" : "2025-10-01",
-                             |  "oneMonthChange" : 2.47,
-                             |  "threeMonthChange" : null,
-                             |  "sixMonthChange" : null,
-                             |  "oneYearChange" : null,
-                             |  "threeYearChange" : null,
-                             |  "fiveYearChange" : null,
-                             |  "tenYearChange" : null,
-                             |  "maxChange" : 4.82
+                             |  "performanceSummary" : {
+                             |    "latestPrice" : 400.00,
+                             |    "latestPriceDate" : "2025-10-01",
+                             |    "oneMonthChange" : 2.47,
+                             |    "threeMonthChange" : null,
+                             |    "sixMonthChange" : null,
+                             |    "oneYearChange" : null,
+                             |    "threeYearChange" : null,
+                             |    "fiveYearChange" : null,
+                             |    "tenYearChange" : null,
+                             |    "maxChange" : 4.82
+                             |  },
+                             |  "metrics" : {
+                             |    "cagr3Year" : null,
+                             |    "cagr5Year" : null,
+                             |    "volatility" : null,
+                             |    "maxDrawdown" : 4.60,
+                             |    "consistencyScore" : 0.9992,
+                             |    "positiveYears" : 0,
+                             |    "totalYears" : 0
+                             |  },
+                             |  "scores" : {
+                             |    "overallScore" : 32.49,
+                             |    "cagrScore" : 0,
+                             |    "volatilityScore" : 0,
+                             |    "drawdownScore" : 100,
+                             |    "consistencyScore" : 49.96
+                             |  }
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).getAllPriceAnalytics(None)
@@ -187,7 +259,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
       "return 200 with filtered summaries when minLatestPrice filter is provided" in {
         val svc = mocks
-        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPriceAnalytics))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -197,16 +269,34 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val responseBody = """[{
                              |  "ticker" : "AAPL",
-                             |  "latestPrice" : 228.50,
-                             |  "latestPriceDate" : "2025-10-01",
-                             |  "oneMonthChange" : 2.47,
-                             |  "threeMonthChange" : null,
-                             |  "sixMonthChange" : null,
-                             |  "oneYearChange" : null,
-                             |  "threeYearChange" : null,
-                             |  "fiveYearChange" : null,
-                             |  "tenYearChange" : null,
-                             |  "maxChange" : 4.82
+                             |  "performanceSummary" : {
+                             |    "latestPrice" : 228.50,
+                             |    "latestPriceDate" : "2025-10-01",
+                             |    "oneMonthChange" : 2.47,
+                             |    "threeMonthChange" : null,
+                             |    "sixMonthChange" : null,
+                             |    "oneYearChange" : null,
+                             |    "threeYearChange" : null,
+                             |    "fiveYearChange" : null,
+                             |    "tenYearChange" : null,
+                             |    "maxChange" : 4.82
+                             |  },
+                             |  "metrics" : {
+                             |    "cagr3Year" : null,
+                             |    "cagr5Year" : null,
+                             |    "volatility" : null,
+                             |    "maxDrawdown" : 4.60,
+                             |    "consistencyScore" : 0.9992,
+                             |    "positiveYears" : 0,
+                             |    "totalYears" : 0
+                             |  },
+                             |  "scores" : {
+                             |    "overallScore" : 32.49,
+                             |    "cagrScore" : 0,
+                             |    "volatilityScore" : 0,
+                             |    "drawdownScore" : 100,
+                             |    "consistencyScore" : 49.96
+                             |  }
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         val expectedFilter = PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PriceAbove(BigDecimal(200))))
@@ -215,7 +305,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
       "return 200 with filtered summaries when maxLatestPrice filter is provided" in {
         val svc = mocks
-        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPriceAnalytics))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -225,16 +315,34 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val responseBody = """[{
                              |  "ticker" : "AAPL",
-                             |  "latestPrice" : 228.50,
-                             |  "latestPriceDate" : "2025-10-01",
-                             |  "oneMonthChange" : 2.47,
-                             |  "threeMonthChange" : null,
-                             |  "sixMonthChange" : null,
-                             |  "oneYearChange" : null,
-                             |  "threeYearChange" : null,
-                             |  "fiveYearChange" : null,
-                             |  "tenYearChange" : null,
-                             |  "maxChange" : 4.82
+                             |  "performanceSummary" : {
+                             |    "latestPrice" : 228.50,
+                             |    "latestPriceDate" : "2025-10-01",
+                             |    "oneMonthChange" : 2.47,
+                             |    "threeMonthChange" : null,
+                             |    "sixMonthChange" : null,
+                             |    "oneYearChange" : null,
+                             |    "threeYearChange" : null,
+                             |    "fiveYearChange" : null,
+                             |    "tenYearChange" : null,
+                             |    "maxChange" : 4.82
+                             |  },
+                             |  "metrics" : {
+                             |    "cagr3Year" : null,
+                             |    "cagr5Year" : null,
+                             |    "volatility" : null,
+                             |    "maxDrawdown" : 4.60,
+                             |    "consistencyScore" : 0.9992,
+                             |    "positiveYears" : 0,
+                             |    "totalYears" : 0
+                             |  },
+                             |  "scores" : {
+                             |    "overallScore" : 32.49,
+                             |    "cagrScore" : 0,
+                             |    "volatilityScore" : 0,
+                             |    "drawdownScore" : 100,
+                             |    "consistencyScore" : 49.96
+                             |  }
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         val expectedFilter = PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PriceBelow(BigDecimal(300))))
@@ -243,7 +351,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
       "return 200 with filtered summaries when minOneYearChange filter is provided" in {
         val svc = mocks
-        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPriceAnalytics))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -253,16 +361,34 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val responseBody = """[{
                              |  "ticker" : "AAPL",
-                             |  "latestPrice" : 228.50,
-                             |  "latestPriceDate" : "2025-10-01",
-                             |  "oneMonthChange" : 2.47,
-                             |  "threeMonthChange" : null,
-                             |  "sixMonthChange" : null,
-                             |  "oneYearChange" : null,
-                             |  "threeYearChange" : null,
-                             |  "fiveYearChange" : null,
-                             |  "tenYearChange" : null,
-                             |  "maxChange" : 4.82
+                             |  "performanceSummary" : {
+                             |    "latestPrice" : 228.50,
+                             |    "latestPriceDate" : "2025-10-01",
+                             |    "oneMonthChange" : 2.47,
+                             |    "threeMonthChange" : null,
+                             |    "sixMonthChange" : null,
+                             |    "oneYearChange" : null,
+                             |    "threeYearChange" : null,
+                             |    "fiveYearChange" : null,
+                             |    "tenYearChange" : null,
+                             |    "maxChange" : 4.82
+                             |  },
+                             |  "metrics" : {
+                             |    "cagr3Year" : null,
+                             |    "cagr5Year" : null,
+                             |    "volatility" : null,
+                             |    "maxDrawdown" : 4.60,
+                             |    "consistencyScore" : 0.9992,
+                             |    "positiveYears" : 0,
+                             |    "totalYears" : 0
+                             |  },
+                             |  "scores" : {
+                             |    "overallScore" : 32.49,
+                             |    "cagrScore" : 0,
+                             |    "volatilityScore" : 0,
+                             |    "drawdownScore" : 100,
+                             |    "consistencyScore" : 49.96
+                             |  }
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         val expectedFilter = PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PerformanceAbove(TimePeriod.OneYear, BigDecimal(10.5))))
@@ -271,7 +397,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
       "return 200 with filtered summaries when multiple filters are provided" in {
         val svc = mocks
-        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPriceAnalytics))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -284,16 +410,34 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val responseBody = """[{
                              |  "ticker" : "AAPL",
-                             |  "latestPrice" : 228.50,
-                             |  "latestPriceDate" : "2025-10-01",
-                             |  "oneMonthChange" : 2.47,
-                             |  "threeMonthChange" : null,
-                             |  "sixMonthChange" : null,
-                             |  "oneYearChange" : null,
-                             |  "threeYearChange" : null,
-                             |  "fiveYearChange" : null,
-                             |  "tenYearChange" : null,
-                             |  "maxChange" : 4.82
+                             |  "performanceSummary" : {
+                             |    "latestPrice" : 228.50,
+                             |    "latestPriceDate" : "2025-10-01",
+                             |    "oneMonthChange" : 2.47,
+                             |    "threeMonthChange" : null,
+                             |    "sixMonthChange" : null,
+                             |    "oneYearChange" : null,
+                             |    "threeYearChange" : null,
+                             |    "fiveYearChange" : null,
+                             |    "tenYearChange" : null,
+                             |    "maxChange" : 4.82
+                             |  },
+                             |  "metrics" : {
+                             |    "cagr3Year" : null,
+                             |    "cagr5Year" : null,
+                             |    "volatility" : null,
+                             |    "maxDrawdown" : 4.60,
+                             |    "consistencyScore" : 0.9992,
+                             |    "positiveYears" : 0,
+                             |    "totalYears" : 0
+                             |  },
+                             |  "scores" : {
+                             |    "overallScore" : 32.49,
+                             |    "cagrScore" : 0,
+                             |    "volatilityScore" : 0,
+                             |    "drawdownScore" : 100,
+                             |    "consistencyScore" : 49.96
+                             |  }
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         val expectedFilter = PriceAnalyticsFilter.Composite(
@@ -309,7 +453,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
       "return 200 with limited results when limit parameter is provided without filters" in {
         val svc = mocks
-        when(svc.getAllPriceAnalytics(any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.getAllPriceAnalytics(any[Option[Int]])).thenReturnIO(List(AAPLPriceAnalytics))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -319,16 +463,34 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val responseBody = """[{
                              |  "ticker" : "AAPL",
-                             |  "latestPrice" : 228.50,
-                             |  "latestPriceDate" : "2025-10-01",
-                             |  "oneMonthChange" : 2.47,
-                             |  "threeMonthChange" : null,
-                             |  "sixMonthChange" : null,
-                             |  "oneYearChange" : null,
-                             |  "threeYearChange" : null,
-                             |  "fiveYearChange" : null,
-                             |  "tenYearChange" : null,
-                             |  "maxChange" : 4.82
+                             |  "performanceSummary" : {
+                             |    "latestPrice" : 228.50,
+                             |    "latestPriceDate" : "2025-10-01",
+                             |    "oneMonthChange" : 2.47,
+                             |    "threeMonthChange" : null,
+                             |    "sixMonthChange" : null,
+                             |    "oneYearChange" : null,
+                             |    "threeYearChange" : null,
+                             |    "fiveYearChange" : null,
+                             |    "tenYearChange" : null,
+                             |    "maxChange" : 4.82
+                             |  },
+                             |  "metrics" : {
+                             |    "cagr3Year" : null,
+                             |    "cagr5Year" : null,
+                             |    "volatility" : null,
+                             |    "maxDrawdown" : 4.60,
+                             |    "consistencyScore" : 0.9992,
+                             |    "positiveYears" : 0,
+                             |    "totalYears" : 0
+                             |  },
+                             |  "scores" : {
+                             |    "overallScore" : 32.49,
+                             |    "cagrScore" : 0,
+                             |    "volatilityScore" : 0,
+                             |    "drawdownScore" : 100,
+                             |    "consistencyScore" : 49.96
+                             |  }
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).getAllPriceAnalytics(Some(10))
@@ -336,7 +498,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
       "return 200 with limited results when limit parameter is provided with filters" in {
         val svc = mocks
-        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPriceAnalytics))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -346,16 +508,34 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val responseBody = """[{
                              |  "ticker" : "AAPL",
-                             |  "latestPrice" : 228.50,
-                             |  "latestPriceDate" : "2025-10-01",
-                             |  "oneMonthChange" : 2.47,
-                             |  "threeMonthChange" : null,
-                             |  "sixMonthChange" : null,
-                             |  "oneYearChange" : null,
-                             |  "threeYearChange" : null,
-                             |  "fiveYearChange" : null,
-                             |  "tenYearChange" : null,
-                             |  "maxChange" : 4.82
+                             |  "performanceSummary" : {
+                             |    "latestPrice" : 228.50,
+                             |    "latestPriceDate" : "2025-10-01",
+                             |    "oneMonthChange" : 2.47,
+                             |    "threeMonthChange" : null,
+                             |    "sixMonthChange" : null,
+                             |    "oneYearChange" : null,
+                             |    "threeYearChange" : null,
+                             |    "fiveYearChange" : null,
+                             |    "tenYearChange" : null,
+                             |    "maxChange" : 4.82
+                             |  },
+                             |  "metrics" : {
+                             |    "cagr3Year" : null,
+                             |    "cagr5Year" : null,
+                             |    "volatility" : null,
+                             |    "maxDrawdown" : 4.60,
+                             |    "consistencyScore" : 0.9992,
+                             |    "positiveYears" : 0,
+                             |    "totalYears" : 0
+                             |  },
+                             |  "scores" : {
+                             |    "overallScore" : 32.49,
+                             |    "cagrScore" : 0,
+                             |    "volatilityScore" : 0,
+                             |    "drawdownScore" : 100,
+                             |    "consistencyScore" : 49.96
+                             |  }
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         val expectedFilter = PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PriceAbove(BigDecimal(200))))

@@ -13,7 +13,7 @@ enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithCo
   case DiscoverSecurities(exchanges: NonEmptyList[Exchange])
   case EnrichCompanyProfiles(filter: SecurityFilter, limit: Option[Int] = None)
   case FetchPricePerformanceSummaries(filter: CompanyProfileFilter, limit: Option[Int] = None)
-  case FetchCompanyProfiles(ticker: NonEmptyList[Ticker])
+  case FetchCompanyProfiles(tickers: NonEmptyList[Ticker])
   case UpdatePriceAnalysis(tickers: NonEmptyList[Ticker])
   case RecordPriceAnalyticsUpdate(tickers: List[Ticker])
   case RecordCompanyProfileUpdate(tickers: List[Ticker])

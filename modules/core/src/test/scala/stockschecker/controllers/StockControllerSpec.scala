@@ -33,17 +33,37 @@ class StockControllerSpec extends HttpRoutesWordSpec {
       |  "marketCap":3439591971000,
       |  "lastUpdatedAt":"2024-01-15T10:00:00Z"
       |  },
-      |"performanceSummary":{
-      | "latestPrice":228.50,
-      | "latestPriceDate":"2025-10-01",
-      | "oneMonthChange":2.47,
-      | "threeMonthChange":null,
-      | "sixMonthChange":null,
-      | "oneYearChange":null,"threeYearChange":null,
-      | "fiveYearChange":null,
-      | "tenYearChange":null,
-      | "maxChange":4.82,
-      | "lastUpdatedAt":null}
+      |"priceAnalytics":{
+      | "performanceSummary":{
+      |   "latestPrice":228.50,
+      |   "latestPriceDate":"2025-10-01",
+      |   "oneMonthChange":2.47,
+      |   "threeMonthChange":null,
+      |   "sixMonthChange":null,
+      |   "oneYearChange":null,
+      |   "threeYearChange":null,
+      |   "fiveYearChange":null,
+      |   "tenYearChange":null,
+      |   "maxChange":4.82
+      | },
+      | "metrics":{
+      |   "cagr3Year":null,
+      |   "cagr5Year":null,
+      |   "volatility":null,
+      |   "maxDrawdown":4.60,
+      |   "consistencyScore":0.9992,
+      |   "positiveYears":0,
+      |   "totalYears":0
+      | },
+      | "scores":{
+      |   "overallScore":32.49,
+      |   "cagrScore":0,
+      |   "volatilityScore":0,
+      |   "drawdownScore":100,
+      |   "consistencyScore":49.96
+      | },
+      | "lastUpdatedAt" : null
+      |}
       | }
       |""".stripMargin
 
@@ -106,7 +126,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
             |  "marketCap":3100000000000,
             |  "lastUpdatedAt":null
           |  },
-            |"performanceSummary":null
+            |"priceAnalytics":null
             | }]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(expectedJson))
         verify(svc).findAll(StockFilters(), None)

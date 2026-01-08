@@ -107,10 +107,10 @@ final private class LiveStockRepository[F[_]](
         Filter.lte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.LatestPrice}", max)
       ),
       (sf.minChange, sf.period).mapN { (min, period) =>
-        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary}.${period.fieldName}", min)
+        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.Root}.${period.fieldName}", min)
       },
       (sf.maxChange, sf.period).mapN { (max, period) =>
-        Filter.lte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary}.${period.fieldName}", max)
+        Filter.lte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.Root}.${period.fieldName}", max)
       },
       sf.minOverallScore.map(min =>
         Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Scores.OverallScore}", min)
