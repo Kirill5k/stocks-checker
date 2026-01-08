@@ -7,32 +7,32 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{PricePerformanceSummary, Ticker}
-import stockschecker.repositories.{LatestPriceRepository, PricePerformanceSummaryRepository}
+import stockschecker.domain.{PriceAnalytics, Ticker}
+import stockschecker.repositories.{LatestPriceRepository, PriceAnalyticsRepository}
 import stockschecker.fixtures.*
 
 class PriceServiceSpec extends IOWordSpec {
   given Logger[IO] = Slf4jLogger.getLogger[IO]
 
   "A PriceService" when {
-    "fetchLatestPerformanceSummaries" should {
-      "fetch price candles, save performance summary and dispatch Action.RecordPricePerformanceUpdate" in {
+    "fetchLatestPriceAnalytics" should {
+      "fetch price candles, save price analytics and dispatch Action.RecordPriceAnalyticsUpdate" in {
         val (repo, latestPriceRepo, client, dispatcher) = mocks
         when(client.getMonthlyPriceCandles(any[Ticker])).thenReturnIO(AAPLPriceCandles)
-        when(repo.save(anyList[PricePerformanceSummary])).thenReturnUnit
+        when(repo.save(anyList[PriceAnalytics])).thenReturnUnit
         when(latestPriceRepo.save(anyList)).thenReturnUnit
         when(dispatcher.dispatch(any)).thenReturnUnit
 
         val res = for
           svc <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          _   <- svc.fetchLatestPerformanceSummaries(NonEmptyList.of(AAPL))
+          _   <- svc.fetchLatestPriceAnalytics(NonEmptyList.of(AAPL))
         yield ()
 
         res.asserting { _ =>
           verify(client).getMonthlyPriceCandles(AAPL)
-          verify(repo).save(anyList[PricePerformanceSummary])
+          verify(repo).save(anyList[PriceAnalytics])
           verify(latestPriceRepo).save(anyList)
-          verify(dispatcher).dispatch(Action.RecordPricePerformanceUpdate(List(AAPL)))
+          verify(dispatcher).dispatch(Action.RecordPriceAnalyticsUpdate(List(AAPL)))
           succeed
         }
       }
@@ -44,7 +44,7 @@ class PriceServiceSpec extends IOWordSpec {
 
         val res = for
           svc <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          _   <- svc.fetchLatestPerformanceSummaries(NonEmptyList.of(AAPL))
+          _   <- svc.fetchLatestPriceAnalytics(NonEmptyList.of(AAPL))
         yield ()
 
         res.asserting { result =>
@@ -58,53 +58,53 @@ class PriceServiceSpec extends IOWordSpec {
         val (repo, latestPriceRepo, client, dispatcher) = mocks
         val error = new RuntimeException("Database error")
         when(client.getMonthlyPriceCandles(any[Ticker])).thenReturnIO(AAPLPriceCandles)
-        when(repo.save(anyList[PricePerformanceSummary])).thenRaiseError(error)
+        when(repo.save(anyList[PriceAnalytics])).thenRaiseError(error)
 
         val res = for
           svc <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          _   <- svc.fetchLatestPerformanceSummaries(NonEmptyList.of(AAPL))
+          _   <- svc.fetchLatestPriceAnalytics(NonEmptyList.of(AAPL))
         yield ()
 
         res.attempt.asserting { result =>
           verify(client).getMonthlyPriceCandles(AAPL)
-          verify(repo).save(anyList[PricePerformanceSummary])
+          verify(repo).save(anyList[PriceAnalytics])
           result mustBe Left(error)
         }
       }
     }
 
-    "findPerformanceSummary" should {
-      "return performance summary from repository when found and fetch is false" in {
+    "findPriceAnalytics" should {
+      "return price analytics from repository when found and fetch is false" in {
         val (repo, latestPriceRepo, client, dispatcher) = mocks
-        when(repo.find(any[Ticker])).thenReturnIO(Some(AAPLPricePerformanceSummary))
+        when(repo.find(any[Ticker])).thenReturnIO(Some(AAPLPriceAnalytics))
 
         val res = for
           svc    <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          result <- svc.findPerformanceSummary(AAPL, fetch = false)
+          result <- svc.findPriceAnalytics(AAPL, fetch = false)
         yield result
 
         res.asserting { result =>
           verify(repo).find(AAPL)
           verifyNoInteractions(client, dispatcher)
-          result mustBe AAPLPricePerformanceSummary
+          result mustBe AAPLPriceAnalytics
         }
       }
 
       "fetch from market data client when fetch is true" in {
         val (repo, latestPriceRepo, client, dispatcher) = mocks
         when(client.getMonthlyPriceCandles(any[Ticker])).thenReturnIO(AAPLPriceCandles)
-        when(repo.save(anyList[PricePerformanceSummary])).thenReturnUnit
+        when(repo.save(anyList[PriceAnalytics])).thenReturnUnit
         when(latestPriceRepo.save(anyList)).thenReturnUnit
         when(dispatcher.dispatch(any[Action])).thenReturnUnit
 
         val res = for
           svc    <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          result <- svc.findPerformanceSummary(AAPL, fetch = true)
+          result <- svc.findPriceAnalytics(AAPL, fetch = true)
         yield result
 
         res.asserting { result =>
           verify(client).getMonthlyPriceCandles(AAPL)
-          verify(repo).save(anyList[PricePerformanceSummary])
+          verify(repo).save(anyList[PriceAnalytics])
           verify(latestPriceRepo).save(anyList)
           result.ticker.mustBe(AAPL)
         }
@@ -116,7 +116,7 @@ class PriceServiceSpec extends IOWordSpec {
 
         val res = for
           svc    <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          result <- svc.findPerformanceSummary(AAPL, fetch = false)
+          result <- svc.findPriceAnalytics(AAPL, fetch = false)
         yield result
 
         res.attempt.asserting { result =>
@@ -133,7 +133,7 @@ class PriceServiceSpec extends IOWordSpec {
 
         val res = for
           svc    <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          result <- svc.findPerformanceSummary(AAPL, fetch = true)
+          result <- svc.findPriceAnalytics(AAPL, fetch = true)
         yield result
 
         res.attempt.asserting { result =>
@@ -144,7 +144,7 @@ class PriceServiceSpec extends IOWordSpec {
     }
   }
 
-  def mocks: (PricePerformanceSummaryRepository[IO], LatestPriceRepository[IO], MarketDataClient[IO], ActionDispatcher[IO]) =
-    (mock[PricePerformanceSummaryRepository[IO]], mock[LatestPriceRepository[IO]], mock[MarketDataClient[IO]], mock[ActionDispatcher[IO]])
+  def mocks: (PriceAnalyticsRepository[IO], LatestPriceRepository[IO], MarketDataClient[IO], ActionDispatcher[IO]) =
+    (mock[PriceAnalyticsRepository[IO]], mock[LatestPriceRepository[IO]], mock[MarketDataClient[IO]], mock[ActionDispatcher[IO]])
 }
 

@@ -147,8 +147,8 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
       "return 200 with multiple summaries when no filters are provided" in {
         val svc = mocks
-        val msftSummary = AAPLPricePerformanceSummary.copy(ticker = MSFT, latestPrice = BigDecimal("400.00"))
-        when(svc.getAllPriceAnalytics(any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary, msftSummary))
+        val msftAnalytics = AAPLPriceAnalytics.copy(ticker = MSFT, performanceSummary = AAPLPricePerformanceSummary.copy(latestPrice = BigDecimal("400.00")))
+        when(svc.getAllPriceAnalytics(any[Option[Int]])).thenReturnIO(List(AAPLPriceAnalytics, msftAnalytics))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)

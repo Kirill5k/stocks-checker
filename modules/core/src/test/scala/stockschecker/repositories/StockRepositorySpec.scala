@@ -3,7 +3,7 @@ package stockschecker.repositories
 import cats.data.NonEmptyList
 import cats.effect.IO
 import stockschecker.domain.{Exchange, SecurityKind, Ticker, TimePeriod}
-import stockschecker.fixtures.{AAPL, AAPLCompanyProfile, AAPLPricePerformanceSummary, AAPLSecurity, AAPLStock, MSFT, MSFTCompanyProfile, MSFTSecurity, MSFTStock}
+import stockschecker.fixtures.{AAPL, AAPLCompanyProfile, AAPLPriceAnalytics, AAPLSecurity, AAPLStock, MSFT, MSFTCompanyProfile, MSFTSecurity, MSFTStock}
 
 class StockRepositorySpec extends RepositorySpec {
 
@@ -15,7 +15,7 @@ class StockRepositorySpec extends RepositorySpec {
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
-          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary))
+          "price-analytics" -> List(toDoc(AAPLPriceAnalytics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -31,7 +31,7 @@ class StockRepositorySpec extends RepositorySpec {
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.find(MSFT)
-          yield res mustBe Some(MSFTStock.copy(profile = None, performanceSummary = None))
+          yield res mustBe Some(MSFTStock.copy(profile = None, priceAnalytics = None))
         }
       }
 
@@ -44,7 +44,7 @@ class StockRepositorySpec extends RepositorySpec {
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.find(MSFT)
-          yield res mustBe Some(MSFTStock.copy(performanceSummary = None))
+          yield res mustBe Some(MSFTStock.copy(priceAnalytics = None))
         }
       }
 
@@ -63,7 +63,7 @@ class StockRepositorySpec extends RepositorySpec {
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
-          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary))
+          "price-analytics" -> List(toDoc(AAPLPriceAnalytics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -194,10 +194,13 @@ class StockRepositorySpec extends RepositorySpec {
       }
 
       "filter by minimum price" in {
-        val lowPriceSummary = AAPLPricePerformanceSummary.copy(ticker = Ticker("LOW"), latestPrice = BigDecimal("50.00"))
+        val lowPriceSummary = AAPLPriceAnalytics.copy(
+          ticker = Ticker("LOW"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(latestPrice = BigDecimal("50.00"))
+        )
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("LOW")))),
-          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary), toDoc(lowPriceSummary))
+          "price-analytics" -> List(toDoc(AAPLPriceAnalytics), toDoc(lowPriceSummary))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -205,14 +208,14 @@ class StockRepositorySpec extends RepositorySpec {
             res       <- stockRepo.findAll(StockFilters(minPrice = Some(BigDecimal("200.00"))), None)
           yield
             res.size mustBe 1
-            res.head.performanceSummary.exists(_.latestPrice >= BigDecimal("200.00")) mustBe true
+            res.head.priceAnalytics.exists(_.performanceSummary.latestPrice >= BigDecimal("200.00")) mustBe true
         }
       }
 
       "filter by maximum price" in {
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity)),
-          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary))
+          "price-analytics" -> List(toDoc(AAPLPriceAnalytics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -220,15 +223,18 @@ class StockRepositorySpec extends RepositorySpec {
             res       <- stockRepo.findAll(StockFilters(maxPrice = Some(BigDecimal("300.00"))), None)
           yield
             res.size mustBe 1
-            res.forall(_.performanceSummary.exists(_.latestPrice <= BigDecimal("300.00"))) mustBe true
+            res.forall(_.priceAnalytics.exists(_.performanceSummary.latestPrice <= BigDecimal("300.00"))) mustBe true
         }
       }
 
       "filter by price range" in {
-        val highPriceSummary = AAPLPricePerformanceSummary.copy(ticker = Ticker("HIGH"), latestPrice = BigDecimal("500.00"))
+        val highPriceSummary = AAPLPriceAnalytics.copy(
+          ticker = Ticker("HIGH"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(latestPrice = BigDecimal("500.00"))
+        )
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("HIGH")))),
-          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary), toDoc(highPriceSummary))
+          "price-analytics" -> List(toDoc(AAPLPriceAnalytics), toDoc(highPriceSummary))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -270,14 +276,20 @@ class StockRepositorySpec extends RepositorySpec {
       }
 
       "filter by minimum price change with period" in {
-        val goodPerformer = AAPLPricePerformanceSummary.copy(ticker = Ticker("GOOD"), oneYearChange = Some(BigDecimal("25.50")))
-        val badPerformer = AAPLPricePerformanceSummary.copy(ticker = Ticker("BAD"), oneYearChange = Some(BigDecimal("5.00")))
+        val goodPerformer = AAPLPriceAnalytics.copy(
+          ticker = Ticker("GOOD"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneYearChange = Some(BigDecimal("25.50")))
+        )
+        val badPerformer = AAPLPriceAnalytics.copy(
+          ticker = Ticker("BAD"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneYearChange = Some(BigDecimal("5.00")))
+        )
         val seedData = Map(
           "securities" -> List(
             toDoc(AAPLSecurity.copy(ticker = Ticker("GOOD"))),
             toDoc(MSFTSecurity.copy(ticker = Ticker("BAD")))
           ),
-          "price-performance-summaries" -> List(toDoc(goodPerformer), toDoc(badPerformer))
+          "price-analytics" -> List(toDoc(goodPerformer), toDoc(badPerformer))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -286,19 +298,25 @@ class StockRepositorySpec extends RepositorySpec {
           yield
             res.size mustBe 1
             res.head.security.ticker mustBe Ticker("GOOD")
-            res.head.performanceSummary.exists(_.oneYearChange.exists(_ >= BigDecimal("20.00"))) mustBe true
+            res.head.priceAnalytics.exists(_.performanceSummary.oneYearChange.exists(_ >= BigDecimal("20.00"))) mustBe true
         }
       }
 
       "filter by maximum price change with period" in {
-        val moderatePerformer = AAPLPricePerformanceSummary.copy(ticker = Ticker("MOD"), threeMonthChange = Some(BigDecimal("8.50")))
-        val strongPerformer = AAPLPricePerformanceSummary.copy(ticker = Ticker("STRONG"), threeMonthChange = Some(BigDecimal("30.00")))
+        val moderatePerformer = AAPLPriceAnalytics.copy(
+          ticker = Ticker("MOD"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(threeMonthChange = Some(BigDecimal("8.50")))
+        )
+        val strongPerformer = AAPLPriceAnalytics.copy(
+          ticker = Ticker("STRONG"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(threeMonthChange = Some(BigDecimal("30.00")))
+        )
         val seedData = Map(
           "securities" -> List(
             toDoc(AAPLSecurity.copy(ticker = Ticker("MOD"))),
             toDoc(MSFTSecurity.copy(ticker = Ticker("STRONG")))
           ),
-          "price-performance-summaries" -> List(toDoc(moderatePerformer), toDoc(strongPerformer))
+          "price-analytics" -> List(toDoc(moderatePerformer), toDoc(strongPerformer))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -307,21 +325,30 @@ class StockRepositorySpec extends RepositorySpec {
           yield
             res.size mustBe 1
             res.head.security.ticker mustBe Ticker("MOD")
-            res.head.performanceSummary.exists(_.threeMonthChange.exists(_ <= BigDecimal("10.00"))) mustBe true
+            res.head.priceAnalytics.exists(_.performanceSummary.threeMonthChange.exists(_ <= BigDecimal("10.00"))) mustBe true
         }
       }
 
       "filter by price change range with period" in {
-        val lowPerformer = AAPLPricePerformanceSummary.copy(ticker = Ticker("LOW"), oneMonthChange = Some(BigDecimal("2.00")))
-        val midPerformer = AAPLPricePerformanceSummary.copy(ticker = Ticker("MID"), oneMonthChange = Some(BigDecimal("7.50")))
-        val highPerformer = AAPLPricePerformanceSummary.copy(ticker = Ticker("HIGH"), oneMonthChange = Some(BigDecimal("15.00")))
+        val lowPerformer = AAPLPriceAnalytics.copy(
+          ticker = Ticker("LOW"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneMonthChange = Some(BigDecimal("2.00")))
+        )
+        val midPerformer = AAPLPriceAnalytics.copy(
+          ticker = Ticker("MID"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneMonthChange = Some(BigDecimal("7.50")))
+        )
+        val highPerformer = AAPLPriceAnalytics.copy(
+          ticker = Ticker("HIGH"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneMonthChange = Some(BigDecimal("15.00")))
+        )
         val seedData = Map(
           "securities" -> List(
             toDoc(AAPLSecurity.copy(ticker = Ticker("LOW"))),
             toDoc(MSFTSecurity.copy(ticker = Ticker("MID"))),
             toDoc(AAPLSecurity.copy(ticker = Ticker("HIGH")))
           ),
-          "price-performance-summaries" -> List(toDoc(lowPerformer), toDoc(midPerformer), toDoc(highPerformer))
+          "price-analytics" -> List(toDoc(lowPerformer), toDoc(midPerformer), toDoc(highPerformer))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -337,17 +364,20 @@ class StockRepositorySpec extends RepositorySpec {
           yield
             res.size mustBe 1
             res.head.security.ticker mustBe Ticker("MID")
-            res.head.performanceSummary.exists(p =>
-              p.oneMonthChange.exists(c => c >= BigDecimal("5.00") && c <= BigDecimal("10.00"))
+            res.head.priceAnalytics.exists(p =>
+              p.performanceSummary.oneMonthChange.exists(c => c >= BigDecimal("5.00") && c <= BigDecimal("10.00"))
             ) mustBe true
         }
       }
 
       "not filter by change when period is not specified" in {
-        val performer = AAPLPricePerformanceSummary.copy(ticker = Ticker("PERF"), oneYearChange = Some(BigDecimal("50.00")))
+        val performer = AAPLPriceAnalytics.copy(
+          ticker = Ticker("PERF"),
+          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneYearChange = Some(BigDecimal("50.00")))
+        )
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("PERF")))),
-          "price-performance-summaries" -> List(toDoc(performer))
+          "price-analytics" -> List(toDoc(performer))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -391,7 +421,7 @@ class StockRepositorySpec extends RepositorySpec {
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
-          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary))
+          "price-analytics" -> List(toDoc(AAPLPriceAnalytics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -421,7 +451,7 @@ class StockRepositorySpec extends RepositorySpec {
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
-          "price-performance-summaries" -> List(toDoc(AAPLPricePerformanceSummary))
+          "price-analytics" -> List(toDoc(AAPLPriceAnalytics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for

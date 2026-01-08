@@ -3,7 +3,7 @@ package stockschecker
 import cats.data.NonEmptyList
 import mongo4cats.bson.ObjectId
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, Exchange, LatestPrice, PriceCandle, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, Exchange, LatestPrice, PriceAnalytics, PriceCandle, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
 import java.time.temporal.ChronoUnit
@@ -82,7 +82,9 @@ object fixtures {
     )
   )
 
-  val AAPLPricePerformanceSummary: PricePerformanceSummary = PricePerformanceSummary.from(AAPL, AAPLPriceCandles)
+  val AAPLPriceAnalytics: PriceAnalytics = PriceAnalytics.from(AAPL, AAPLPriceCandles)
+
+  val AAPLPricePerformanceSummary: PricePerformanceSummary = AAPLPriceAnalytics.performanceSummary
 
   val AAPLLatestPrice1: LatestPrice = LatestPrice(
     ticker = AAPL,
@@ -121,12 +123,12 @@ object fixtures {
   val AAPLStock: Stock = Stock(
     security = AAPLSecurity,
     profile = Some(AAPLCompanyProfile),
-    performanceSummary = Some(AAPLPricePerformanceSummary)
+    priceAnalytics = Some(AAPLPriceAnalytics)
   )
 
   val MSFTStock: Stock = Stock(
     security = MSFTSecurity,
     profile = Some(MSFTCompanyProfile),
-    performanceSummary = None
+    priceAnalytics = None
   )
 }

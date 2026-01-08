@@ -11,7 +11,7 @@ import mongo4cats.database.MongoDatabase
 import mongo4cats.embedded.EmbeddedMongo
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AsyncWordSpec
-import stockschecker.repositories.entities.{CompanyProfileEntity, PricePerformanceSummaryEntity, SecurityEntity}
+import stockschecker.repositories.entities.{CompanyProfileEntity, PriceAnalyticsEntity, SecurityEntity}
 
 import java.time.Instant
 import scala.concurrent.Future
@@ -28,8 +28,8 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
   protected def toDoc(profile: stockschecker.domain.CompanyProfile): Document =
     CompanyProfileEntity.from(profile, now).toBson.asDocument.get
 
-  protected def toDoc(summary: stockschecker.domain.PricePerformanceSummary): Document =
-    PricePerformanceSummaryEntity.from(summary, now).toBson.asDocument.get
+  protected def toDoc(analytics: stockschecker.domain.PriceAnalytics): Document =
+    PriceAnalyticsEntity.from(analytics, now).toBson.asDocument.get
 
   protected def withEmbeddedMongoDatabase[A](test: MongoDatabase[IO] => IO[A]): Future[A] =
     withRunningEmbeddedMongo(port) {
