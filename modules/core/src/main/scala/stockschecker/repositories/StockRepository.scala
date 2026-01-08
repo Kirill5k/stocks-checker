@@ -12,33 +12,8 @@ import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Aggregate, Filter, Sort}
-import stockschecker.common.types.EnumType
-import stockschecker.domain.{Exchange, SecurityKind, Stock, Ticker, TimePeriod}
+import stockschecker.domain.{Exchange, SecurityKind, Stock, StockFilters, StockSortField, Ticker}
 import stockschecker.repositories.entities.StockEntity
-
-object StockSortField extends EnumType[StockSortField](() => StockSortField.values)
-enum StockSortField:
-  case MarketCap
-  case OverallScore
-  case CagrScore
-  case VolatilityScore
-
-final case class StockFilters(
-    exchange: Option[Exchange] = None,
-    kind: Option[SecurityKind] = None,
-    country: Option[String] = None,
-    minMarketCap: Option[Long] = None,
-    maxMarketCap: Option[Long] = None,
-    minPrice: Option[BigDecimal] = None,
-    maxPrice: Option[BigDecimal] = None,
-    minChange: Option[BigDecimal] = None,
-    maxChange: Option[BigDecimal] = None,
-    period: Option[TimePeriod] = None,
-    minOverallScore: Option[BigDecimal] = None,
-    minCagrScore: Option[BigDecimal] = None,
-    minVolatilityScore: Option[BigDecimal] = None,
-    sortBy: Option[StockSortField] = None
-)
 
 trait StockRepository[F[_]]:
   def find(ticker: Ticker): F[Option[Stock]]

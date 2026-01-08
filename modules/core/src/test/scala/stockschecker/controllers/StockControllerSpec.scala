@@ -6,9 +6,8 @@ import org.http4s.*
 import org.http4s.implicits.*
 import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
-import stockschecker.domain.Ticker
+import stockschecker.domain.{StockFilters, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.StockFilters
 import stockschecker.services.StockService
 import stockschecker.fixtures.*
 

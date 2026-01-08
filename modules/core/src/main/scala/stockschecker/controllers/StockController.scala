@@ -5,8 +5,7 @@ import io.circe.Codec as CirceCodec
 import org.http4s.HttpRoutes
 import stockschecker.common.config.ApiConfig
 import stockschecker.controllers.StockController.{StockQueryParams, StockView}
-import stockschecker.domain.{Exchange, SecurityKind, Stock, StockAnalysisMetrics, StockAnalysisScores, Ticker, TimePeriod}
-import stockschecker.repositories.{StockFilters, StockSortField}
+import stockschecker.domain.{Exchange, SecurityKind, Stock, StockAnalysisMetrics, StockAnalysisScores, StockFilters, StockSortField, Ticker, TimePeriod}
 import stockschecker.services.StockService
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation

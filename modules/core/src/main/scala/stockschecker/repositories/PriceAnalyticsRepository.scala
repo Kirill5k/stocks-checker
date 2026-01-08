@@ -14,7 +14,7 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Filter, Index, Sort, Update}
-import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, Ticker}
+import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, PricePerformanceSummary, StockAnalysisMetrics, StockAnalysisScores, Ticker}
 import stockschecker.repositories.entities.PriceAnalyticsEntity
 
 import java.time.Instant
@@ -142,4 +142,9 @@ object PriceAnalyticsRepository extends MongoJsonCodecs:
       collection <- database.getCollectionWithCodec[PriceAnalyticsEntity](CollectionName)
       _          <- collection.createIndex(Index.descending(Field.Scores.OverallScore))
       _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
-    yield LivePriceAnalyticsRepository[F](collection.withAddedCodec[Ticker])
+      collWithCodecs = collection
+        .withAddedCodec[Ticker]
+        .withAddedCodec[PricePerformanceSummary]
+        .withAddedCodec[StockAnalysisMetrics]
+        .withAddedCodec[StockAnalysisScores]
+    yield LivePriceAnalyticsRepository[F](collWithCodecs)

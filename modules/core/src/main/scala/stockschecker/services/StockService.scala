@@ -2,9 +2,9 @@ package stockschecker.services
 
 import cats.MonadThrow
 import cats.syntax.flatMap.*
-import stockschecker.domain.{Stock, Ticker}
+import stockschecker.domain.{Stock, StockFilters, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{StockFilters, StockRepository}
+import stockschecker.repositories.StockRepository
 
 trait StockService[F[_]]:
   def findByTicker(ticker: Ticker): F[Stock]

@@ -2,7 +2,7 @@ package stockschecker.repositories
 
 import cats.data.NonEmptyList
 import cats.effect.IO
-import stockschecker.domain.{Exchange, SecurityKind, Ticker, TimePeriod}
+import stockschecker.domain.{Exchange, SecurityKind, StockFilters, Ticker, TimePeriod}
 import stockschecker.fixtures.{AAPL, AAPLCompanyProfile, AAPLPriceAnalytics, AAPLSecurity, AAPLStock, MSFT, MSFTCompanyProfile, MSFTSecurity, MSFTStock}
 
 class StockRepositorySpec extends RepositorySpec {
