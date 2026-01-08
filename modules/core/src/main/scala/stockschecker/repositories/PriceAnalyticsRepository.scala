@@ -12,7 +12,7 @@ import kirill5k.common.syntax.time.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.models.collection.{IndexOptions, UpdateOptions, WriteCommand}
+import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Filter, Index, Sort, Update}
 import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, Ticker}
 import stockschecker.repositories.entities.PriceAnalyticsEntity
