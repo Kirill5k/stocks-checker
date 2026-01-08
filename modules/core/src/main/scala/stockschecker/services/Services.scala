@@ -3,6 +3,7 @@ package stockschecker.services
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
+import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
 import stockschecker.actions.ActionDispatcher
 import stockschecker.clients.Clients
@@ -16,11 +17,11 @@ trait Services[F[_]]:
   def stock: StockService[F]
 
 object Services:
-  def make[F[_]: {Temporal, Logger}](clients: Clients[F], repos: Repositories[F], ad: ActionDispatcher[F]): F[Services[F]] =
+  def make[F[_]: {Temporal, Clock, Logger}](clients: Clients[F], repos: Repositories[F], ad: ActionDispatcher[F]): F[Services[F]] =
     for
       s  <- SecurityService.make(repos.security, clients.marketData)
       cp <- CompanyProfileService.make(repos.companyProfile, clients.marketData, ad)
-      p  <- PriceService.make(repos.pricePerformanceSummary, repos.latestPrice, clients.marketData, ad)
+      p  <- PriceService.make(repos.priceAnalytics, repos.latestPrice, clients.marketData, ad)
       c  <- CommandService.make(repos.command, ad)
       st <- StockService.make(repos.stock)
     yield new Services[F]:

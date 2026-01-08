@@ -12,8 +12,16 @@ import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Aggregate, Filter, Sort}
+import stockschecker.common.types.EnumType
 import stockschecker.domain.{Exchange, SecurityKind, Stock, Ticker, TimePeriod}
 import stockschecker.repositories.entities.StockEntity
+
+object StockSortField extends EnumType[StockSortField](() => StockSortField.values)
+enum StockSortField:
+  case MarketCap
+  case OverallScore
+  case CagrScore
+  case VolatilityScore
 
 final case class StockFilters(
     exchange: Option[Exchange] = None,
@@ -25,7 +33,11 @@ final case class StockFilters(
     maxPrice: Option[BigDecimal] = None,
     minChange: Option[BigDecimal] = None,
     maxChange: Option[BigDecimal] = None,
-    period: Option[TimePeriod] = None
+    period: Option[TimePeriod] = None,
+    minOverallScore: Option[BigDecimal] = None,
+    minCagrScore: Option[BigDecimal] = None,
+    minVolatilityScore: Option[BigDecimal] = None,
+    sortBy: Option[StockSortField] = None
 )
 
 trait StockRepository[F[_]]:
@@ -41,13 +53,20 @@ final private class LiveStockRepository[F[_]](
   import StockRepository.Field
 
   private def buildAggregation(securityFilter: Filter, filters: StockFilters, limit: Int): Aggregate =
+    val sortField = filters.sortBy match
+      case Some(StockSortField.MarketCap)       => s"${Field.Profile}.${CompanyProfileRepository.Field.MarketCap}"
+      case Some(StockSortField.OverallScore)    => s"${Field.PriceAnalytics}.${PriceAnalyticsRepository.Field.Scores.OverallScore}"
+      case Some(StockSortField.CagrScore)       => s"${Field.PriceAnalytics}.${PriceAnalyticsRepository.Field.Scores.CagrScore}"
+      case Some(StockSortField.VolatilityScore) => s"${Field.PriceAnalytics}.${PriceAnalyticsRepository.Field.Scores.VolatilityScore}"
+      case None                                 => s"${Field.Profile}.${CompanyProfileRepository.Field.MarketCap}"
+
     Aggregate
       .matchBy(securityFilter)
       .replaceWith(Document("security" := "$$ROOT"))
       .lookup(CompanyProfileRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.Profile)
-      .lookup(PricePerformanceSummaryRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.PerformanceSummary)
-      .matchBy(filters.toProfileFilter && filters.toPerformanceFilter)
-      .sort(Sort.desc(s"${Field.Profile}.${CompanyProfileRepository.Field.MarketCap}"))
+      .lookup(PriceAnalyticsRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.PriceAnalytics)
+      .matchBy(filters.toProfileFilter && filters.toPriceAnalyticsFilter)
+      .sort(Sort.desc(sortField))
       .limit(limit)
 
   override def find(ticker: Ticker): F[Option[Stock]] =
@@ -80,27 +99,36 @@ final private class LiveStockRepository[F[_]](
       sf.maxMarketCap.map(max => Filter.lte(s"${StockRepository.Field.Profile}.0.${CompanyProfileRepository.Field.MarketCap}", max))
     ).flatten.foldLeft(Filter.empty)(_ && _)
 
-    private def toPerformanceFilter: Filter = List(
+    private def toPriceAnalyticsFilter: Filter = List(
       sf.minPrice.map(min =>
-        Filter.gte(s"${StockRepository.Field.PerformanceSummary}.0.${PricePerformanceSummaryRepository.Field.LatestPrice}", min)
+        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.LatestPrice}", min)
       ),
       sf.maxPrice.map(max =>
-        Filter.lte(s"${StockRepository.Field.PerformanceSummary}.0.${PricePerformanceSummaryRepository.Field.LatestPrice}", max)
+        Filter.lte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.LatestPrice}", max)
       ),
       (sf.minChange, sf.period).mapN { (min, period) =>
-        Filter.gte(s"${StockRepository.Field.PerformanceSummary}.0.${period.fieldName}", min)
+        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary}.${period.fieldName}", min)
       },
       (sf.maxChange, sf.period).mapN { (max, period) =>
-        Filter.lte(s"${StockRepository.Field.PerformanceSummary}.0.${period.fieldName}", max)
-      }
+        Filter.lte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary}.${period.fieldName}", max)
+      },
+      sf.minOverallScore.map(min =>
+        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Scores.OverallScore}", min)
+      ),
+      sf.minCagrScore.map(min =>
+        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Scores.CagrScore}", min)
+      ),
+      sf.minVolatilityScore.map(min =>
+        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Scores.VolatilityScore}", min)
+      )
     ).flatten.foldLeft(Filter.empty)(_ && _)
 }
 
 object StockRepository extends MongoJsonCodecs:
   object Field:
-    val Id                 = "_id"
-    val Profile            = "profile"
-    val PerformanceSummary = "performanceSummary"
+    val Id             = "_id"
+    val Profile        = "profile"
+    val PriceAnalytics = "priceAnalytics"
 
   def make[F[_]: Concurrent](database: MongoDatabase[F]): F[StockRepository[F]] =
     database

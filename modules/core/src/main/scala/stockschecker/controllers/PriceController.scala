@@ -4,7 +4,7 @@ import cats.data.NonEmptyList
 import cats.effect.kernel.Async
 import org.http4s.HttpRoutes
 import stockschecker.common.config.ApiConfig
-import stockschecker.domain.{PricePerformanceFilter, PricePerformanceSummary, Ticker, TimePeriod}
+import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, Ticker, TimePeriod}
 import stockschecker.services.PriceService
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
@@ -16,27 +16,27 @@ final private class PriceController[F[_]: Async](
     apiKeyRequirement: ApiKeyRequirement
 ) extends Controller[F](apiKeyRequirement) {
 
-  private val getPricePerformanceSummaryByTicker = secured(PriceController.getPricePerformanceSummaryByTickerEndpoint)
+  private val getPriceAnalyticsByTicker = secured(PriceController.getPriceAnalyticsByTickerEndpoint)
     .serverLogic { _ => (ticker, fetchLatest) =>
       priceService
-        .findPerformanceSummary(ticker, fetchLatest.getOrElse(false))
+        .findPriceAnalytics(ticker, fetchLatest.getOrElse(false))
         .asResponse
     }
 
-  private val getPricePerformanceSummaries = secured(PriceController.getPricePerformanceSummariesEndpoint)
+  private val getPriceAnalytics = secured(PriceController.getPriceAnalyticsEndpoint)
     .serverLogic { _ => queryParams =>
-      val summaries = queryParams.toFilter match
-        case Some(filter) => priceService.findPerformanceSummariesBy(filter, queryParams.limit)
-        case None         => priceService.getAllPerformanceSummaries(queryParams.limit)
+      val analytics = queryParams.toFilter match
+        case Some(filter) => priceService.findPriceAnalyticsBy(filter, queryParams.limit)
+        case None         => priceService.getAllPriceAnalytics(queryParams.limit)
 
-      summaries.asResponse
+      analytics.asResponse
     }
 
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
       List(
-        getPricePerformanceSummaryByTicker,
-        getPricePerformanceSummaries
+        getPriceAnalyticsByTicker,
+        getPriceAnalytics
       )
     )
 }
@@ -46,7 +46,7 @@ object PriceController extends TapirJsonCirce with SchemaDerivation {
   private val basePath = "price"
   private val performanceSummariesPath = basePath / "performance-summaries"
 
-  private case class PricePerformanceQueryParams(
+  private case class PriceAnalyticsQueryParams(
       minLatestPrice: Option[BigDecimal] = None,
       maxLatestPrice: Option[BigDecimal] = None,
       minOneMonthChange: Option[BigDecimal] = None,
@@ -67,38 +67,38 @@ object PriceController extends TapirJsonCirce with SchemaDerivation {
       maxMaxChange: Option[BigDecimal] = None,
       limit: Option[Int] = None
   ) {
-    def toFilter: Option[PricePerformanceFilter] = {
+    def toFilter: Option[PriceAnalyticsFilter] = {
       val filters = List(
-        minLatestPrice.map(min => PricePerformanceFilter.PriceAbove(min)),
-        maxLatestPrice.map(max => PricePerformanceFilter.PriceBelow(max)),
-        minOneMonthChange.map(min => PricePerformanceFilter.PerformanceAbove(TimePeriod.OneMonth, min)),
-        maxOneMonthChange.map(max => PricePerformanceFilter.PerformanceBelow(TimePeriod.OneMonth, max)),
-        minThreeMonthChange.map(min => PricePerformanceFilter.PerformanceAbove(TimePeriod.ThreeMonth, min)),
-        maxThreeMonthChange.map(max => PricePerformanceFilter.PerformanceBelow(TimePeriod.ThreeMonth, max)),
-        minSixMonthChange.map(min => PricePerformanceFilter.PerformanceAbove(TimePeriod.SixMonth, min)),
-        maxSixMonthChange.map(max => PricePerformanceFilter.PerformanceBelow(TimePeriod.SixMonth, max)),
-        minOneYearChange.map(min => PricePerformanceFilter.PerformanceAbove(TimePeriod.OneYear, min)),
-        maxOneYearChange.map(max => PricePerformanceFilter.PerformanceBelow(TimePeriod.OneYear, max)),
-        minThreeYearChange.map(min => PricePerformanceFilter.PerformanceAbove(TimePeriod.ThreeYear, min)),
-        maxThreeYearChange.map(max => PricePerformanceFilter.PerformanceBelow(TimePeriod.ThreeYear, max)),
-        minFiveYearChange.map(min => PricePerformanceFilter.PerformanceAbove(TimePeriod.FiveYear, min)),
-        maxFiveYearChange.map(max => PricePerformanceFilter.PerformanceBelow(TimePeriod.FiveYear, max)),
-        minTenYearChange.map(min => PricePerformanceFilter.PerformanceAbove(TimePeriod.TenYear, min)),
-        maxTenYearChange.map(max => PricePerformanceFilter.PerformanceBelow(TimePeriod.TenYear, max)),
-        minMaxChange.map(min => PricePerformanceFilter.PerformanceAbove(TimePeriod.Max, min)),
-        maxMaxChange.map(max => PricePerformanceFilter.PerformanceBelow(TimePeriod.Max, max))
+        minLatestPrice.map(min => PriceAnalyticsFilter.PriceAbove(min)),
+        maxLatestPrice.map(max => PriceAnalyticsFilter.PriceBelow(max)),
+        minOneMonthChange.map(min => PriceAnalyticsFilter.PerformanceAbove(TimePeriod.OneMonth, min)),
+        maxOneMonthChange.map(max => PriceAnalyticsFilter.PerformanceBelow(TimePeriod.OneMonth, max)),
+        minThreeMonthChange.map(min => PriceAnalyticsFilter.PerformanceAbove(TimePeriod.ThreeMonth, min)),
+        maxThreeMonthChange.map(max => PriceAnalyticsFilter.PerformanceBelow(TimePeriod.ThreeMonth, max)),
+        minSixMonthChange.map(min => PriceAnalyticsFilter.PerformanceAbove(TimePeriod.SixMonth, min)),
+        maxSixMonthChange.map(max => PriceAnalyticsFilter.PerformanceBelow(TimePeriod.SixMonth, max)),
+        minOneYearChange.map(min => PriceAnalyticsFilter.PerformanceAbove(TimePeriod.OneYear, min)),
+        maxOneYearChange.map(max => PriceAnalyticsFilter.PerformanceBelow(TimePeriod.OneYear, max)),
+        minThreeYearChange.map(min => PriceAnalyticsFilter.PerformanceAbove(TimePeriod.ThreeYear, min)),
+        maxThreeYearChange.map(max => PriceAnalyticsFilter.PerformanceBelow(TimePeriod.ThreeYear, max)),
+        minFiveYearChange.map(min => PriceAnalyticsFilter.PerformanceAbove(TimePeriod.FiveYear, min)),
+        maxFiveYearChange.map(max => PriceAnalyticsFilter.PerformanceBelow(TimePeriod.FiveYear, max)),
+        minTenYearChange.map(min => PriceAnalyticsFilter.PerformanceAbove(TimePeriod.TenYear, min)),
+        maxTenYearChange.map(max => PriceAnalyticsFilter.PerformanceBelow(TimePeriod.TenYear, max)),
+        minMaxChange.map(min => PriceAnalyticsFilter.PerformanceAbove(TimePeriod.Max, min)),
+        maxMaxChange.map(max => PriceAnalyticsFilter.PerformanceBelow(TimePeriod.Max, max))
       ).flatten
-      NonEmptyList.fromList(filters).map(PricePerformanceFilter.Composite(_))
+      NonEmptyList.fromList(filters).map(PriceAnalyticsFilter.Composite(_))
     }
   }
 
-  private val getPricePerformanceSummaryByTickerEndpoint = Controller.secureEndpoint.get
+  private val getPriceAnalyticsByTickerEndpoint = Controller.secureEndpoint.get
     .in(performanceSummariesPath / path[Ticker])
     .in(query[Option[Boolean]]("fetchLatest"))
-    .out(jsonBody[PricePerformanceSummary])
-    .description("Get price performance summary by ticker")
+    .out(jsonBody[PriceAnalytics])
+    .description("Get price analytics by ticker")
 
-  private val getPricePerformanceSummariesEndpoint = Controller.secureEndpoint.get
+  private val getPriceAnalyticsEndpoint = Controller.secureEndpoint.get
     .in(performanceSummariesPath)
     .in(
       query[Option[BigDecimal]]("minLatestPrice")
@@ -120,10 +120,10 @@ object PriceController extends TapirJsonCirce with SchemaDerivation {
         .and(query[Option[BigDecimal]]("minMaxChange"))
         .and(query[Option[BigDecimal]]("maxMaxChange"))
         .and(query[Option[Int]]("limit"))
-        .mapTo[PricePerformanceQueryParams]
+        .mapTo[PriceAnalyticsQueryParams]
     )
-    .out(jsonBody[List[PricePerformanceSummary]])
-    .description("Get multiple price performance summaries with optional filters")
+    .out(jsonBody[List[PriceAnalytics]])
+    .description("Get multiple price analytics with optional filters")
 
   def make[F[_]: Async](service: PriceService[F], config: ApiConfig): F[Controller[F]] =
     Async[F].pure(PriceController[F](service, ApiKeyRequirement.Required(config.key)))

@@ -239,15 +239,15 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
       }
     }
 
-    "updatePricePerformanceLastUpdated" should {
+    "updatePriceAnalyticsLastUpdated" should {
       "update the pricePerformanceLastUpdated field for single ticker" in {
         withEmbeddedMongoDatabase { db =>
           for
             repo    <- CompanyProfileRepository.make[IO](db)
             _       <- repo.save(AAPLCompanyProfile)
-            _       <- repo.updatePricePerformanceLastUpdated(List(AAPL))
+            _       <- repo.updatePriceAnalyticsLastUpdated(List(AAPL))
             updated <- repo.find(AAPL)
-          yield updated.flatMap(_.pricePerformanceLastUpdatedAt) mustBe defined
+          yield updated.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
         }
       }
 
@@ -255,7 +255,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
-            _    <- repo.updatePricePerformanceLastUpdated(List(AAPL))
+            _    <- repo.updatePriceAnalyticsLastUpdated(List(AAPL))
             res  <- repo.find(AAPL)
           yield res mustBe None
         }
@@ -267,12 +267,12 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             repo        <- CompanyProfileRepository.make[IO](db)
             _           <- repo.save(AAPLCompanyProfile)
             _           <- repo.save(MSFTCompanyProfile)
-            _           <- repo.updatePricePerformanceLastUpdated(List(AAPL, MSFT))
+            _           <- repo.updatePriceAnalyticsLastUpdated(List(AAPL, MSFT))
             updatedAAPL <- repo.find(AAPL)
             updatedMSFT <- repo.find(MSFT)
           yield
-            updatedAAPL.flatMap(_.pricePerformanceLastUpdatedAt) mustBe defined
-            updatedMSFT.flatMap(_.pricePerformanceLastUpdatedAt) mustBe defined
+            updatedAAPL.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
+            updatedMSFT.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
         }
       }
 
@@ -280,7 +280,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
-            _    <- repo.updatePricePerformanceLastUpdated(List.empty)
+            _    <- repo.updatePriceAnalyticsLastUpdated(List.empty)
             res  <- repo.findAll(None)
           yield res mustBe List.empty
         }
@@ -293,39 +293,39 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             repo        <- CompanyProfileRepository.make[IO](db)
             _           <- repo.save(AAPLCompanyProfile)
             _           <- repo.save(MSFTCompanyProfile)
-            _           <- repo.updatePricePerformanceLastUpdated(List(AAPL, nonExistent))
+            _           <- repo.updatePriceAnalyticsLastUpdated(List(AAPL, nonExistent))
             updatedAAPL <- repo.find(AAPL)
             updatedMSFT <- repo.find(MSFT)
           yield
-            updatedAAPL.flatMap(_.pricePerformanceLastUpdatedAt) mustBe defined
-            updatedMSFT.flatMap(_.pricePerformanceLastUpdatedAt) mustBe None
+            updatedAAPL.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
+            updatedMSFT.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe None
         }
       }
     }
 
-    "findTickersBy with PricePerformanceNotUpdatedFor filter" should {
-      "return tickers where pricePerformanceLastUpdatedAt is null" in {
+    "findTickersBy with PriceAnalyticsNotUpdatedFor filter" should {
+      "return tickers where priceAnalyticsLastUpdatedAt is null" in {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
             _    <- repo.save(MSFTCompanyProfile)
-            _    <- repo.updatePricePerformanceLastUpdated(List(MSFT))
-            res  <- repo.findTickersBy(CompanyProfileFilter.PricePerformanceNotUpdatedFor(1.hour), None)
+            _    <- repo.updatePriceAnalyticsLastUpdated(List(MSFT))
+            res  <- repo.findTickersBy(CompanyProfileFilter.PriceAnalyticsNotUpdatedFor(1.hour), None)
           yield res mustBe List(AAPL)
         }
       }
 
-      "return tickers where pricePerformanceLastUpdatedAt is older than duration" in {
+      "return tickers where priceAnalyticsLastUpdatedAt is older than duration" in {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
             _    <- repo.save(MSFTCompanyProfile)
-            _    <- repo.updatePricePerformanceLastUpdated(List(AAPL))
+            _    <- repo.updatePriceAnalyticsLastUpdated(List(AAPL))
             _    <- IO.sleep(100.millis)
-            _    <- repo.updatePricePerformanceLastUpdated(List(MSFT))
-            res  <- repo.findTickersBy(CompanyProfileFilter.PricePerformanceNotUpdatedFor(50.millis), None)
+            _    <- repo.updatePriceAnalyticsLastUpdated(List(MSFT))
+            res  <- repo.findTickersBy(CompanyProfileFilter.PriceAnalyticsNotUpdatedFor(50.millis), None)
           yield res mustBe List(AAPL)
         }
       }
@@ -336,8 +336,8 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
             _    <- repo.save(MSFTCompanyProfile)
-            _    <- repo.updatePricePerformanceLastUpdated(List(AAPL, MSFT))
-            res  <- repo.findTickersBy(CompanyProfileFilter.PricePerformanceNotUpdatedFor(1.hour), None)
+            _    <- repo.updatePriceAnalyticsLastUpdated(List(AAPL, MSFT))
+            res  <- repo.findTickersBy(CompanyProfileFilter.PriceAnalyticsNotUpdatedFor(1.hour), None)
           yield res mustBe List.empty
         }
       }

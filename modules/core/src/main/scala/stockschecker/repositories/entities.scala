@@ -5,7 +5,7 @@ import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, LatestPrice, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, LatestPrice, PriceAnalytics, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, StockAnalysisMetrics, StockAnalysisScores, Ticker}
 
 import java.time.{Instant, LocalDate}
 
@@ -59,7 +59,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       ipoDate: Option[LocalDate],
       currency: String,
       marketCap: Long,
-      pricePerformanceLastUpdatedAt: Option[Instant],
+      priceAnalyticsLastUpdatedAt: Option[Instant],
       createdAt: Instant,
       updatedAt: Instant
   ) derives Codec.AsObject:
@@ -74,7 +74,7 @@ private[repositories] object entities extends MongoJsonCodecs {
         ipoDate = ipoDate,
         currency = currency,
         marketCap = marketCap,
-        pricePerformanceLastUpdatedAt = pricePerformanceLastUpdatedAt
+        priceAnalyticsLastUpdatedAt = priceAnalyticsLastUpdatedAt
       )
 
   object CompanyProfileEntity:
@@ -90,7 +90,7 @@ private[repositories] object entities extends MongoJsonCodecs {
         ipoDate = profile.ipoDate,
         currency = profile.currency,
         marketCap = profile.marketCap,
-        pricePerformanceLastUpdatedAt = profile.pricePerformanceLastUpdatedAt,
+        priceAnalyticsLastUpdatedAt = profile.priceAnalyticsLastUpdatedAt,
         createdAt = now,
         updatedAt = now
       )
@@ -124,7 +124,6 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   final case class PricePerformanceSummaryEntity(
       _id: Ticker,
-      ticker: Ticker,
       latestPrice: BigDecimal,
       latestPriceDate: LocalDate,
       oneMonthChange: Option[BigDecimal],
@@ -140,7 +139,6 @@ private[repositories] object entities extends MongoJsonCodecs {
   ) derives Codec.AsObject:
     def toDomain: PricePerformanceSummary =
       PricePerformanceSummary(
-        ticker = ticker,
         latestPrice = latestPrice,
         latestPriceDate = latestPriceDate,
         oneMonthChange = oneMonthChange,
@@ -155,10 +153,9 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   object PricePerformanceSummaryEntity:
     given MongoCodecProvider[PricePerformanceSummaryEntity] = deriveCirceCodecProvider[PricePerformanceSummaryEntity]
-    def from(summary: PricePerformanceSummary, now: Instant): PricePerformanceSummaryEntity =
+    def from(ticker: Ticker, summary: PricePerformanceSummary, now: Instant): PricePerformanceSummaryEntity =
       PricePerformanceSummaryEntity(
-        _id = summary.ticker,
-        ticker = summary.ticker,
+        _id = ticker,
         latestPrice = summary.latestPrice,
         latestPriceDate = summary.latestPriceDate,
         oneMonthChange = summary.oneMonthChange,
@@ -169,6 +166,34 @@ private[repositories] object entities extends MongoJsonCodecs {
         fiveYearChange = summary.fiveYearChange,
         tenYearChange = summary.tenYearChange,
         maxChange = summary.maxChange,
+        createdAt = now,
+        updatedAt = now
+      )
+
+  final case class PriceAnalyticsEntity(
+      _id: Ticker,
+      performanceSummary: PricePerformanceSummary,
+      metrics: StockAnalysisMetrics,
+      scores: StockAnalysisScores,
+      createdAt: Instant,
+      updatedAt: Instant
+  ) derives Codec.AsObject:
+    def toDomain: PriceAnalytics =
+      PriceAnalytics(
+        ticker = _id,
+        performanceSummary = performanceSummary,
+        metrics = metrics,
+        scores = scores
+      )
+
+  object PriceAnalyticsEntity:
+    given MongoCodecProvider[PriceAnalyticsEntity] = deriveCirceCodecProvider[PriceAnalyticsEntity]
+    def from(analytics: PriceAnalytics, now: Instant): PriceAnalyticsEntity =
+      PriceAnalyticsEntity(
+        _id = analytics.ticker,
+        performanceSummary = analytics.performanceSummary,
+        metrics = analytics.metrics,
+        scores = analytics.scores,
         createdAt = now,
         updatedAt = now
       )
@@ -219,12 +244,12 @@ private[repositories] object entities extends MongoJsonCodecs {
   final case class StockEntity(
       security: SecurityEntity,
       profile: List[CompanyProfileEntity],
-      performanceSummary: List[PricePerformanceSummaryEntity]
+      priceAnalytics: List[PriceAnalyticsEntity]
   ) derives Codec.AsObject:
     def toDomain: Stock =
       Stock(
         security = security.toDomain,
         profile = profile.headOption.map(_.toDomain),
-        performanceSummary = performanceSummary.headOption.map(_.toDomain)
+        priceAnalytics = priceAnalytics.headOption.map(_.toDomain)
       )
 }

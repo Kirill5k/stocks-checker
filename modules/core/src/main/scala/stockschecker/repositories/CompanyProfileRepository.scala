@@ -23,7 +23,7 @@ trait CompanyProfileRepository[F[_]]:
   def find(ticker: Ticker): F[Option[CompanyProfile]]
   def findAll(limit: Option[Int]): F[List[CompanyProfile]]
   def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): F[List[Ticker]]
-  def updatePricePerformanceLastUpdated(tickers: List[Ticker]): F[Unit]
+  def updatePriceAnalyticsLastUpdated(tickers: List[Ticker]): F[Unit]
 
 final private class LiveCompanyProfileRepository[F[_]](
     private val collection: MongoCollection[F, CompanyProfileEntity]
@@ -90,12 +90,12 @@ final private class LiveCompanyProfileRepository[F[_]](
         .mapList(_._id)
     }
 
-  override def updatePricePerformanceLastUpdated(tickers: List[Ticker]): F[Unit] =
+  override def updatePriceAnalyticsLastUpdated(tickers: List[Ticker]): F[Unit] =
     M.whenA(tickers.nonEmpty) {
       collection
         .updateMany(
           Filter.in(Field.Id, tickers.map(_.value)),
-          Update.currentDate(Field.PricePerformanceLastUpdatedAt)
+          Update.currentDate(Field.PriceAnalyticsLastUpdatedAt)
         )
         .void
     }
@@ -116,9 +116,9 @@ final private class LiveCompanyProfileRepository[F[_]](
         C.now.map(currentTime => Filter.gt(Field.UpdatedAt, currentTime.minus(duration)))
       case CompanyProfileFilter.NotUpdatedFor(duration) =>
         C.now.map(currentTime => Filter.lt(Field.UpdatedAt, currentTime.minus(duration)))
-      case CompanyProfileFilter.PricePerformanceNotUpdatedFor(duration) =>
+      case CompanyProfileFilter.PriceAnalyticsNotUpdatedFor(duration) =>
         val isNullOrLt = (ts: Instant) =>
-          Filter.isNull(Field.PricePerformanceLastUpdatedAt) || Filter.lt(Field.PricePerformanceLastUpdatedAt, ts)
+          Filter.isNull(Field.PriceAnalyticsLastUpdatedAt) || Filter.lt(Field.PriceAnalyticsLastUpdatedAt, ts)
         C.now.map(currentTime => isNullOrLt(currentTime.minus(duration)))
       case CompanyProfileFilter.TickerMatching(pattern) =>
         Filter.regex(Field.Id, pattern).pure
@@ -136,11 +136,11 @@ object CompanyProfileRepository extends MongoJsonCodecs:
     val Description                   = "description"
     val Website                       = "website"
     val IpoDate                       = "ipoDate"
-    val Currency                      = "currency"
-    val MarketCap                     = "marketCap"
-    val PricePerformanceLastUpdatedAt = "pricePerformanceLastUpdatedAt"
-    val UpdatedAt                     = "updatedAt"
-    val CreatedAt                     = "createdAt"
+    val Currency                     = "currency"
+    val MarketCap                    = "marketCap"
+    val PriceAnalyticsLastUpdatedAt  = "priceAnalyticsLastUpdatedAt"
+    val UpdatedAt                    = "updatedAt"
+    val CreatedAt                    = "createdAt"
 
   def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[CompanyProfileRepository[F]] =
     for
@@ -149,5 +149,5 @@ object CompanyProfileRepository extends MongoJsonCodecs:
       _          <- collection.createIndex(Index.ascending(Field.Country))
       _          <- collection.createIndex(Index.ascending(Field.IpoDate))
       _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
-      _          <- collection.createIndex(Index.ascending(Field.PricePerformanceLastUpdatedAt))
+      _          <- collection.createIndex(Index.ascending(Field.PriceAnalyticsLastUpdatedAt))
     yield LiveCompanyProfileRepository[F](collection.withAddedCodec[Ticker].withAddedCodec[Entity])

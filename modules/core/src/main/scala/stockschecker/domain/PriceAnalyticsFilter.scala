@@ -18,8 +18,8 @@ enum TimePeriod(val fieldName: String):
   case TenYear    extends TimePeriod("tenYearChange")
   case Max        extends TimePeriod("maxChange")
 
-enum PricePerformanceFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
-  case Composite(filters: NonEmptyList[PricePerformanceFilter])
+enum PriceAnalyticsFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
+  case Composite(filters: NonEmptyList[PriceAnalyticsFilter])
   case UpdatedWithin(duration: FiniteDuration)
   case NotUpdatedFor(duration: FiniteDuration)
   case PriceAbove(minPrice: BigDecimal)
@@ -27,16 +27,16 @@ enum PricePerformanceFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedA
   case PerformanceAbove(period: TimePeriod, minPercentage: BigDecimal)
   case PerformanceBelow(period: TimePeriod, maxPercentage: BigDecimal)
 
-object PricePerformanceFilter extends JsonCodecs:
-  given JsonTaggedAdt.Config[PricePerformanceFilter] = JsonTaggedAdt.Config.Values[PricePerformanceFilter](
+object PriceAnalyticsFilter extends JsonCodecs:
+  given JsonTaggedAdt.Config[PriceAnalyticsFilter] = JsonTaggedAdt.Config.Values[PriceAnalyticsFilter](
     mappings = Map(
-      "composite"         -> JsonTaggedAdt.tagged[PricePerformanceFilter.Composite],
-      "updated-within"    -> JsonTaggedAdt.tagged[PricePerformanceFilter.UpdatedWithin],
-      "not-updated-for"   -> JsonTaggedAdt.tagged[PricePerformanceFilter.NotUpdatedFor],
-      "price-above"       -> JsonTaggedAdt.tagged[PricePerformanceFilter.PriceAbove],
-      "price-below"       -> JsonTaggedAdt.tagged[PricePerformanceFilter.PriceBelow],
-      "performance-above" -> JsonTaggedAdt.tagged[PricePerformanceFilter.PerformanceAbove],
-      "performance-below" -> JsonTaggedAdt.tagged[PricePerformanceFilter.PerformanceBelow]
+      "composite"         -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.Composite],
+      "updated-within"    -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.UpdatedWithin],
+      "not-updated-for"   -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.NotUpdatedFor],
+      "price-above"       -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.PriceAbove],
+      "price-below"       -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.PriceBelow],
+      "performance-above" -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.PerformanceAbove],
+      "performance-below" -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.PerformanceBelow]
     ),
     strict = true,
     typeFieldName = "kind"

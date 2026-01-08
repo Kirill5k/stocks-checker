@@ -5,8 +5,8 @@ import io.circe.Codec as CirceCodec
 import org.http4s.HttpRoutes
 import stockschecker.common.config.ApiConfig
 import stockschecker.controllers.StockController.{StockQueryParams, StockView}
-import stockschecker.domain.{Exchange, SecurityKind, Stock, Ticker, TimePeriod}
-import stockschecker.repositories.StockFilters
+import stockschecker.domain.{Exchange, SecurityKind, Stock, StockAnalysisMetrics, StockAnalysisScores, Ticker, TimePeriod}
+import stockschecker.repositories.{StockFilters, StockSortField}
 import stockschecker.services.StockService
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
@@ -37,7 +37,11 @@ final private class StockController[F[_]: Async](
         maxPrice = params.maxPrice,
         minChange = params.minChange,
         maxChange = params.maxChange,
-        period = params.period
+        period = params.period,
+        minOverallScore = params.minOverallScore,
+        minCagrScore = params.minCagrScore,
+        minVolatilityScore = params.minVolatilityScore,
+        sortBy = params.sortBy
       )
       stockService.findAll(filters, params.limit).mapToResponse(_.map(StockView.from))
     }
@@ -59,7 +63,11 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       maxPrice: Option[BigDecimal],
       minChange: Option[BigDecimal],
       maxChange: Option[BigDecimal],
-      period: Option[TimePeriod]
+      period: Option[TimePeriod],
+      minOverallScore: Option[BigDecimal],
+      minCagrScore: Option[BigDecimal],
+      minVolatilityScore: Option[BigDecimal],
+      sortBy: Option[StockSortField]
   )
 
   final private case class StockView(
@@ -67,7 +75,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       name: String,
       security: StockSecurityView,
       profile: Option[StockCompanyProfileView],
-      performanceSummary: Option[StockPricePerformanceSummaryView]
+      priceAnalytics: Option[PriceAnalyticsView]
   ) derives CirceCodec.AsObject
 
   private object StockView:
@@ -88,18 +96,22 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
         marketCap = p.marketCap,
         lastUpdatedAt = stock.security.companyProfileLastUpdatedAt
       )),
-      performanceSummary = stock.performanceSummary.map(ps => StockPricePerformanceSummaryView(
-        latestPrice = ps.latestPrice,
-        latestPriceDate = ps.latestPriceDate,
-        oneMonthChange = ps.oneMonthChange,
-        threeMonthChange = ps.threeMonthChange,
-        sixMonthChange = ps.sixMonthChange,
-        oneYearChange = ps.oneYearChange,
-        threeYearChange = ps.threeYearChange,
-        fiveYearChange = ps.fiveYearChange,
-        tenYearChange = ps.tenYearChange,
-        maxChange = ps.maxChange,
-        lastUpdatedAt = stock.profile.flatMap(_.pricePerformanceLastUpdatedAt)
+      priceAnalytics = stock.priceAnalytics.map(pa => PriceAnalyticsView(
+        performanceSummary = StockPricePerformanceSummaryView(
+          latestPrice = pa.performanceSummary.latestPrice,
+          latestPriceDate = pa.performanceSummary.latestPriceDate,
+          oneMonthChange = pa.performanceSummary.oneMonthChange,
+          threeMonthChange = pa.performanceSummary.threeMonthChange,
+          sixMonthChange = pa.performanceSummary.sixMonthChange,
+          oneYearChange = pa.performanceSummary.oneYearChange,
+          threeYearChange = pa.performanceSummary.threeYearChange,
+          fiveYearChange = pa.performanceSummary.fiveYearChange,
+          tenYearChange = pa.performanceSummary.tenYearChange,
+          maxChange = pa.performanceSummary.maxChange
+        ),
+        metrics = pa.metrics,
+        scores = pa.scores,
+        lastUpdatedAt = stock.profile.flatMap(_.priceAnalyticsLastUpdatedAt)
       ))
     )
 
@@ -129,7 +141,13 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       threeYearChange: Option[BigDecimal],
       fiveYearChange: Option[BigDecimal],
       tenYearChange: Option[BigDecimal],
-      maxChange: Option[BigDecimal],
+      maxChange: Option[BigDecimal]
+  ) derives CirceCodec.AsObject
+
+  final private case class PriceAnalyticsView(
+      performanceSummary: StockPricePerformanceSummaryView,
+      metrics: StockAnalysisMetrics,
+      scores: StockAnalysisScores,
       lastUpdatedAt: Option[Instant]
   ) derives CirceCodec.AsObject
 
@@ -150,6 +168,10 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
     .in(query[Option[BigDecimal]]("minChange"))
     .in(query[Option[BigDecimal]]("maxChange"))
     .in(query[Option[TimePeriod]]("period"))
+    .in(query[Option[BigDecimal]]("minOverallScore"))
+    .in(query[Option[BigDecimal]]("minCagrScore"))
+    .in(query[Option[BigDecimal]]("minVolatilityScore"))
+    .in(query[Option[StockSortField]]("sortBy"))
     .mapInTo[StockQueryParams]
     .out(jsonBody[List[StockView]])
 

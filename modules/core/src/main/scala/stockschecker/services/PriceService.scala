@@ -9,20 +9,20 @@ import fs2.Stream
 import org.typelevel.log4cats.Logger
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{PricePerformanceFilter, PricePerformanceSummary, Ticker}
+import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{LatestPriceRepository, PricePerformanceSummaryRepository}
+import stockschecker.repositories.{LatestPriceRepository, PriceAnalyticsRepository}
 
 import scala.concurrent.duration.*
 
 trait PriceService[F[_]]:
-  def getAllPerformanceSummaries(limit: Option[Int]): F[List[PricePerformanceSummary]]
-  def findPerformanceSummariesBy(filter: PricePerformanceFilter, limit: Option[Int]): F[List[PricePerformanceSummary]]
-  def findPerformanceSummary(ticker: Ticker, fetch: Boolean): F[PricePerformanceSummary]
-  def fetchLatestPerformanceSummaries(tickers: NonEmptyList[Ticker]): F[Unit]
+  def getAllPriceAnalytics(limit: Option[Int]): F[List[PriceAnalytics]]
+  def findPriceAnalyticsBy(filter: PriceAnalyticsFilter, limit: Option[Int]): F[List[PriceAnalytics]]
+  def findPriceAnalytics(ticker: Ticker, fetch: Boolean): F[PriceAnalytics]
+  def fetchLatestPriceAnalytics(tickers: NonEmptyList[Ticker]): F[Unit]
 
 final private class LivePriceService[F[_]](
-    private val repository: PricePerformanceSummaryRepository[F],
+    private val repository: PriceAnalyticsRepository[F],
     private val latestPriceRepository: LatestPriceRepository[F],
     private val marketDataClient: MarketDataClient[F],
     private val dispatcher: ActionDispatcher[F]
@@ -31,52 +31,54 @@ final private class LivePriceService[F[_]](
     logger: Logger[F]
 ) extends PriceService[F] {
 
-  override def fetchLatestPerformanceSummaries(tickers: NonEmptyList[Ticker]): F[Unit] =
-    logger.info(s"Fetching price performance summaries for ${tickers.size} tickers") >>
+  override def fetchLatestPriceAnalytics(tickers: NonEmptyList[Ticker]): F[Unit] =
+    logger.info(s"Fetching price analytics for ${tickers.size} tickers") >>
       Stream
         .emits(tickers.toList)
         .metered(1.second)
         .evalMap { ticker =>
-          fetchPerformanceSummary(ticker)
-            .map(pps => Some(pps))
+          fetchPriceAnalytics(ticker)
+            .map(result => Some(result))
             .handleErrorWith { error =>
-              logger.error(s"Error fetching price performance summary for $ticker: ${error.getMessage}").as(None)
+              logger.error(s"Error fetching price analytics for $ticker: ${error.getMessage}").as(None)
             }
         }
         .unNone
         .chunkN(512)
         .evalMap { chunk =>
-          logger.info(s"Saving batch of ${chunk.size} price performance summaries") >> save(chunk.toList)
+          val analyticsList = chunk.toList
+          logger.info(s"Saving batch of ${analyticsList.size} price analytics") >>
+            save(analyticsList)
         }
         .compile
         .drain >>
-      logger.info(s"Finished fetching price performance summaries for ${tickers.size} tickers")
+      logger.info(s"Finished fetching price analytics for ${tickers.size} tickers")
 
-  override def findPerformanceSummary(ticker: Ticker, fetch: Boolean): F[PricePerformanceSummary] =
-    if (fetch) fetchPerformanceSummary(ticker).flatTap(pps => save(List(pps)))
-    else repository.find(ticker).flatMap(pps => F.fromOption(pps, AppError.PricePerformanceSummaryNotFound(ticker)))
+  override def findPriceAnalytics(ticker: Ticker, fetch: Boolean): F[PriceAnalytics] =
+    if (fetch) fetchPriceAnalytics(ticker).flatTap(analytics => save(List(analytics)))
+    else repository.find(ticker).flatMap(analytics => F.fromOption(analytics, AppError.PriceAnalyticsNotFound(ticker)))
 
-  private def fetchPerformanceSummary(ticker: Ticker): F[PricePerformanceSummary] =
-    marketDataClient
-      .getMonthlyPriceCandles(ticker)
-      .map(candles => PricePerformanceSummary.from(ticker, candles))
+  private def fetchPriceAnalytics(ticker: Ticker): F[PriceAnalytics] =
+    for
+      candles <- marketDataClient.getMonthlyPriceCandles(ticker)
+      analytics = PriceAnalytics.from(ticker, candles)
+    yield analytics
 
-  private def save(ppss: List[PricePerformanceSummary]): F[Unit] =
-    val latestPrices = ppss.map(_.toLatestPrice)
-    repository.save(ppss) >>
-      latestPriceRepository.save(latestPrices) >>
-      dispatcher.dispatch(Action.RecordPricePerformanceUpdate(ppss.map(_.ticker)))
+  private def save(analyticsList: List[PriceAnalytics]): F[Unit] =
+    repository.save(analyticsList) >>
+      latestPriceRepository.save(analyticsList.map(_.toLatestPrice)) >>
+      dispatcher.dispatch(Action.RecordPriceAnalyticsUpdate(analyticsList.map(_.ticker)))
 
-  override def findPerformanceSummariesBy(filter: PricePerformanceFilter, limit: Option[Int]): F[List[PricePerformanceSummary]] =
+  override def findPriceAnalyticsBy(filter: PriceAnalyticsFilter, limit: Option[Int]): F[List[PriceAnalytics]] =
     repository.findBy(filter, limit)
 
-  override def getAllPerformanceSummaries(limit: Option[Int]): F[List[PricePerformanceSummary]] =
+  override def getAllPriceAnalytics(limit: Option[Int]): F[List[PriceAnalytics]] =
     repository.findAll(limit)
 }
 
 object PriceService:
   def make[F[_]: {Temporal, Logger}](
-      repository: PricePerformanceSummaryRepository[F],
+      repository: PriceAnalyticsRepository[F],
       latestPriceRepository: LatestPriceRepository[F],
       marketDataClient: MarketDataClient[F],
       dispatcher: ActionDispatcher[F]

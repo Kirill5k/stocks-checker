@@ -1,13 +1,10 @@
 package stockschecker
 
-import cats.data.NonEmptyList
-import cats.implicits.toFoldableOps
 import io.circe.Codec as CirceCodec
 import stockschecker.common.types.{EnumType, StringType}
 import sttp.tapir.{Codec, DecodeResult, Schema}
 
 import java.time.{Instant, LocalDate}
-import scala.math.BigDecimal.RoundingMode
 
 package object domain {
 
@@ -65,13 +62,13 @@ package object domain {
       ipoDate: Option[LocalDate],
       currency: String,
       marketCap: Long,
-      pricePerformanceLastUpdatedAt: Option[Instant] = None
+      priceAnalyticsLastUpdatedAt: Option[Instant] = None
   ) derives CirceCodec.AsObject
 
   final case class Stock(
       security: Security,
       profile: Option[CompanyProfile],
-      performanceSummary: Option[PricePerformanceSummary]
+      priceAnalytics: Option[PriceAnalytics] = None
   ) derives CirceCodec.AsObject
 
   final case class PriceCandle(
@@ -88,57 +85,4 @@ package object domain {
       price: BigDecimal,
       date: LocalDate
   ) derives CirceCodec.AsObject
-
-  final case class PricePerformanceSummary(
-      ticker: Ticker,
-      latestPrice: BigDecimal,
-      latestPriceDate: LocalDate,
-      oneMonthChange: Option[BigDecimal],
-      threeMonthChange: Option[BigDecimal],
-      sixMonthChange: Option[BigDecimal],
-      oneYearChange: Option[BigDecimal],
-      threeYearChange: Option[BigDecimal],
-      fiveYearChange: Option[BigDecimal],
-      tenYearChange: Option[BigDecimal],
-      maxChange: Option[BigDecimal]
-  ) derives CirceCodec.AsObject
-
-  object PricePerformanceSummary:
-    def from(ticker: Ticker, priceCandles: NonEmptyList[PriceCandle]): PricePerformanceSummary = {
-      val latestCandle    = priceCandles.head
-      val latestPrice     = latestCandle.close
-      val latestPriceDate = latestCandle.date
-
-      def calculateChange(prevCandle: Option[PriceCandle]): Option[BigDecimal] =
-        prevCandle.flatMap { lastCandle =>
-          val earliestPrice = lastCandle.close
-          Option.when(earliestPrice > 0) {
-            val change = (latestPrice - earliestPrice) / earliestPrice * 100
-            change.setScale(2, RoundingMode.HALF_UP)
-          }
-        }
-
-      def calculatePeriodChange(monthsAgo: Int): Option[BigDecimal] =
-        // NonEmptyList.get(n) safely returns an Option[PriceCandle].
-        // This elegantly handles cases where history is shorter than the look-back period.
-        calculateChange(priceCandles.get(monthsAgo))
-
-      PricePerformanceSummary(
-        ticker = ticker,
-        latestPrice = latestPrice,
-        latestPriceDate = latestPriceDate,
-        oneMonthChange = calculatePeriodChange(1),
-        threeMonthChange = calculatePeriodChange(3),
-        sixMonthChange = calculatePeriodChange(6),
-        oneYearChange = calculatePeriodChange(12),
-        threeYearChange = calculatePeriodChange(36),
-        fiveYearChange = calculatePeriodChange(60),
-        tenYearChange = calculatePeriodChange(120),
-        maxChange = calculateChange(priceCandles.tail.lastOption)
-      )
-    }
-
-    extension (pps: PricePerformanceSummary)
-      def toLatestPrice: LatestPrice =
-        LatestPrice(pps.ticker, pps.latestPrice, pps.latestPriceDate)
 }

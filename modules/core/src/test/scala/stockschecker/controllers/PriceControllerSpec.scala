@@ -7,7 +7,7 @@ import org.http4s.*
 import org.http4s.implicits.*
 import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
-import stockschecker.domain.{PricePerformanceFilter, Ticker, TimePeriod}
+import stockschecker.domain.{PriceAnalyticsFilter, Ticker, TimePeriod}
 import stockschecker.domain.errors.AppError
 import stockschecker.services.PriceService
 import stockschecker.fixtures.*
@@ -22,7 +22,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
     "GET /price/performance-summaries/:ticker" should {
       "return 200 and price performance summary on success" in {
         val svc = mocks
-        when(svc.findPerformanceSummary(any[Ticker], anyBoolean)).thenReturnIO(AAPLPricePerformanceSummary)
+        when(svc.findPriceAnalytics(any[Ticker], anyBoolean)).thenReturnIO(AAPLPricePerformanceSummary)
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -44,12 +44,12 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                               |  "maxChange" : 4.82
                               |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        verify(svc).findPerformanceSummary(AAPL, true)
+        verify(svc).findPriceAnalytics(AAPL, true)
       }
 
       "return 200 and price performance summary when fetchLatest is not provided" in {
         val svc = mocks
-        when(svc.findPerformanceSummary(any[Ticker], anyBoolean)).thenReturnIO(AAPLPricePerformanceSummary)
+        when(svc.findPriceAnalytics(any[Ticker], anyBoolean)).thenReturnIO(AAPLPricePerformanceSummary)
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -71,12 +71,12 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                               |  "maxChange" : 4.82
                               |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        verify(svc).findPerformanceSummary(AAPL, false)
+        verify(svc).findPriceAnalytics(AAPL, false)
       }
 
       "return 404 on not found" in {
         val svc = mocks
-        when(svc.findPerformanceSummary(any[Ticker], anyBoolean)).thenRaiseError(AppError.PricePerformanceSummaryNotFound(AAPL))
+        when(svc.findPriceAnalytics(any[Ticker], anyBoolean)).thenRaiseError(AppError.PriceAnalyticsNotFound(AAPL))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -85,12 +85,12 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
         yield res
 
         res mustHaveStatus (Status.NotFound, Some("""{"message":"Could not find price performance summary for AAPL"}"""))
-        verify(svc).findPerformanceSummary(AAPL, false)
+        verify(svc).findPriceAnalytics(AAPL, false)
       }
 
       "return 404 on not found even when fetchLatest is true" in {
         val svc = mocks
-        when(svc.findPerformanceSummary(any[Ticker], anyBoolean)).thenRaiseError(AppError.PricePerformanceSummaryNotFound(AAPL))
+        when(svc.findPriceAnalytics(any[Ticker], anyBoolean)).thenRaiseError(AppError.PriceAnalyticsNotFound(AAPL))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -99,7 +99,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
         yield res
 
         res mustHaveStatus (Status.NotFound, Some("""{"message":"Could not find price performance summary for AAPL"}"""))
-        verify(svc).findPerformanceSummary(AAPL, true)
+        verify(svc).findPriceAnalytics(AAPL, true)
       }
 
       "return 401 when API key is missing" in {
@@ -133,7 +133,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
     "GET /price/performance-summaries" should {
       "return 200 with empty list when no summaries exist" in {
         val svc = mocks
-        when(svc.getAllPerformanceSummaries(any[Option[Int]])).thenReturnIO(List.empty)
+        when(svc.getAllPriceAnalytics(any[Option[Int]])).thenReturnIO(List.empty)
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -142,13 +142,13 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
         yield res
 
         res mustHaveStatus (Status.Ok, Some("[]"))
-        verify(svc).getAllPerformanceSummaries(None)
+        verify(svc).getAllPriceAnalytics(None)
       }
 
       "return 200 with multiple summaries when no filters are provided" in {
         val svc = mocks
         val msftSummary = AAPLPricePerformanceSummary.copy(ticker = MSFT, latestPrice = BigDecimal("400.00"))
-        when(svc.getAllPerformanceSummaries(any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary, msftSummary))
+        when(svc.getAllPriceAnalytics(any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary, msftSummary))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -182,12 +182,12 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |  "maxChange" : 4.82
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        verify(svc).getAllPerformanceSummaries(None)
+        verify(svc).getAllPriceAnalytics(None)
       }
 
       "return 200 with filtered summaries when minLatestPrice filter is provided" in {
         val svc = mocks
-        when(svc.findPerformanceSummariesBy(any[PricePerformanceFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -209,13 +209,13 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |  "maxChange" : 4.82
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        val expectedFilter = PricePerformanceFilter.Composite(NonEmptyList.one(PricePerformanceFilter.PriceAbove(BigDecimal(200))))
-        verify(svc).findPerformanceSummariesBy(expectedFilter, None)
+        val expectedFilter = PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PriceAbove(BigDecimal(200))))
+        verify(svc).findPriceAnalyticsBy(expectedFilter, None)
       }
 
       "return 200 with filtered summaries when maxLatestPrice filter is provided" in {
         val svc = mocks
-        when(svc.findPerformanceSummariesBy(any[PricePerformanceFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -237,13 +237,13 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |  "maxChange" : 4.82
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        val expectedFilter = PricePerformanceFilter.Composite(NonEmptyList.one(PricePerformanceFilter.PriceBelow(BigDecimal(300))))
-        verify(svc).findPerformanceSummariesBy(expectedFilter, None)
+        val expectedFilter = PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PriceBelow(BigDecimal(300))))
+        verify(svc).findPriceAnalyticsBy(expectedFilter, None)
       }
 
       "return 200 with filtered summaries when minOneYearChange filter is provided" in {
         val svc = mocks
-        when(svc.findPerformanceSummariesBy(any[PricePerformanceFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -265,13 +265,13 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |  "maxChange" : 4.82
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        val expectedFilter = PricePerformanceFilter.Composite(NonEmptyList.one(PricePerformanceFilter.PerformanceAbove(TimePeriod.OneYear, BigDecimal(10.5))))
-        verify(svc).findPerformanceSummariesBy(expectedFilter, None)
+        val expectedFilter = PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PerformanceAbove(TimePeriod.OneYear, BigDecimal(10.5))))
+        verify(svc).findPriceAnalyticsBy(expectedFilter, None)
       }
 
       "return 200 with filtered summaries when multiple filters are provided" in {
         val svc = mocks
-        when(svc.findPerformanceSummariesBy(any[PricePerformanceFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -296,20 +296,20 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |  "maxChange" : 4.82
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        val expectedFilter = PricePerformanceFilter.Composite(
+        val expectedFilter = PriceAnalyticsFilter.Composite(
           NonEmptyList.of(
-            PricePerformanceFilter.PriceAbove(BigDecimal(200)),
-            PricePerformanceFilter.PriceBelow(BigDecimal(300)),
-            PricePerformanceFilter.PerformanceAbove(TimePeriod.OneMonth, BigDecimal(1.0)),
-            PricePerformanceFilter.PerformanceBelow(TimePeriod.OneYear, BigDecimal(50.0))
+            PriceAnalyticsFilter.PriceAbove(BigDecimal(200)),
+            PriceAnalyticsFilter.PriceBelow(BigDecimal(300)),
+            PriceAnalyticsFilter.PerformanceAbove(TimePeriod.OneMonth, BigDecimal(1.0)),
+            PriceAnalyticsFilter.PerformanceBelow(TimePeriod.OneYear, BigDecimal(50.0))
           )
         )
-        verify(svc).findPerformanceSummariesBy(expectedFilter, None)
+        verify(svc).findPriceAnalyticsBy(expectedFilter, None)
       }
 
       "return 200 with limited results when limit parameter is provided without filters" in {
         val svc = mocks
-        when(svc.getAllPerformanceSummaries(any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.getAllPriceAnalytics(any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -331,12 +331,12 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |  "maxChange" : 4.82
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        verify(svc).getAllPerformanceSummaries(Some(10))
+        verify(svc).getAllPriceAnalytics(Some(10))
       }
 
       "return 200 with limited results when limit parameter is provided with filters" in {
         val svc = mocks
-        when(svc.findPerformanceSummariesBy(any[PricePerformanceFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
+        when(svc.findPriceAnalyticsBy(any[PriceAnalyticsFilter], any[Option[Int]])).thenReturnIO(List(AAPLPricePerformanceSummary))
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
@@ -358,8 +358,8 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |  "maxChange" : 4.82
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        val expectedFilter = PricePerformanceFilter.Composite(NonEmptyList.one(PricePerformanceFilter.PriceAbove(BigDecimal(200))))
-        verify(svc).findPerformanceSummariesBy(expectedFilter, Some(5))
+        val expectedFilter = PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PriceAbove(BigDecimal(200))))
+        verify(svc).findPriceAnalyticsBy(expectedFilter, Some(5))
       }
 
       "return 401 when API key is missing" in {
