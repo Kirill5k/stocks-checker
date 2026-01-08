@@ -48,7 +48,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                               |    "cagr3Year" : null,
                               |    "cagr5Year" : null,
                               |    "volatility" : null,
-                              |    "maxDrawdown" : 4.60,
+                              |    "maxDrawdown" : 0,
                               |    "consistencyScore" : 0.9992,
                               |    "positiveYears" : 0,
                               |    "totalYears" : 0
@@ -93,7 +93,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                               |    "cagr3Year" : null,
                               |    "cagr5Year" : null,
                               |    "volatility" : null,
-                              |    "maxDrawdown" : 4.60,
+                              |    "maxDrawdown" : 0,
                               |    "consistencyScore" : 0.9992,
                               |    "positiveYears" : 0,
                               |    "totalYears" : 0
@@ -210,7 +210,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
                              |    "volatility" : null,
-                             |    "maxDrawdown" : 4.60,
+                             |    "maxDrawdown" : 0,
                              |    "consistencyScore" : 0.9992,
                              |    "positiveYears" : 0,
                              |    "totalYears" : 0
@@ -240,7 +240,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
                              |    "volatility" : null,
-                             |    "maxDrawdown" : 4.60,
+                             |    "maxDrawdown" : 0,
                              |    "consistencyScore" : 0.9992,
                              |    "positiveYears" : 0,
                              |    "totalYears" : 0
@@ -285,7 +285,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
                              |    "volatility" : null,
-                             |    "maxDrawdown" : 4.60,
+                             |    "maxDrawdown" : 0,
                              |    "consistencyScore" : 0.9992,
                              |    "positiveYears" : 0,
                              |    "totalYears" : 0
@@ -331,7 +331,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
                              |    "volatility" : null,
-                             |    "maxDrawdown" : 4.60,
+                             |    "maxDrawdown" : 0,
                              |    "consistencyScore" : 0.9992,
                              |    "positiveYears" : 0,
                              |    "totalYears" : 0
@@ -377,7 +377,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
                              |    "volatility" : null,
-                             |    "maxDrawdown" : 4.60,
+                             |    "maxDrawdown" : 0,
                              |    "consistencyScore" : 0.9992,
                              |    "positiveYears" : 0,
                              |    "totalYears" : 0
@@ -426,7 +426,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
                              |    "volatility" : null,
-                             |    "maxDrawdown" : 4.60,
+                             |    "maxDrawdown" : 0,
                              |    "consistencyScore" : 0.9992,
                              |    "positiveYears" : 0,
                              |    "totalYears" : 0
@@ -479,7 +479,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
                              |    "volatility" : null,
-                             |    "maxDrawdown" : 4.60,
+                             |    "maxDrawdown" : 0,
                              |    "consistencyScore" : 0.9992,
                              |    "positiveYears" : 0,
                              |    "totalYears" : 0
@@ -524,7 +524,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
                              |    "volatility" : null,
-                             |    "maxDrawdown" : 4.60,
+                             |    "maxDrawdown" : 0,
                              |    "consistencyScore" : 0.9992,
                              |    "positiveYears" : 0,
                              |    "totalYears" : 0
