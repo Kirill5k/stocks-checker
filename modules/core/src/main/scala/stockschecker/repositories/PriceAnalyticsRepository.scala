@@ -132,6 +132,10 @@ object PriceAnalyticsRepository extends MongoJsonCodecs:
     object Scores:
       val Root             = "scores"
       val OverallScore     = "scores.overallScore"
+      val CagrScore        = "scores.cagrScore"
+      val VolatilityScore  = "scores.volatilityScore"
+      val DrawdownScore    = "scores.drawdownScore"
+      val ConsistencyScore = "scores.consistencyScore"
 
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[PriceAnalyticsRepository[F]] =
     for
