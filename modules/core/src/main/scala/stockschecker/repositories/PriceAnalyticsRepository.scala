@@ -140,7 +140,6 @@ object PriceAnalyticsRepository extends MongoJsonCodecs:
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[PriceAnalyticsRepository[F]] =
     for
       collection <- database.getCollectionWithCodec[PriceAnalyticsEntity](CollectionName)
-      _          <- collection.createIndex(Index.ascending(Field.Id), IndexOptions().unique(true))
       _          <- collection.createIndex(Index.descending(Field.Scores.OverallScore))
       _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
     yield LivePriceAnalyticsRepository[F](collection.withAddedCodec[Ticker])
