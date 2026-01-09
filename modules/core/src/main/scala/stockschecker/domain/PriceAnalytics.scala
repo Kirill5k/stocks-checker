@@ -46,14 +46,12 @@ final case class PriceAnalytics(
 
 object PriceAnalytics:
   def from(ticker: Ticker, priceCandles: NonEmptyList[PriceCandle]): PriceAnalytics = {
-    val performanceSummary = calculatePerformanceSummary(priceCandles)
     val metrics = calculateMetrics(priceCandles)
-    val scores  = calculateScores(metrics)
     PriceAnalytics(
       ticker = ticker,
-      performanceSummary = performanceSummary,
+      performanceSummary = calculatePerformanceSummary(priceCandles),
       metrics = metrics,
-      scores = scores
+      scores = calculateScores(metrics)
     )
   }
 
@@ -96,30 +94,16 @@ object PriceAnalytics:
     val latestPrice = candles.head.close
     val prices      = candles.map(_.close).toList
 
-    // Calculate CAGR from actual price data
-    val cagr3Year = if (candles.size >= 37) Some(calculateCAGR(prices(36), latestPrice, 3)) else None
-    val cagr5Year = if (candles.size >= 61) Some(calculateCAGR(prices(60), latestPrice, 5)) else None
-
-    // Calculate volatility from monthly returns
-    val volatility = calculateVolatility(prices)
-
-    // Calculate max drawdown from price series
-    val maxDrawdown = calculateMaxDrawdown(prices)
-
-    // Calculate R² for trend consistency
-    val consistencyScore = calculateConsistency(candles)
-
-    // Count positive years
     val yearlyReturns = calculateYearlyReturns(prices)
     val positiveYears = yearlyReturns.count(_ > 0)
     val totalYears    = yearlyReturns.size
 
     StockAnalysisMetrics(
-      cagr3Year = cagr3Year,
-      cagr5Year = cagr5Year,
-      volatility = volatility,
-      maxDrawdown = maxDrawdown,
-      consistencyScore = consistencyScore,
+      cagr3Year = if (candles.size >= 37) Some(calculateCAGR(prices(36), latestPrice, 3)) else None,
+      cagr5Year = if (candles.size >= 61) Some(calculateCAGR(prices(60), latestPrice, 5)) else None,
+      volatility = calculateVolatility(prices),
+      maxDrawdown = calculateMaxDrawdown(prices),
+      consistencyScore = calculateConsistency(candles),
       positiveYears = positiveYears,
       totalYears = totalYears
     )
@@ -137,57 +121,59 @@ object PriceAnalytics:
     }
 
   private def calculateVolatility(prices: List[BigDecimal]): Option[BigDecimal] = {
-    if (prices.size < 13) return None // Need at least 13 months for 12 monthly returns
-
+    // Need at least 13 months for 12 monthly returns
     // Calculate monthly returns
-    val returns = prices.sliding(2).flatMap {
-      case List(newer, older) =>
-        if (older <= 0) Some(0.0)
-        else Some(((newer - older) / older * 100).toDouble)
-      case _ => None
-    }.toList
+    val returns =
+      if (prices.size < 13) Nil
+      else
+        prices
+          .sliding(2)
+          .flatMap {
+            case List(newer, older) =>
+              if (older <= 0) Some(0.0)
+              else Some(((newer - older) / older * 100).toDouble)
+            case _ => None
+          }
+          .toList
 
-    if (returns.isEmpty) None
-    else {
+    Option.when(returns.nonEmpty) {
       val mean     = returns.sum / returns.size
       val variance = returns.map(r => Math.pow(r - mean, 2)).sum / returns.size
       val stdDev   = Math.sqrt(variance)
       // Annualize the volatility (monthly to annual)
       val annualizedVolatility = stdDev * Math.sqrt(12)
-      Some(BigDecimal(annualizedVolatility).setScale(2, RoundingMode.HALF_UP))
+      BigDecimal(annualizedVolatility).setScale(2, RoundingMode.HALF_UP)
     }
   }
 
-  private def calculateMaxDrawdown(prices: List[BigDecimal]): Option[BigDecimal] = {
-    if (prices.isEmpty) return None
+  private def calculateMaxDrawdown(prices: List[BigDecimal]): Option[BigDecimal] =
+    Option.when(prices.nonEmpty) {
+      val chronologicalPrices = prices.reverse
+      var maxDrawdown         = BigDecimal(0)
+      var peak                = chronologicalPrices.head
 
-    val chronologicalPrices = prices.reverse
-    var maxDrawdown         = BigDecimal(0)
-    var peak                = chronologicalPrices.head
-
-    chronologicalPrices.foreach { price =>
-      if (price > peak) peak = price
-      if (peak > 0) {
-        val drawdown = ((peak - price) / peak * 100).setScale(2, RoundingMode.HALF_UP)
-        if (drawdown > maxDrawdown) maxDrawdown = drawdown
+      chronologicalPrices.foreach { price =>
+        if (price > peak) peak = price
+        if (peak > 0) {
+          val drawdown = ((peak - price) / peak * 100).setScale(2, RoundingMode.HALF_UP)
+          if (drawdown > maxDrawdown) maxDrawdown = drawdown
+        }
       }
-    }
 
-    Some(maxDrawdown)
-  }
+      maxDrawdown
+    }
 
   private def calculateConsistency(candles: NonEmptyList[PriceCandle]): Option[BigDecimal] = {
     val dataPoints = candles.toList.zipWithIndex.map { case (candle, idx) =>
       (idx.toDouble, candle.close.toDouble)
     }
 
-    if (dataPoints.size < 3) None
-    else {
-      val n      = dataPoints.size
-      val sumX   = dataPoints.map(_._1).sum
-      val sumY   = dataPoints.map(_._2).sum
-      val sumXY  = dataPoints.map { case (x, y) => x * y }.sum
-      val sumX2  = dataPoints.map { case (x, _) => x * x }.sum
+    Option.when(dataPoints.size >= 3) {
+      val n     = dataPoints.size
+      val sumX  = dataPoints.map(_._1).sum
+      val sumY  = dataPoints.map(_._2).sum
+      val sumXY = dataPoints.map { case (x, y) => x * y }.sum
+      val sumX2 = dataPoints.map { case (x, _) => x * x }.sum
 
       val meanX = sumX / n
       val meanY = sumY / n
@@ -199,11 +185,11 @@ object PriceAnalytics:
       }.sum
 
       val rSquared = if (ssTotal == 0) 0.0 else 1.0 - (ssRes / ssTotal)
-      Some(BigDecimal(Math.max(0.0, Math.min(1.0, rSquared))).setScale(4, RoundingMode.HALF_UP))
+      BigDecimal(Math.max(0.0, Math.min(1.0, rSquared))).setScale(4, RoundingMode.HALF_UP)
     }
   }
 
-  private def calculateYearlyReturns(prices: List[BigDecimal]): List[BigDecimal] = {
+  private def calculateYearlyReturns(prices: List[BigDecimal]): List[BigDecimal] =
     // Calculate year-over-year returns (12 months apart)
     prices
       .sliding(13, 12)
@@ -216,7 +202,6 @@ object PriceAnalytics:
         } else None
       }
       .toList
-  }
 
   private def calculateScores(metrics: StockAnalysisMetrics): StockAnalysisScores = {
     val cagrScore        = scoreCAGR(metrics.cagr3Year.orElse(metrics.cagr5Year))
@@ -236,31 +221,28 @@ object PriceAnalytics:
   }
 
   private def scoreCAGR(cagr: Option[BigDecimal]): BigDecimal =
-    cagr match {
-      case None                  => BigDecimal(0)
-      case Some(c) if c < 0      => BigDecimal(0)
-      case Some(c) if c >= 30    => BigDecimal(100)
-      case Some(c)               => (c / 30 * 100).setScale(2, RoundingMode.HALF_UP)
-    }
+    cagr match
+      case None               => BigDecimal(0)
+      case Some(c) if c < 0   => BigDecimal(0)
+      case Some(c) if c >= 30 => BigDecimal(100)
+      case Some(c)            => (c / 30 * 100).setScale(2, RoundingMode.HALF_UP)
 
   private def scoreVolatility(volatility: Option[BigDecimal]): BigDecimal =
-    volatility match {
-      case None                 => BigDecimal(0)
-      case Some(v) if v >= 50   => BigDecimal(0)
-      case Some(v) if v <= 10   => BigDecimal(100)
-      case Some(v)              => ((50 - v) / 40 * 100).setScale(2, RoundingMode.HALF_UP)
-    }
+    volatility match
+      case None               => BigDecimal(0)
+      case Some(v) if v >= 50 => BigDecimal(0)
+      case Some(v) if v <= 10 => BigDecimal(100)
+      case Some(v)            => ((50 - v) / 40 * 100).setScale(2, RoundingMode.HALF_UP)
 
   private def scoreDrawdown(drawdown: Option[BigDecimal]): BigDecimal =
-    drawdown match {
-      case None                 => BigDecimal(0)
-      case Some(d) if d >= 60   => BigDecimal(0)
-      case Some(d) if d <= 15   => BigDecimal(100)
-      case Some(d)              => ((60 - d) / 45 * 100).setScale(2, RoundingMode.HALF_UP)
-    }
+    drawdown match
+      case None               => BigDecimal(0)
+      case Some(d) if d >= 60 => BigDecimal(0)
+      case Some(d) if d <= 15 => BigDecimal(100)
+      case Some(d)            => ((60 - d) / 45 * 100).setScale(2, RoundingMode.HALF_UP)
 
   private def scoreConsistency(rSquared: Option[BigDecimal], positiveYears: Int, totalYears: Int): BigDecimal = {
-    val r2Score = rSquared.map(_ * 100).getOrElse(BigDecimal(0)).setScale(2, RoundingMode.HALF_UP)
+    val r2Score            = rSquared.map(_ * 100).getOrElse(BigDecimal(0)).setScale(2, RoundingMode.HALF_UP)
     val positiveYearsScore =
       if (totalYears == 0) BigDecimal(0)
       else BigDecimal(positiveYears.toDouble / totalYears.toDouble * 100).setScale(2, RoundingMode.HALF_UP)
