@@ -20,6 +20,7 @@ import scala.util.Try
 trait FinnhubClient[F[_]]:
   def getListedSecurities(exchange: Exchange): Stream[F, Security]
   def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]]
+  def getFinancialMetrics(ticker: Ticker): F[Option[FinnhubClient.FinancialMetricsResponse]]
 
 final private class LiveFinnhubClient[F[_]](
     private val config: FinnhubClientConfig,
@@ -27,6 +28,31 @@ final private class LiveFinnhubClient[F[_]](
 )(using
     F: Async[F]
 ) extends FinnhubClient[F] {
+
+  override def getFinancialMetrics(ticker: Ticker): F[Option[FinnhubClient.FinancialMetricsResponse]] = {
+    val request = emptyRequest
+      .get(uri"${config.baseUri}/api/v1/stock/metric?token=${config.apiKey}&symbol=$ticker&metric=all")
+      .response(asJson[FinnhubClient.BasicFinancialsResponse])
+
+    backend.send(request).flatMap { response =>
+      response.body match
+        case Right(body) if body.metric.isEmpty => F.pure(None) // Empty object returned - no metrics found
+        case Right(body)                        =>
+          body.metric.toJson.as[FinnhubClient.FinancialMetricsResponse] match
+            case Right(metrics) =>
+              F.pure(Some(metrics))
+            case Left(err) =>
+              F.raiseError(AppError.JsonParsingFailure(body.metric.toString, s"Error decoding financial metrics for $ticker: ${err.getMessage}"))
+        case Left(ResponseException.DeserializationException(_, error, _)) =>
+          F.raiseError(AppError.JsonParsingFailure(response.body.toString, s"Error decoding financials for $ticker: ${error.getMessage}"))
+        case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.NotFound =>
+          F.pure(None)
+        case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.TooManyRequests =>
+          F.sleep(2.second) >> getFinancialMetrics(ticker)
+        case Left(err) =>
+          F.raiseError(AppError.Http(response.code.code, s"Error retrieving basic financials for $ticker: ${err.getMessage}"))
+    }
+  }
 
   override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
     val request = emptyRequest
@@ -82,6 +108,28 @@ final private class LiveFinnhubClient[F[_]](
 }
 
 object FinnhubClient {
+  final case class FinancialMetricsResponse(
+      tenDayAverageTradingVolume: Option[BigDecimal],
+      fiftyTwoWeekHigh: Option[BigDecimal],
+      fiftyTwoWeekLow: Option[BigDecimal],
+      fiftyTwoWeekLowDate: Option[LocalDate],
+      fiftyTwoWeekPriceReturnDaily: Option[BigDecimal],
+      beta: Option[BigDecimal],
+      peTTM: Option[BigDecimal],
+      epsTTM: Option[BigDecimal],
+      roeTTM: Option[BigDecimal],
+      dividendYieldIndicatedAnnual: Option[BigDecimal],
+      totalDebtToEquityAnnual: Option[BigDecimal],
+      netProfitMarginTTM: Option[BigDecimal],
+      freeCashFlowPerShareTTM: Option[BigDecimal],
+      revenueGrowth5Y: Option[BigDecimal],
+      epsGrowth5Y: Option[BigDecimal]
+  ) derives Codec.AsObject
+
+  final case class BasicFinancialsResponse(
+      metric: JsonObject
+  ) derives Codec.AsObject
+
   final case class StockSymbol(
       currency: String,
       description: String,
