@@ -6,7 +6,6 @@ import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, PriceCandle}
 import stockschecker.fixtures.*
 
 import java.time.LocalDate
-import scala.concurrent.duration.*
 
 class PriceAnalyticsRepositorySpec extends RepositorySpec {
 

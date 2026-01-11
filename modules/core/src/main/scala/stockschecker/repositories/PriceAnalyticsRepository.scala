@@ -1,7 +1,6 @@
 package stockschecker.repositories
 
 import cats.Monad
-import cats.data.NonEmptyList
 import cats.effect.Concurrent
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*

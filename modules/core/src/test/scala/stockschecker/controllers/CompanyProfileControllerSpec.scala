@@ -39,7 +39,8 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "ipoDate" : "1980-12-12",
                               |  "currency" : "USD",
                               |  "marketCap" : 3439591971000,
-                              |  "priceAnalyticsLastUpdatedAt" : null
+                              |  "priceAnalyticsLastUpdatedAt" : null,
+                              |  "financialMetricsLastUpdatedAt" : null
                               |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).get(AAPL, true)
@@ -108,7 +109,8 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "ipoDate" : "1980-12-12",
                               |  "currency" : "USD",
                               |  "marketCap" : 3439591971000,
-                              |  "priceAnalyticsLastUpdatedAt" : null
+                              |  "priceAnalyticsLastUpdatedAt" : null,
+                              |  "financialMetricsLastUpdatedAt" : null
                               |}, {
                               |  "ticker" : "MSFT",
                               |  "name" : "Microsoft Corporation",
@@ -119,7 +121,8 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "ipoDate" : "1986-03-13",
                               |  "currency" : "USD",
                               |  "marketCap" : 3100000000000,
-                              |  "priceAnalyticsLastUpdatedAt" : null
+                              |  "priceAnalyticsLastUpdatedAt" : null,
+                              |  "financialMetricsLastUpdatedAt" : null
                               |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).getAll(None)
@@ -145,7 +148,8 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "ipoDate" : "1980-12-12",
                               |  "currency" : "USD",
                               |  "marketCap" : 3439591971000,
-                              |  "priceAnalyticsLastUpdatedAt" : null
+                              |  "priceAnalyticsLastUpdatedAt" : null,
+                              |  "financialMetricsLastUpdatedAt" : null
                               |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).getAll(Some(1))
