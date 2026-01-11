@@ -342,5 +342,87 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
       }
     }
+
+    "updateFinancialMetricsLastUpdated" should {
+      "update the financialMetricsLastUpdated field for single ticker" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo    <- CompanyProfileRepository.make[IO](db)
+            _       <- repo.save(AAPLCompanyProfile)
+            _       <- repo.updateFinancialMetricsLastUpdated(List(AAPL))
+            updated <- repo.find(AAPL)
+          yield updated.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
+        }
+      }
+
+      "not fail when updating non-existent profile" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            _    <- repo.updateFinancialMetricsLastUpdated(List(AAPL))
+            res  <- repo.find(AAPL)
+          yield res mustBe None
+        }
+      }
+
+      "update the financialMetricsLastUpdated field for multiple tickers" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo        <- CompanyProfileRepository.make[IO](db)
+            _           <- repo.save(AAPLCompanyProfile)
+            _           <- repo.save(MSFTCompanyProfile)
+            _           <- repo.updateFinancialMetricsLastUpdated(List(AAPL, MSFT))
+            updatedAAPL <- repo.find(AAPL)
+            updatedMSFT <- repo.find(MSFT)
+          yield
+            updatedAAPL.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
+            updatedMSFT.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
+        }
+      }
+
+      "only update specified tickers" in {
+        withEmbeddedMongoDatabase { db =>
+          val nonExistent = Ticker("GOOG")
+          for
+            repo        <- CompanyProfileRepository.make[IO](db)
+            _           <- repo.save(AAPLCompanyProfile)
+            _           <- repo.save(MSFTCompanyProfile)
+            _           <- repo.updateFinancialMetricsLastUpdated(List(AAPL, nonExistent))
+            updatedAAPL <- repo.find(AAPL)
+            updatedMSFT <- repo.find(MSFT)
+          yield
+            updatedAAPL.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
+            updatedMSFT.flatMap(_.financialMetricsLastUpdatedAt) mustBe None
+        }
+      }
+    }
+
+    "findTickersBy with FinancialMetricsNotUpdatedFor filter" should {
+      "return tickers where financialMetricsLastUpdatedAt is null" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            _    <- repo.save(AAPLCompanyProfile)
+            _    <- repo.save(MSFTCompanyProfile)
+            _    <- repo.updateFinancialMetricsLastUpdated(List(MSFT))
+            res  <- repo.findTickersBy(CompanyProfileFilter.FinancialMetricsNotUpdatedFor(1.hour), None)
+          yield res mustBe List(AAPL)
+        }
+      }
+
+      "return tickers where financialMetricsLastUpdatedAt is older than duration" in {
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            _    <- repo.save(AAPLCompanyProfile)
+            _    <- repo.save(MSFTCompanyProfile)
+            _    <- repo.updateFinancialMetricsLastUpdated(List(AAPL))
+            _    <- IO.sleep(100.millis)
+            _    <- repo.updateFinancialMetricsLastUpdated(List(MSFT))
+            res  <- repo.findTickersBy(CompanyProfileFilter.FinancialMetricsNotUpdatedFor(50.millis), None)
+          yield res mustBe List(AAPL)
+        }
+      }
+    }
   }
 }
