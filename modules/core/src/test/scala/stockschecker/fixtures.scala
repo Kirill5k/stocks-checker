@@ -3,7 +3,7 @@ package stockschecker
 import cats.data.NonEmptyList
 import mongo4cats.bson.ObjectId
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, Exchange, LatestPrice, PriceAnalytics, PriceCandle, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
+import stockschecker.domain.{Command, CommandId, CompanyProfile, Exchange, FinancialMetrics, LatestPrice, PriceAnalytics, PriceCandle, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, Ticker}
 
 import java.time.{Instant, LocalDate}
 import java.time.temporal.ChronoUnit
@@ -15,6 +15,21 @@ object fixtures {
 
   val AAPL: Ticker = Ticker("AAPL")
   val MSFT: Ticker = Ticker("MSFT")
+
+  val AAPLFinancialMetrics: FinancialMetrics = FinancialMetrics(
+    ticker = AAPL,
+    peRatioTtm = Some(BigDecimal(34.11)),
+    epsTtm = Some(BigDecimal(7.46)),
+    roeTtm = Some(BigDecimal(164.05)),
+    dividendYieldAnnual = Some(BigDecimal(0.40)),
+    debtToEquityAnnual = Some(BigDecimal(1.34)),
+    profitMarginTtm = Some(BigDecimal(26.92)),
+    freeCashFlowPerShareTtm = Some(BigDecimal(6.86)),
+    revenueGrowth5Y = Some(BigDecimal(8.68)),
+    epsGrowth5Y = Some(BigDecimal(17.91)),
+    priceHigh52Week = Some(BigDecimal(288.62)),
+    priceLow52Week = Some(BigDecimal(169.21))
+  )
 
   val AAPLSecurity: Security = Security(
     ticker = AAPL,
