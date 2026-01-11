@@ -33,17 +33,17 @@ final private class LiveFinancialMetricsRepository[F[_]](
       Update
         .setOnInsert(Field.Id, fm.ticker)
         .setOnInsert(Field.CreatedAt, now)
-        .set(Field.PeTTM, fm.peTTM)
-        .set(Field.EpsTTM, fm.epsTTM)
-        .set(Field.RoeTTM, fm.roeTTM)
-        .set(Field.DividendYield, fm.dividendYieldIndicatedAnnual)
-        .set(Field.DebtToEquity, fm.totalDebtToEquityAnnual)
-        .set(Field.ProfitMargin, fm.netProfitMarginTTM)
-        .set(Field.FcfPerShare, fm.freeCashFlowPerShareTTM)
+        .set(Field.PeRatioTtm, fm.peRatioTtm)
+        .set(Field.EpsTtm, fm.epsTtm)
+        .set(Field.RoeTtm, fm.roeTtm)
+        .set(Field.DividendYieldAnnual, fm.dividendYieldAnnual)
+        .set(Field.DebtToEquityAnnual, fm.debtToEquityAnnual)
+        .set(Field.ProfitMarginTtm, fm.profitMarginTtm)
+        .set(Field.FreeCashFlowPerShareTtm, fm.freeCashFlowPerShareTtm)
         .set(Field.RevenueGrowth5Y, fm.revenueGrowth5Y)
         .set(Field.EpsGrowth5Y, fm.epsGrowth5Y)
-        .set(Field.FiftyTwoWeekHigh, fm.fiftyTwoWeekHigh)
-        .set(Field.FiftyTwoWeekLow, fm.fiftyTwoWeekLow)
+        .set(Field.PriceHigh52Week, fm.priceHigh52Week)
+        .set(Field.PriceLow52Week, fm.priceLow52Week)
         .set(Field.UpdatedAt, now)
 
   override def save(fms: List[FinancialMetrics]): F[Unit] =
@@ -60,20 +60,20 @@ final private class LiveFinancialMetricsRepository[F[_]](
 object FinancialMetricsRepository extends MongoJsonCodecs:
   val CollectionName = "financial-metrics"
   object Field:
-    val Id               = "_id"
-    val PeTTM            = "peTTM"
-    val EpsTTM           = "epsTTM"
-    val RoeTTM           = "roeTTM"
-    val DividendYield    = "dividendYieldIndicatedAnnual"
-    val DebtToEquity     = "totalDebtToEquityAnnual"
-    val ProfitMargin     = "netProfitMarginTTM"
-    val FcfPerShare      = "freeCashFlowPerShareTTM"
-    val RevenueGrowth5Y  = "revenueGrowth5Y"
-    val EpsGrowth5Y      = "epsGrowth5Y"
-    val FiftyTwoWeekHigh = "fiftyTwoWeekHigh"
-    val FiftyTwoWeekLow  = "fiftyTwoWeekLow"
-    val UpdatedAt        = "updatedAt"
-    val CreatedAt        = "createdAt"
+    val Id                      = "_id"
+    val PeRatioTtm              = "peRatioTtm"
+    val EpsTtm                  = "epsTtm"
+    val RoeTtm                  = "roeTtm"
+    val DividendYieldAnnual     = "dividendYieldAnnual"
+    val DebtToEquityAnnual      = "debtToEquityAnnual"
+    val ProfitMarginTtm         = "profitMarginTtm"
+    val FreeCashFlowPerShareTtm = "freeCashFlowPerShareTtm"
+    val RevenueGrowth5Y         = "revenueGrowth5Y"
+    val EpsGrowth5Y             = "epsGrowth5Y"
+    val PriceHigh52Week         = "priceHigh52Week"
+    val PriceLow52Week          = "priceLow52Week"
+    val UpdatedAt               = "updatedAt"
+    val CreatedAt               = "createdAt"
 
   def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[FinancialMetricsRepository[F]] =
     for

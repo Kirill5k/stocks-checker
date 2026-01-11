@@ -130,17 +130,17 @@ object FinnhubClient {
     def toDomain(ticker: Ticker): FinancialMetrics =
       FinancialMetrics(
         ticker = ticker,
-        peTTM = peTTM,
-        epsTTM = epsTTM,
-        roeTTM = roeTTM,
-        dividendYieldIndicatedAnnual = dividendYieldIndicatedAnnual,
-        totalDebtToEquityAnnual = totalDebtToEquityAnnual,
-        netProfitMarginTTM = netProfitMarginTTM,
-        freeCashFlowPerShareTTM = freeCashFlowPerShareTTM,
+        peRatioTtm = peTTM,
+        epsTtm = epsTTM,
+        roeTtm = roeTTM,
+        dividendYieldAnnual = dividendYieldIndicatedAnnual,
+        debtToEquityAnnual = totalDebtToEquityAnnual,
+        profitMarginTtm = netProfitMarginTTM,
+        freeCashFlowPerShareTtm = freeCashFlowPerShareTTM,
         revenueGrowth5Y = revenueGrowth5Y,
         epsGrowth5Y = epsGrowth5Y,
-        fiftyTwoWeekHigh = fiftyTwoWeekHigh,
-        fiftyTwoWeekLow = fiftyTwoWeekLow
+        priceHigh52Week = fiftyTwoWeekHigh,
+        priceLow52Week = fiftyTwoWeekLow
       )
 
   final case class BasicFinancialsResponse(

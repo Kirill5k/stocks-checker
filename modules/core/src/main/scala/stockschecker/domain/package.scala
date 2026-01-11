@@ -68,17 +68,17 @@ package object domain {
 
   final case class FinancialMetrics(
       ticker: Ticker,
-      peTTM: Option[BigDecimal], // price-to-earnings ratio (trailing 12 months)
-      epsTTM: Option[BigDecimal], // earnings per share (trailing 12 months)
-      roeTTM: Option[BigDecimal], // return on equity; measures management efficiency
-      dividendYieldIndicatedAnnual: Option[BigDecimal], // annual dividend payout percentage
-      totalDebtToEquityAnnual: Option[BigDecimal], // total debt divided by shareholders' equity
-      netProfitMarginTTM: Option[BigDecimal], // percentage of revenue remaining as profit
-      freeCashFlowPerShareTTM: Option[BigDecimal], // cash generated per share after capital expenditures
-      revenueGrowth5Y: Option[BigDecimal], // average annual revenue growth over 5 years
-      epsGrowth5Y: Option[BigDecimal], // average annual earnings per share growth over 5 years
-      fiftyTwoWeekHigh: Option[BigDecimal], // highest price reached in the last 52 weeks
-      fiftyTwoWeekLow: Option[BigDecimal] // lowest price reached in the last 52 weeks
+      peRatioTtm: Option[BigDecimal], // Price-to-Earnings Ratio (Trailing 12 Months)
+      epsTtm: Option[BigDecimal], // Earnings Per Share (Trailing 12 Months)
+      roeTtm: Option[BigDecimal], // Return on Equity (Trailing 12 Months)
+      dividendYieldAnnual: Option[BigDecimal], // Indicated Annual Dividend Yield
+      debtToEquityAnnual: Option[BigDecimal], // Total Debt to Equity (Annual)
+      profitMarginTtm: Option[BigDecimal], // Net Profit Margin (Trailing 12 Months)
+      freeCashFlowPerShareTtm: Option[BigDecimal], // Free Cash Flow Per Share (Trailing 12 Months)
+      revenueGrowth5Y: Option[BigDecimal], // Revenue Growth (5 Year Annualized)
+      epsGrowth5Y: Option[BigDecimal], // EPS Growth (5 Year Annualized)
+      priceHigh52Week: Option[BigDecimal], // 52-Week High Price
+      priceLow52Week: Option[BigDecimal] // 52-Week Low Price
   ) derives CirceCodec.AsObject
 
   final case class Stock(

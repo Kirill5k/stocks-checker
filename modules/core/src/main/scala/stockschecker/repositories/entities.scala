@@ -195,38 +195,55 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   final case class FinancialMetricsEntity(
       _id: Ticker,
-      peTTM: Option[BigDecimal],
-      epsTTM: Option[BigDecimal],
-      roeTTM: Option[BigDecimal],
-      dividendYieldIndicatedAnnual: Option[BigDecimal],
-      totalDebtToEquityAnnual: Option[BigDecimal],
-      netProfitMarginTTM: Option[BigDecimal],
-      freeCashFlowPerShareTTM: Option[BigDecimal],
+      peRatioTtm: Option[BigDecimal],
+      epsTtm: Option[BigDecimal],
+      roeTtm: Option[BigDecimal],
+      dividendYieldAnnual: Option[BigDecimal],
+      debtToEquityAnnual: Option[BigDecimal],
+      profitMarginTtm: Option[BigDecimal],
+      freeCashFlowPerShareTtm: Option[BigDecimal],
       revenueGrowth5Y: Option[BigDecimal],
       epsGrowth5Y: Option[BigDecimal],
-      fiftyTwoWeekHigh: Option[BigDecimal],
-      fiftyTwoWeekLow: Option[BigDecimal],
+      priceHigh52Week: Option[BigDecimal],
+      priceLow52Week: Option[BigDecimal],
       createdAt: Instant,
       updatedAt: Instant
   ) derives Codec.AsObject:
     def toDomain: FinancialMetrics =
       FinancialMetrics(
         ticker = _id,
-        peTTM = peTTM,
-        epsTTM = epsTTM,
-        roeTTM = roeTTM,
-        dividendYieldIndicatedAnnual = dividendYieldIndicatedAnnual,
-        totalDebtToEquityAnnual = totalDebtToEquityAnnual,
-        netProfitMarginTTM = netProfitMarginTTM,
-        freeCashFlowPerShareTTM = freeCashFlowPerShareTTM,
+        peRatioTtm = peRatioTtm,
+        epsTtm = epsTtm,
+        roeTtm = roeTtm,
+        dividendYieldAnnual = dividendYieldAnnual,
+        debtToEquityAnnual = debtToEquityAnnual,
+        profitMarginTtm = profitMarginTtm,
+        freeCashFlowPerShareTtm = freeCashFlowPerShareTtm,
         revenueGrowth5Y = revenueGrowth5Y,
         epsGrowth5Y = epsGrowth5Y,
-        fiftyTwoWeekHigh = fiftyTwoWeekHigh,
-        fiftyTwoWeekLow = fiftyTwoWeekLow
+        priceHigh52Week = priceHigh52Week,
+        priceLow52Week = priceLow52Week
       )
 
   object FinancialMetricsEntity:
     given MongoCodecProvider[FinancialMetricsEntity] = deriveCirceCodecProvider[FinancialMetricsEntity]
+    def from(metrics: FinancialMetrics, now: Instant): FinancialMetricsEntity =
+      FinancialMetricsEntity(
+        _id = metrics.ticker,
+        peRatioTtm = metrics.peRatioTtm,
+        epsTtm = metrics.epsTtm,
+        roeTtm = metrics.roeTtm,
+        dividendYieldAnnual = metrics.dividendYieldAnnual,
+        debtToEquityAnnual = metrics.debtToEquityAnnual,
+        profitMarginTtm = metrics.profitMarginTtm,
+        freeCashFlowPerShareTtm = metrics.freeCashFlowPerShareTtm,
+        revenueGrowth5Y = metrics.revenueGrowth5Y,
+        epsGrowth5Y = metrics.epsGrowth5Y,
+        priceHigh52Week = metrics.priceHigh52Week,
+        priceLow52Week = metrics.priceLow52Week,
+        createdAt = now,
+        updatedAt = now
+      )
 
   final case class CommandEntity(
       _id: ObjectId,

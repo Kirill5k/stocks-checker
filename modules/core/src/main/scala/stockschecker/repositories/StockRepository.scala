@@ -101,13 +101,13 @@ final private class LiveStockRepository[F[_]](
 
     private def toFinancialMetricsFilter: Filter = List(
       sf.maxPE.map(max =>
-        Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.PeTTM}", max)
+        Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.PeRatioTtm}", max)
       ),
       sf.minROE.map(min =>
-        Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.RoeTTM}", min)
+        Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.RoeTtm}", min)
       ),
       sf.maxDebtToEquity.map(max =>
-        Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.DebtToEquity}", max)
+        Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.DebtToEquityAnnual}", max)
       )
     ).flatten.foldLeft(Filter.empty)(_ && _)
 }
