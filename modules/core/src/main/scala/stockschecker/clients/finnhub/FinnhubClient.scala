@@ -111,19 +111,18 @@ final private class LiveFinnhubClient[F[_]](
 
 object FinnhubClient {
   final case class FinancialMetricsResponse(
-      tenDayAverageTradingVolume: Option[BigDecimal],
-      fiftyTwoWeekHigh: Option[BigDecimal],
-      fiftyTwoWeekLow: Option[BigDecimal],
-      fiftyTwoWeekLowDate: Option[LocalDate],
-      fiftyTwoWeekPriceReturnDaily: Option[BigDecimal],
+      `10DayAverageTradingVolume`: Option[BigDecimal],
+      `52WeekHigh`: Option[BigDecimal],
+      `52WeekLow`: Option[BigDecimal],
+      `52WeekPriceReturnDaily`: Option[BigDecimal],
       beta: Option[BigDecimal],
       peTTM: Option[BigDecimal],
       epsTTM: Option[BigDecimal],
       roeTTM: Option[BigDecimal],
       dividendYieldIndicatedAnnual: Option[BigDecimal],
-      totalDebtToEquityAnnual: Option[BigDecimal],
+      `totalDebt/totalEquityAnnual`: Option[BigDecimal],
       netProfitMarginTTM: Option[BigDecimal],
-      freeCashFlowPerShareTTM: Option[BigDecimal],
+      cashFlowPerShareTTM: Option[BigDecimal],
       revenueGrowth5Y: Option[BigDecimal],
       epsGrowth5Y: Option[BigDecimal]
   ) derives Codec.AsObject:
@@ -134,15 +133,15 @@ object FinnhubClient {
         epsTtm = epsTTM,
         roeTtm = roeTTM,
         dividendYieldAnnual = dividendYieldIndicatedAnnual,
-        debtToEquityAnnual = totalDebtToEquityAnnual,
+        debtToEquityAnnual = `totalDebt/totalEquityAnnual`,
         profitMarginTtm = netProfitMarginTTM,
-        freeCashFlowPerShareTtm = freeCashFlowPerShareTTM,
+        freeCashFlowPerShareTtm = cashFlowPerShareTTM,
         revenueGrowth5Y = revenueGrowth5Y,
         epsGrowth5Y = epsGrowth5Y,
-        priceHigh52Week = fiftyTwoWeekHigh,
-        priceLow52Week = fiftyTwoWeekLow
+        priceHigh52Week = `52WeekHigh`,
+        priceLow52Week = `52WeekLow`
       )
-
+  
   final case class BasicFinancialsResponse(
       metric: JsonObject
   ) derives Codec.AsObject
