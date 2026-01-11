@@ -25,8 +25,6 @@ trait PriceAnalyticsRepository[F[_]]:
   def find(ticker: Ticker): F[Option[PriceAnalytics]]
   def findAll(limit: Option[Int]): F[List[PriceAnalytics]]
   def findBy(filter: PriceAnalyticsFilter, limit: Option[Int]): F[List[PriceAnalytics]]
-  def findByTickers(tickers: NonEmptyList[Ticker]): F[List[PriceAnalytics]]
-  def deleteOlderThan(cutoff: Instant): F[Unit]
 
 final private class LivePriceAnalyticsRepository[F[_]](
     private val collection: MongoCollection[F, PriceAnalyticsEntity]
@@ -103,15 +101,6 @@ final private class LivePriceAnalyticsRepository[F[_]](
         clock.now.map(currentTime => Filter.lt(Field.UpdatedAt, currentTime.minus(duration)))
       case PriceAnalyticsFilter.Composite(filters) =>
         filters.traverse(_.toFilter).map(_.toList.foldLeft(Filter.empty)(_ && _))
-
-  override def findByTickers(tickers: NonEmptyList[Ticker]): F[List[PriceAnalytics]] =
-    collection
-      .find(Filter.in(Field.Id, tickers.toList.map(_.value)))
-      .all
-      .mapList(_.toDomain)
-
-  override def deleteOlderThan(cutoff: Instant): F[Unit] =
-    collection.deleteMany(Filter.lt(Field.UpdatedAt, cutoff)).void
 }
 
 object PriceAnalyticsRepository extends MongoJsonCodecs:
