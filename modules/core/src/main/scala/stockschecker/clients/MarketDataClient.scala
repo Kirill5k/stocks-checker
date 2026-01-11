@@ -2,7 +2,7 @@ package stockschecker.clients
 
 import cats.Monad
 import cats.data.NonEmptyList
-import stockschecker.domain.{CompanyProfile, Exchange, PriceCandle, Security, Ticker}
+import stockschecker.domain.{CompanyProfile, Exchange, FinancialMetrics, PriceCandle, Security, Ticker}
 import fs2.Stream
 import stockschecker.clients.finnhub.FinnhubClient
 import stockschecker.clients.twelvedata.TwelveDataClient
@@ -11,6 +11,7 @@ trait MarketDataClient[F[_]]:
   def getTradedSecurities(exchange: Exchange): Stream[F, Security]
   def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]]
   def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]]
+  def getFinancialMetrics(ticker: Ticker): F[Option[FinancialMetrics]]
 
 final private class LiveMarketDataClient[F[_]](
     private val finnhubClient: FinnhubClient[F],
@@ -25,6 +26,9 @@ final private class LiveMarketDataClient[F[_]](
 
   override def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]] =
     twelveDataClient.getMonthlyPriceCandles(ticker)
+
+  override def getFinancialMetrics(ticker: Ticker): F[Option[FinancialMetrics]] =
+    finnhubClient.getFinancialMetrics(ticker)
 }
 
 object MarketDataClient {

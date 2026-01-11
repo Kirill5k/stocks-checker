@@ -5,7 +5,24 @@ import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
 import stockschecker.actions.Action
-import stockschecker.domain.{Command, CommandId, CompanyProfile, CreateCommand, Exchange, LatestPrice, PriceAnalytics, PricePerformanceSummary, Schedule, Security, SecurityKind, Stock, StockAnalysisMetrics, StockAnalysisScores, Ticker}
+import stockschecker.domain.{
+  Command,
+  CommandId,
+  CompanyProfile,
+  CreateCommand,
+  Exchange,
+  FinancialMetrics,
+  LatestPrice,
+  PriceAnalytics,
+  PricePerformanceSummary,
+  Schedule,
+  Security,
+  SecurityKind,
+  Stock,
+  StockAnalysisMetrics,
+  StockAnalysisScores,
+  Ticker
+}
 
 import java.time.{Instant, LocalDate}
 
@@ -60,6 +77,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       currency: String,
       marketCap: Long,
       priceAnalyticsLastUpdatedAt: Option[Instant],
+      financialMetricsLastUpdatedAt: Option[Instant],
       createdAt: Instant,
       updatedAt: Instant
   ) derives Codec.AsObject:
@@ -74,7 +92,8 @@ private[repositories] object entities extends MongoJsonCodecs {
         ipoDate = ipoDate,
         currency = currency,
         marketCap = marketCap,
-        priceAnalyticsLastUpdatedAt = priceAnalyticsLastUpdatedAt
+        priceAnalyticsLastUpdatedAt = priceAnalyticsLastUpdatedAt,
+        financialMetricsLastUpdatedAt = financialMetricsLastUpdatedAt
       )
 
   object CompanyProfileEntity:
@@ -91,6 +110,7 @@ private[repositories] object entities extends MongoJsonCodecs {
         currency = profile.currency,
         marketCap = profile.marketCap,
         priceAnalyticsLastUpdatedAt = profile.priceAnalyticsLastUpdatedAt,
+        financialMetricsLastUpdatedAt = profile.financialMetricsLastUpdatedAt,
         createdAt = now,
         updatedAt = now
       )
@@ -111,16 +131,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       )
 
   object LatestPriceEntity:
-    given MongoCodecProvider[LatestPriceEntity]                 = deriveCirceCodecProvider[LatestPriceEntity]
-    def from(latestPrice: LatestPrice, now: Instant): LatestPriceEntity =
-      LatestPriceEntity(
-        _id = s"${latestPrice.ticker.value}-${latestPrice.date}",
-        ticker = latestPrice.ticker,
-        price = latestPrice.price,
-        date = latestPrice.date,
-        createdAt = now,
-        updatedAt = now
-      )
+    given MongoCodecProvider[LatestPriceEntity] = deriveCirceCodecProvider[LatestPriceEntity]
 
   final case class PricePerformanceSummaryEntity(
       _id: Ticker,
@@ -153,22 +164,6 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   object PricePerformanceSummaryEntity:
     given MongoCodecProvider[PricePerformanceSummaryEntity] = deriveCirceCodecProvider[PricePerformanceSummaryEntity]
-    def from(ticker: Ticker, summary: PricePerformanceSummary, now: Instant): PricePerformanceSummaryEntity =
-      PricePerformanceSummaryEntity(
-        _id = ticker,
-        latestPrice = summary.latestPrice,
-        latestPriceDate = summary.latestPriceDate,
-        oneMonthChange = summary.oneMonthChange,
-        threeMonthChange = summary.threeMonthChange,
-        sixMonthChange = summary.sixMonthChange,
-        oneYearChange = summary.oneYearChange,
-        threeYearChange = summary.threeYearChange,
-        fiveYearChange = summary.fiveYearChange,
-        tenYearChange = summary.tenYearChange,
-        maxChange = summary.maxChange,
-        createdAt = now,
-        updatedAt = now
-      )
 
   final case class PriceAnalyticsEntity(
       _id: Ticker,
@@ -187,7 +182,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       )
 
   object PriceAnalyticsEntity:
-    given MongoCodecProvider[PriceAnalyticsEntity] = deriveCirceCodecProvider[PriceAnalyticsEntity]
+    given MongoCodecProvider[PriceAnalyticsEntity]                          = deriveCirceCodecProvider[PriceAnalyticsEntity]
     def from(analytics: PriceAnalytics, now: Instant): PriceAnalyticsEntity =
       PriceAnalyticsEntity(
         _id = analytics.ticker,
@@ -197,6 +192,41 @@ private[repositories] object entities extends MongoJsonCodecs {
         createdAt = now,
         updatedAt = now
       )
+
+  final case class FinancialMetricsEntity(
+      _id: Ticker,
+      peTTM: Option[BigDecimal],
+      epsTTM: Option[BigDecimal],
+      roeTTM: Option[BigDecimal],
+      dividendYieldIndicatedAnnual: Option[BigDecimal],
+      totalDebtToEquityAnnual: Option[BigDecimal],
+      netProfitMarginTTM: Option[BigDecimal],
+      freeCashFlowPerShareTTM: Option[BigDecimal],
+      revenueGrowth5Y: Option[BigDecimal],
+      epsGrowth5Y: Option[BigDecimal],
+      fiftyTwoWeekHigh: Option[BigDecimal],
+      fiftyTwoWeekLow: Option[BigDecimal],
+      createdAt: Instant,
+      updatedAt: Instant
+  ) derives Codec.AsObject:
+    def toDomain: FinancialMetrics =
+      FinancialMetrics(
+        ticker = _id,
+        peTTM = peTTM,
+        epsTTM = epsTTM,
+        roeTTM = roeTTM,
+        dividendYieldIndicatedAnnual = dividendYieldIndicatedAnnual,
+        totalDebtToEquityAnnual = totalDebtToEquityAnnual,
+        netProfitMarginTTM = netProfitMarginTTM,
+        freeCashFlowPerShareTTM = freeCashFlowPerShareTTM,
+        revenueGrowth5Y = revenueGrowth5Y,
+        epsGrowth5Y = epsGrowth5Y,
+        fiftyTwoWeekHigh = fiftyTwoWeekHigh,
+        fiftyTwoWeekLow = fiftyTwoWeekLow
+      )
+
+  object FinancialMetricsEntity:
+    given MongoCodecProvider[FinancialMetricsEntity] = deriveCirceCodecProvider[FinancialMetricsEntity]
 
   final case class CommandEntity(
       _id: ObjectId,
@@ -219,17 +249,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       )
 
   object CommandEntity:
-    given MongoCodecProvider[CommandEntity] = deriveCirceCodecProvider[CommandEntity]
-    def from(cmd: Command): CommandEntity   =
-      CommandEntity(
-        _id = cmd.id.toObjectId,
-        isActive = cmd.isActive,
-        action = cmd.action,
-        schedule = cmd.schedule,
-        lastExecutedAt = cmd.lastExecutedAt,
-        executionCount = cmd.executionCount,
-        maxExecutions = cmd.maxExecutions
-      )
+    given MongoCodecProvider[CommandEntity]     = deriveCirceCodecProvider[CommandEntity]
     def from(cmd: CreateCommand): CommandEntity =
       CommandEntity(
         _id = ObjectId.gen,
@@ -244,12 +264,14 @@ private[repositories] object entities extends MongoJsonCodecs {
   final case class StockEntity(
       security: SecurityEntity,
       profile: List[CompanyProfileEntity],
-      priceAnalytics: List[PriceAnalyticsEntity]
+      priceAnalytics: List[PriceAnalyticsEntity],
+      financialMetrics: List[FinancialMetricsEntity]
   ) derives Codec.AsObject:
     def toDomain: Stock =
       Stock(
         security = security.toDomain,
         profile = profile.headOption.map(_.toDomain),
-        priceAnalytics = priceAnalytics.headOption.map(_.toDomain)
+        priceAnalytics = priceAnalytics.headOption.map(_.toDomain),
+        financialMetrics = financialMetrics.headOption.map(_.toDomain)
       )
 }

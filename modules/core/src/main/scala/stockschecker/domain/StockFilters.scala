@@ -23,5 +23,8 @@ final case class StockFilters(
     minOverallScore: Option[BigDecimal] = None,
     minCagrScore: Option[BigDecimal] = None,
     minVolatilityScore: Option[BigDecimal] = None,
+    maxPE: Option[BigDecimal] = None,
+    minROE: Option[BigDecimal] = None,
+    maxDebtToEquity: Option[BigDecimal] = None,
     sortBy: Option[StockSortField] = None
 )

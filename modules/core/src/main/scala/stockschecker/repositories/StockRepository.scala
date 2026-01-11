@@ -40,7 +40,8 @@ final private class LiveStockRepository[F[_]](
       .replaceWith(Document("security" := "$$ROOT"))
       .lookup(CompanyProfileRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.Profile)
       .lookup(PriceAnalyticsRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.PriceAnalytics)
-      .matchBy(filters.toProfileFilter && filters.toPriceAnalyticsFilter)
+      .lookup(FinancialMetricsRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.FinancialMetrics)
+      .matchBy(filters.toProfileFilter && filters.toPriceAnalyticsFilter && filters.toFinancialMetricsFilter)
       .sort(Sort.desc(sortField))
       .limit(limit)
 
@@ -97,13 +98,26 @@ final private class LiveStockRepository[F[_]](
         Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Scores.VolatilityScore}", min)
       )
     ).flatten.foldLeft(Filter.empty)(_ && _)
+
+    private def toFinancialMetricsFilter: Filter = List(
+      sf.maxPE.map(max =>
+        Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.PeTTM}", max)
+      ),
+      sf.minROE.map(min =>
+        Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.RoeTTM}", min)
+      ),
+      sf.maxDebtToEquity.map(max =>
+        Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.DebtToEquity}", max)
+      )
+    ).flatten.foldLeft(Filter.empty)(_ && _)
 }
 
 object StockRepository extends MongoJsonCodecs:
   object Field:
-    val Id             = "_id"
-    val Profile        = "profile"
-    val PriceAnalytics = "priceAnalytics"
+    val Id               = "_id"
+    val Profile          = "profile"
+    val PriceAnalytics   = "priceAnalytics"
+    val FinancialMetrics = "financialMetrics"
 
   def make[F[_]: Concurrent](database: MongoDatabase[F]): F[StockRepository[F]] =
     database

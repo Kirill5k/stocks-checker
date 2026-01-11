@@ -62,13 +62,30 @@ package object domain {
       ipoDate: Option[LocalDate],
       currency: String,
       marketCap: Long,
-      priceAnalyticsLastUpdatedAt: Option[Instant] = None
+      priceAnalyticsLastUpdatedAt: Option[Instant] = None,
+      financialMetricsLastUpdatedAt: Option[Instant] = None
+  ) derives CirceCodec.AsObject
+
+  final case class FinancialMetrics(
+      ticker: Ticker,
+      peTTM: Option[BigDecimal], // price-to-earnings ratio (trailing 12 months)
+      epsTTM: Option[BigDecimal], // earnings per share (trailing 12 months)
+      roeTTM: Option[BigDecimal], // return on equity; measures management efficiency
+      dividendYieldIndicatedAnnual: Option[BigDecimal], // annual dividend payout percentage
+      totalDebtToEquityAnnual: Option[BigDecimal], // total debt divided by shareholders' equity
+      netProfitMarginTTM: Option[BigDecimal], // percentage of revenue remaining as profit
+      freeCashFlowPerShareTTM: Option[BigDecimal], // cash generated per share after capital expenditures
+      revenueGrowth5Y: Option[BigDecimal], // average annual revenue growth over 5 years
+      epsGrowth5Y: Option[BigDecimal], // average annual earnings per share growth over 5 years
+      fiftyTwoWeekHigh: Option[BigDecimal], // highest price reached in the last 52 weeks
+      fiftyTwoWeekLow: Option[BigDecimal] // lowest price reached in the last 52 weeks
   ) derives CirceCodec.AsObject
 
   final case class Stock(
       security: Security,
       profile: Option[CompanyProfile],
-      priceAnalytics: Option[PriceAnalytics] = None
+      priceAnalytics: Option[PriceAnalytics] = None,
+      financialMetrics: Option[FinancialMetrics] = None
   ) derives CirceCodec.AsObject
 
   final case class PriceCandle(

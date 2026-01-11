@@ -7,7 +7,7 @@ import io.circe.{Codec, JsonObject}
 import io.circe.fs2.{byteArrayParser, decoder}
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{CompanyProfile, Exchange, Security, SecurityKind, Ticker}
+import stockschecker.domain.{CompanyProfile, Exchange, FinancialMetrics, Security, SecurityKind, Ticker}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 import sttp.client4.circe.asJson
@@ -20,7 +20,7 @@ import scala.util.Try
 trait FinnhubClient[F[_]]:
   def getListedSecurities(exchange: Exchange): Stream[F, Security]
   def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]]
-  def getFinancialMetrics(ticker: Ticker): F[Option[FinnhubClient.FinancialMetricsResponse]]
+  def getFinancialMetrics(ticker: Ticker): F[Option[FinancialMetrics]]
 
 final private class LiveFinnhubClient[F[_]](
     private val config: FinnhubClientConfig,
@@ -29,7 +29,7 @@ final private class LiveFinnhubClient[F[_]](
     F: Async[F]
 ) extends FinnhubClient[F] {
 
-  override def getFinancialMetrics(ticker: Ticker): F[Option[FinnhubClient.FinancialMetricsResponse]] = {
+  override def getFinancialMetrics(ticker: Ticker): F[Option[FinancialMetrics]] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v1/stock/metric?token=${config.apiKey}&symbol=$ticker&metric=all")
       .response(asJson[FinnhubClient.BasicFinancialsResponse])
@@ -40,9 +40,11 @@ final private class LiveFinnhubClient[F[_]](
         case Right(body)                        =>
           body.metric.toJson.as[FinnhubClient.FinancialMetricsResponse] match
             case Right(metrics) =>
-              F.pure(Some(metrics))
+              F.pure(Some(metrics.toDomain(ticker)))
             case Left(err) =>
-              F.raiseError(AppError.JsonParsingFailure(body.metric.toString, s"Error decoding financial metrics for $ticker: ${err.getMessage}"))
+              F.raiseError(
+                AppError.JsonParsingFailure(body.metric.toString, s"Error decoding financial metrics for $ticker: ${err.getMessage}")
+              )
         case Left(ResponseException.DeserializationException(_, error, _)) =>
           F.raiseError(AppError.JsonParsingFailure(response.body.toString, s"Error decoding financials for $ticker: ${error.getMessage}"))
         case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.NotFound =>
@@ -124,7 +126,22 @@ object FinnhubClient {
       freeCashFlowPerShareTTM: Option[BigDecimal],
       revenueGrowth5Y: Option[BigDecimal],
       epsGrowth5Y: Option[BigDecimal]
-  ) derives Codec.AsObject
+  ) derives Codec.AsObject:
+    def toDomain(ticker: Ticker): FinancialMetrics =
+      FinancialMetrics(
+        ticker = ticker,
+        peTTM = peTTM,
+        epsTTM = epsTTM,
+        roeTTM = roeTTM,
+        dividendYieldIndicatedAnnual = dividendYieldIndicatedAnnual,
+        totalDebtToEquityAnnual = totalDebtToEquityAnnual,
+        netProfitMarginTTM = netProfitMarginTTM,
+        freeCashFlowPerShareTTM = freeCashFlowPerShareTTM,
+        revenueGrowth5Y = revenueGrowth5Y,
+        epsGrowth5Y = epsGrowth5Y,
+        fiftyTwoWeekHigh = fiftyTwoWeekHigh,
+        fiftyTwoWeekLow = fiftyTwoWeekLow
+      )
 
   final case class BasicFinancialsResponse(
       metric: JsonObject

@@ -26,13 +26,15 @@ final private class LiveActionExecutor[F[_]](
   private def handleAction(action: Action): F[Unit] =
     logger.info(s"Processing $action") >>
       (action match
-        case Action.Sequence(actions)                    => actions.toList.traverse_(handleAction)
-        case Action.RescheduleAll                        => services.command.rescheduleAll
-        case Action.Schedule(cid, waiting)               => F.sleep(waiting) >> services.command.execute(cid)
-        case Action.DiscoverSecurities(exchanges)        => services.security.fetchLatest(exchanges)
-        case Action.FetchCompanyProfiles(tickers)        => services.companyProfile.fetchLatest(tickers)
-        case Action.UpdatePriceAnalysis(tickers)         => services.price.fetchLatestPriceAnalytics(tickers)
-        case Action.RecordPriceAnalyticsUpdate(tickers) => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
+        case Action.Sequence(actions)                     => actions.toList.traverse_(handleAction)
+        case Action.RescheduleAll                         => services.command.rescheduleAll
+        case Action.Schedule(cid, waiting)                => F.sleep(waiting) >> services.command.execute(cid)
+        case Action.DiscoverSecurities(exchanges)         => services.security.fetchLatest(exchanges)
+        case Action.FetchCompanyProfiles(tickers)         => services.companyProfile.fetchLatest(tickers)
+        case Action.UpdatePriceAnalysis(tickers)          => services.price.fetchLatestPriceAnalytics(tickers)
+        case Action.UpdateFinancialMetrics(tickers)       => services.financialMetrics.fetchLatest(tickers)
+        case Action.RecordPriceAnalyticsUpdate(tickers)   => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
+        case Action.RecordFinancialMetricsUpdate(tickers) => services.companyProfile.recordFinancialMetricsUpdate(tickers)
         case Action.RecordCompanyProfileUpdate(tickers)   => services.security.recordCompanyProfileUpdate(tickers)
         case Action.EnrichCompanyProfiles(filter, limit)  =>
           services.security
@@ -47,6 +49,13 @@ final private class LiveActionExecutor[F[_]](
             .flatMap {
               case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchPricePerformanceSummaries")
               case tickers => dispatcher.dispatch(Action.UpdatePriceAnalysis(NonEmptyList.fromListUnsafe(tickers)))
+            }
+        case Action.FetchFinancialMetrics(filter, limit) =>
+          services.companyProfile
+            .findTickersBy(filter, limit)
+            .flatMap {
+              case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchFinancialMetrics")
+              case tickers => dispatcher.dispatch(Action.UpdateFinancialMetrics(NonEmptyList.fromListUnsafe(tickers)))
             }
       ).handleErrorWith {
         case error: AppError =>

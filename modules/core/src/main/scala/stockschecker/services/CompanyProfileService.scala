@@ -21,6 +21,7 @@ trait CompanyProfileService[F[_]]:
   def fetchLatest(tickers: NonEmptyList[Ticker]): F[Unit]
   def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]]
   def recordPriceAnalyticsUpdate(tickers: List[Ticker]): F[Unit]
+  def recordFinancialMetricsUpdate(tickers: List[Ticker]): F[Unit]
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
@@ -73,6 +74,9 @@ final private class LiveCompanyProfileService[F[_]](
   
   private def save(cps: List[CompanyProfile]): F[Unit] =
     repository.save(cps) >> dispatcher.dispatch(Action.RecordCompanyProfileUpdate(cps.map(_.ticker)))
+
+  override def recordFinancialMetricsUpdate(tickers: List[Ticker]): F[Unit] =
+    repository.updateFinancialMetricsLastUpdated(tickers)
 }
 
 object CompanyProfileService:

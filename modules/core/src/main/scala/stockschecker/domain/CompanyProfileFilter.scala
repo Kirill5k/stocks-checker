@@ -17,6 +17,7 @@ enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt
   case UpdatedWithin(duration: FiniteDuration)
   case NotUpdatedFor(duration: FiniteDuration)
   case PriceAnalyticsNotUpdatedFor(duration: FiniteDuration)
+  case FinancialMetricsNotUpdatedFor(duration: FiniteDuration)
   case TickerMatching(pattern: String)
 
 object CompanyProfileFilter extends JsonCodecs:
@@ -30,6 +31,7 @@ object CompanyProfileFilter extends JsonCodecs:
       "updated-within"                    -> JsonTaggedAdt.tagged[CompanyProfileFilter.UpdatedWithin],
       "not-updated-for"                   -> JsonTaggedAdt.tagged[CompanyProfileFilter.NotUpdatedFor],
       "price-analytics-not-updated-for"   -> JsonTaggedAdt.tagged[CompanyProfileFilter.PriceAnalyticsNotUpdatedFor],
+      "financial-metrics-not-updated-for" -> JsonTaggedAdt.tagged[CompanyProfileFilter.FinancialMetricsNotUpdatedFor],
       "ticker-matching"                   -> JsonTaggedAdt.tagged[CompanyProfileFilter.TickerMatching],
       "composite"                         -> JsonTaggedAdt.tagged[CompanyProfileFilter.Composite]
     ),
