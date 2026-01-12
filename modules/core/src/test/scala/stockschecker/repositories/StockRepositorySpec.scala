@@ -580,7 +580,8 @@ class StockRepositorySpec extends RepositorySpec {
       "return only existing stocks when some tickers don't exist" in {
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile))
+          "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
+          "financial-metrics" -> List(toDoc(AAPLFinancialMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           val nonExistent = Ticker("GOOG")
@@ -624,7 +625,8 @@ class StockRepositorySpec extends RepositorySpec {
       "return stocks with partial data when profile or performance missing" in {
         val seedData = Map(
           "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile))
+          "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
+          "financial-metrics" -> List(toDoc(AAPLFinancialMetrics), toDoc(MSFTFinancialMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
@@ -632,8 +634,8 @@ class StockRepositorySpec extends RepositorySpec {
             res       <- stockRepo.findByTickers(NonEmptyList.of(AAPL, MSFT))
           yield
             res.size mustBe 2
-            res.exists(s => s.security.ticker == AAPL && s.profile.isDefined) mustBe true
-            res.exists(s => s.security.ticker == MSFT && s.profile.isEmpty) mustBe true
+            res.exists(s => s.security.ticker == AAPL && s.profile.isDefined && s.financialMetrics.isDefined) mustBe true
+            res.exists(s => s.security.ticker == MSFT && s.profile.isEmpty && s.financialMetrics.isDefined) mustBe true
         }
       }
     }

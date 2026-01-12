@@ -69,12 +69,28 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       sortBy: Option[StockSortField]
   )
 
+  final private case class FinancialMetricsView(
+      peRatioTtm: Option[BigDecimal],
+      epsTtm: Option[BigDecimal],
+      roeTtm: Option[BigDecimal],
+      dividendYieldAnnual: Option[BigDecimal],
+      debtToEquityAnnual: Option[BigDecimal],
+      profitMarginTtm: Option[BigDecimal],
+      freeCashFlowPerShareTtm: Option[BigDecimal],
+      revenueGrowth5Y: Option[BigDecimal],
+      epsGrowth5Y: Option[BigDecimal],
+      priceHigh52Week: Option[BigDecimal],
+      priceLow52Week: Option[BigDecimal],
+      lastUpdatedAt: Option[Instant]
+  ) derives CirceCodec.AsObject
+
   final private case class StockView(
       ticker: Ticker,
       name: String,
       security: StockSecurityView,
       profile: Option[StockCompanyProfileView],
-      priceAnalytics: Option[PriceAnalyticsView]
+      priceAnalytics: Option[PriceAnalyticsView],
+      financialMetrics: Option[FinancialMetricsView]
   ) derives CirceCodec.AsObject
 
   private object StockView:
@@ -111,6 +127,20 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
         metrics = pa.metrics,
         scores = pa.scores,
         lastUpdatedAt = stock.profile.flatMap(_.priceAnalyticsLastUpdatedAt)
+      )),
+      financialMetrics = stock.financialMetrics.map(fm => FinancialMetricsView(
+        peRatioTtm = fm.peRatioTtm,
+        epsTtm = fm.epsTtm,
+        roeTtm = fm.roeTtm,
+        dividendYieldAnnual = fm.dividendYieldAnnual,
+        debtToEquityAnnual = fm.debtToEquityAnnual,
+        profitMarginTtm = fm.profitMarginTtm,
+        freeCashFlowPerShareTtm = fm.freeCashFlowPerShareTtm,
+        revenueGrowth5Y = fm.revenueGrowth5Y,
+        epsGrowth5Y = fm.epsGrowth5Y,
+        priceHigh52Week = fm.priceHigh52Week,
+        priceLow52Week = fm.priceLow52Week,
+        lastUpdatedAt = stock.profile.flatMap(_.financialMetricsLastUpdatedAt)
       ))
     )
 
@@ -149,6 +179,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       scores: StockAnalysisScores,
       lastUpdatedAt: Option[Instant]
   ) derives CirceCodec.AsObject
+
 
   private val getStockByTickerEndpoint = Controller.secureEndpoint.get
     .in("stocks" / path[Ticker]("ticker"))

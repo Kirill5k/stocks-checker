@@ -62,6 +62,20 @@ class StockControllerSpec extends HttpRoutesWordSpec {
       |   "consistencyScore":49.96
       | },
       | "lastUpdatedAt" : null
+      |},
+      |"financialMetrics":{
+      |  "peRatioTtm":34.11,
+      |  "epsTtm":7.46,
+      |  "roeTtm":164.05,
+      |  "dividendYieldAnnual":0.40,
+      |  "debtToEquityAnnual":1.34,
+      |  "profitMarginTtm":26.92,
+      |  "freeCashFlowPerShareTtm":6.86,
+      |  "revenueGrowth5Y":8.68,
+      |  "epsGrowth5Y":17.91,
+      |  "priceHigh52Week":288.62,
+      |  "priceLow52Week":169.21,
+      |  "lastUpdatedAt":null
       |}
       | }
       |""".stripMargin
@@ -122,10 +136,24 @@ class StockControllerSpec extends HttpRoutesWordSpec {
             |  "website":"https://www.microsoft.com",
             |  "ipoDate":"1986-03-13",
             |  "currency":"USD",
-            |  "marketCap":3100000000000,
-            |  "lastUpdatedAt":null
+          |  "marketCap":3100000000000,
+          |  "lastUpdatedAt":null
           |  },
-            |"priceAnalytics":null
+            |"priceAnalytics":null,
+            |"financialMetrics":{
+            |  "peRatioTtm":38.50,
+            |  "epsTtm":11.23,
+            |  "roeTtm":42.30,
+            |  "dividendYieldAnnual":0.75,
+            |  "debtToEquityAnnual":0.58,
+            |  "profitMarginTtm":36.20,
+            |  "freeCashFlowPerShareTtm":9.12,
+            |  "revenueGrowth5Y":12.40,
+            |  "epsGrowth5Y":15.80,
+            |  "priceHigh52Week":420.00,
+            |  "priceLow52Week":310.00,
+            |  "lastUpdatedAt":null
+            |}
             | }]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(expectedJson))
         verify(svc).findAll(StockFilters(), None)
