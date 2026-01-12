@@ -12,7 +12,6 @@ import mongo4cats.embedded.EmbeddedMongo
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AsyncWordSpec
 import stockschecker.domain.{CompanyProfile, FinancialMetrics, PriceAnalytics, Security}
-import stockschecker.repositories.entities.{PriceAnalyticsEntity}
 
 import java.time.Instant
 import scala.concurrent.Future
@@ -54,7 +53,14 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
     )
 
   protected def toDoc(analytics: PriceAnalytics): Document =
-    PriceAnalyticsEntity.from(analytics, now).toBson.asDocument.get
+    Document(
+      "_id" := analytics.ticker,
+      "performanceSummary" := analytics.performanceSummary,
+      "metrics" := analytics.metrics,
+      "scores" := analytics.scores,
+      "createdAt" := now,
+      "updatedAt" := now
+    )
 
   protected def toDoc(metrics: FinancialMetrics): Document =
     Document(

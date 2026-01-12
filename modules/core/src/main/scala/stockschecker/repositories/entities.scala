@@ -122,16 +122,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       )
 
   object PriceAnalyticsEntity:
-    given MongoCodecProvider[PriceAnalyticsEntity]                          = deriveCirceCodecProvider[PriceAnalyticsEntity]
-    def from(analytics: PriceAnalytics, now: Instant): PriceAnalyticsEntity =
-      PriceAnalyticsEntity(
-        _id = analytics.ticker,
-        performanceSummary = analytics.performanceSummary,
-        metrics = analytics.metrics,
-        scores = analytics.scores,
-        createdAt = now,
-        updatedAt = now
-      )
+    given MongoCodecProvider[PriceAnalyticsEntity] = deriveCirceCodecProvider[PriceAnalyticsEntity]
 
   final case class FinancialMetricsEntity(
       _id: Ticker,
