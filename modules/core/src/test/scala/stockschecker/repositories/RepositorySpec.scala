@@ -11,7 +11,8 @@ import mongo4cats.database.MongoDatabase
 import mongo4cats.embedded.EmbeddedMongo
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AsyncWordSpec
-import stockschecker.repositories.entities.{CompanyProfileEntity, PriceAnalyticsEntity, SecurityEntity}
+import stockschecker.domain.{CompanyProfile, FinancialMetrics, PriceAnalytics, Security}
+import stockschecker.repositories.entities.{PriceAnalyticsEntity}
 
 import java.time.Instant
 import scala.concurrent.Future
@@ -22,14 +23,56 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
 
   private val now = Instant.now()
 
-  protected def toDoc(security: stockschecker.domain.Security): Document =
-    SecurityEntity.from(security, now).toBson.asDocument.get
+  protected def toDoc(security: Security): Document =
+    Document(
+      "_id" := security.ticker.value,
+      "ticker" := security.ticker.value,
+      "exchange" := security.exchange.print,
+      "name" := security.name,
+      "kind" := security.kind.print,
+      "isActive" := security.isActive,
+      "companyProfileLastUpdatedAt" := security.companyProfileLastUpdatedAt,
+      "createdAt" := now,
+      "updatedAt" := now
+    )
 
-  protected def toDoc(profile: stockschecker.domain.CompanyProfile): Document =
-    CompanyProfileEntity.from(profile, now).toBson.asDocument.get
+  protected def toDoc(profile: CompanyProfile): Document =
+    Document(
+      "_id" := profile.ticker.value,
+      "name" := profile.name,
+      "country" := profile.country,
+      "industry" := profile.industry,
+      "description" := profile.description,
+      "website" := profile.website,
+      "ipoDate" := profile.ipoDate,
+      "currency" := profile.currency,
+      "marketCap" := profile.marketCap,
+      "priceAnalyticsLastUpdatedAt" := profile.priceAnalyticsLastUpdatedAt,
+      "financialMetricsLastUpdatedAt" := profile.financialMetricsLastUpdatedAt,
+      "createdAt" := now,
+      "updatedAt" := now
+    )
 
-  protected def toDoc(analytics: stockschecker.domain.PriceAnalytics): Document =
+  protected def toDoc(analytics: PriceAnalytics): Document =
     PriceAnalyticsEntity.from(analytics, now).toBson.asDocument.get
+
+  protected def toDoc(metrics: FinancialMetrics): Document =
+    Document(
+      "_id" := metrics.ticker.value,
+      "peRatioTtm" := metrics.peRatioTtm,
+      "epsTtm" := metrics.epsTtm,
+      "roeTtm" := metrics.roeTtm,
+      "dividendYieldAnnual" := metrics.dividendYieldAnnual,
+      "debtToEquityAnnual" := metrics.debtToEquityAnnual,
+      "profitMarginTtm" := metrics.profitMarginTtm,
+      "freeCashFlowPerShareTtm" := metrics.freeCashFlowPerShareTtm,
+      "revenueGrowth5Y" := metrics.revenueGrowth5Y,
+      "epsGrowth5Y" := metrics.epsGrowth5Y,
+      "priceHigh52Week" := metrics.priceHigh52Week,
+      "priceLow52Week" := metrics.priceLow52Week,
+      "createdAt" := now,
+      "updatedAt" := now
+    )
 
   protected def withEmbeddedMongoDatabase[A](test: MongoDatabase[IO] => IO[A]): Future[A] =
     withRunningEmbeddedMongo(port) {

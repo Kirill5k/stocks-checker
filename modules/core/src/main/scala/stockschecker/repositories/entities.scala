@@ -52,19 +52,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       )
 
   object SecurityEntity:
-    given MongoCodecProvider[SecurityEntity]                   = deriveCirceCodecProvider[SecurityEntity]
-    def from(security: Security, now: Instant): SecurityEntity =
-      SecurityEntity(
-        _id = security.ticker,
-        ticker = security.ticker,
-        exchange = security.exchange,
-        name = security.name,
-        kind = security.kind,
-        isActive = security.isActive,
-        companyProfileLastUpdatedAt = security.companyProfileLastUpdatedAt,
-        createdAt = now,
-        updatedAt = now
-      )
+    given MongoCodecProvider[SecurityEntity] = deriveCirceCodecProvider[SecurityEntity]
 
   final case class CompanyProfileEntity(
       _id: Ticker,
@@ -97,23 +85,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       )
 
   object CompanyProfileEntity:
-    given MongoCodecProvider[CompanyProfileEntity]                        = deriveCirceCodecProvider[CompanyProfileEntity]
-    def from(profile: CompanyProfile, now: Instant): CompanyProfileEntity =
-      CompanyProfileEntity(
-        _id = profile.ticker,
-        name = profile.name,
-        country = profile.country,
-        industry = profile.industry,
-        description = profile.description,
-        website = profile.website,
-        ipoDate = profile.ipoDate,
-        currency = profile.currency,
-        marketCap = profile.marketCap,
-        priceAnalyticsLastUpdatedAt = profile.priceAnalyticsLastUpdatedAt,
-        financialMetricsLastUpdatedAt = profile.financialMetricsLastUpdatedAt,
-        createdAt = now,
-        updatedAt = now
-      )
+    given MongoCodecProvider[CompanyProfileEntity] = deriveCirceCodecProvider[CompanyProfileEntity]
 
   final case class LatestPriceEntity(
       _id: String,
@@ -132,38 +104,6 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   object LatestPriceEntity:
     given MongoCodecProvider[LatestPriceEntity] = deriveCirceCodecProvider[LatestPriceEntity]
-
-  final case class PricePerformanceSummaryEntity(
-      _id: Ticker,
-      latestPrice: BigDecimal,
-      latestPriceDate: LocalDate,
-      oneMonthChange: Option[BigDecimal],
-      threeMonthChange: Option[BigDecimal],
-      sixMonthChange: Option[BigDecimal],
-      oneYearChange: Option[BigDecimal],
-      threeYearChange: Option[BigDecimal],
-      fiveYearChange: Option[BigDecimal],
-      tenYearChange: Option[BigDecimal],
-      maxChange: Option[BigDecimal],
-      createdAt: Instant,
-      updatedAt: Instant
-  ) derives Codec.AsObject:
-    def toDomain: PricePerformanceSummary =
-      PricePerformanceSummary(
-        latestPrice = latestPrice,
-        latestPriceDate = latestPriceDate,
-        oneMonthChange = oneMonthChange,
-        threeMonthChange = threeMonthChange,
-        sixMonthChange = sixMonthChange,
-        oneYearChange = oneYearChange,
-        threeYearChange = threeYearChange,
-        fiveYearChange = fiveYearChange,
-        tenYearChange = tenYearChange,
-        maxChange = maxChange
-      )
-
-  object PricePerformanceSummaryEntity:
-    given MongoCodecProvider[PricePerformanceSummaryEntity] = deriveCirceCodecProvider[PricePerformanceSummaryEntity]
 
   final case class PriceAnalyticsEntity(
       _id: Ticker,
@@ -227,23 +167,6 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   object FinancialMetricsEntity:
     given MongoCodecProvider[FinancialMetricsEntity] = deriveCirceCodecProvider[FinancialMetricsEntity]
-    def from(metrics: FinancialMetrics, now: Instant): FinancialMetricsEntity =
-      FinancialMetricsEntity(
-        _id = metrics.ticker,
-        peRatioTtm = metrics.peRatioTtm,
-        epsTtm = metrics.epsTtm,
-        roeTtm = metrics.roeTtm,
-        dividendYieldAnnual = metrics.dividendYieldAnnual,
-        debtToEquityAnnual = metrics.debtToEquityAnnual,
-        profitMarginTtm = metrics.profitMarginTtm,
-        freeCashFlowPerShareTtm = metrics.freeCashFlowPerShareTtm,
-        revenueGrowth5Y = metrics.revenueGrowth5Y,
-        epsGrowth5Y = metrics.epsGrowth5Y,
-        priceHigh52Week = metrics.priceHigh52Week,
-        priceLow52Week = metrics.priceLow52Week,
-        createdAt = now,
-        updatedAt = now
-      )
 
   final case class CommandEntity(
       _id: ObjectId,

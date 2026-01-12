@@ -31,6 +31,21 @@ object fixtures {
     priceLow52Week = Some(BigDecimal(169.21))
   )
 
+  val MSFTFinancialMetrics: FinancialMetrics = FinancialMetrics(
+    ticker = MSFT,
+    peRatioTtm = Some(BigDecimal(38.50)),
+    epsTtm = Some(BigDecimal(11.23)),
+    roeTtm = Some(BigDecimal(42.30)),
+    dividendYieldAnnual = Some(BigDecimal(0.75)),
+    debtToEquityAnnual = Some(BigDecimal(0.58)),
+    profitMarginTtm = Some(BigDecimal(36.20)),
+    freeCashFlowPerShareTtm = Some(BigDecimal(9.12)),
+    revenueGrowth5Y = Some(BigDecimal(12.40)),
+    epsGrowth5Y = Some(BigDecimal(15.80)),
+    priceHigh52Week = Some(BigDecimal(420.00)),
+    priceLow52Week = Some(BigDecimal(310.00))
+  )
+
   val AAPLSecurity: Security = Security(
     ticker = AAPL,
     exchange = Exchange.NASDAQ,
@@ -138,12 +153,14 @@ object fixtures {
   val AAPLStock: Stock = Stock(
     security = AAPLSecurity,
     profile = Some(AAPLCompanyProfile),
-    priceAnalytics = Some(AAPLPriceAnalytics)
+    priceAnalytics = Some(AAPLPriceAnalytics),
+    financialMetrics = Some(AAPLFinancialMetrics)
   )
 
   val MSFTStock: Stock = Stock(
     security = MSFTSecurity,
     profile = Some(MSFTCompanyProfile),
-    priceAnalytics = None
+    priceAnalytics = None,
+    financialMetrics = Some(MSFTFinancialMetrics)
   )
 }
