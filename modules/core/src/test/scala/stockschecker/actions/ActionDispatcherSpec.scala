@@ -8,8 +8,8 @@ import stockschecker.domain.Exchange
 class ActionDispatcherSpec extends IOWordSpec {
   "An ActionDispatcher" should {
     "add an action to the queue of dispatched actions" in {
-      val a1 = Action.DiscoverSecurities(NonEmptyList.of(Exchange.NYSE))
-      val a2 = Action.DiscoverSecurities(NonEmptyList.of(Exchange.NASDAQ))
+      val a1 = Action.FetchSecurities(NonEmptyList.of(Exchange.NYSE))
+      val a2 = Action.FetchSecurities(NonEmptyList.of(Exchange.NASDAQ))
       (for
         ad      <- ActionDispatcher.make[IO]
         _       <- ad.dispatch(a1)

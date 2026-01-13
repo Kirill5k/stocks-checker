@@ -110,7 +110,7 @@ The application starts in `Application.scala` which:
 
 The application uses a custom action-based task system for background jobs:
 
-*   **Action**: A sealed trait representing different types of background tasks (e.g., `DiscoverSecurities`, `FetchCompanyProfiles`). Actions are defined in `actions/Action.scala`.
+*   **Action**: A sealed trait representing different types of background tasks (e.g., `FetchSecurities`, `FetchCompanyProfiles`). Actions are defined in `actions/Action.scala`.
 *   **ActionDispatcher**: A queue-based dispatcher that manages pending actions. Uses an FS2 queue with a capacity of 128.
 *   **ActionExecutor**: Consumes actions from the dispatcher and executes them by calling appropriate service methods. Runs as an FS2 stream in parallel with the HTTP server.
 

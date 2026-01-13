@@ -10,34 +10,37 @@ import scala.concurrent.duration.FiniteDuration
 enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
   case RescheduleAll
   case Schedule(cid: CommandId, duration: FiniteDuration)
-  case DiscoverSecurities(exchanges: NonEmptyList[Exchange])
-  case EnrichCompanyProfiles(filter: SecurityFilter, limit: Option[Int] = None)
-  case FetchPricePerformanceSummaries(filter: CompanyProfileFilter, limit: Option[Int] = None)
-  case FetchCompanyProfiles(tickers: NonEmptyList[Ticker])
+  case Sequence(actions: NonEmptyList[Action])
+  // Fetch operations - initial data retrieval
+  case FetchSecurities(exchanges: NonEmptyList[Exchange])
+  case FetchCompanyProfiles(filter: SecurityFilter, limit: Option[Int] = None)
   case FetchFinancialMetrics(filter: CompanyProfileFilter, limit: Option[Int] = None)
+  case FetchPricePerformanceSummaries(filter: CompanyProfileFilter, limit: Option[Int] = None)
+  // Update operations - processing/analysis
+  case UpdateCompanyProfiles(tickers: NonEmptyList[Ticker])
   case UpdateFinancialMetrics(tickers: NonEmptyList[Ticker])
   case UpdatePriceAnalysis(tickers: NonEmptyList[Ticker])
-  case RecordPriceAnalyticsUpdate(tickers: List[Ticker])
-  case RecordFinancialMetricsUpdate(tickers: List[Ticker])
+  // Record operations - audit/tracking
   case RecordCompanyProfileUpdate(tickers: List[Ticker])
-  case Sequence(actions: NonEmptyList[Action])
+  case RecordFinancialMetricsUpdate(tickers: List[Ticker])
+  case RecordPriceAnalyticsUpdate(tickers: List[Ticker])
 
 object Action extends JsonCodecs {
   given JsonTaggedAdt.Config[Action] = JsonTaggedAdt.Config.Values[Action](
     mappings = Map(
-      "discover-securities"               -> JsonTaggedAdt.tagged[Action.DiscoverSecurities],
-      "enrich-company-profiles"           -> JsonTaggedAdt.tagged[Action.EnrichCompanyProfiles],
-      "fetch-price-performance-summaries" -> JsonTaggedAdt.tagged[Action.FetchPricePerformanceSummaries],
+      "reschedule-all"                    -> JsonTaggedAdt.tagged[Action.RescheduleAll.type],
+      "schedule"                          -> JsonTaggedAdt.tagged[Action.Schedule],
+      "sequence"                          -> JsonTaggedAdt.tagged[Action.Sequence],
+      "fetch-securities"                  -> JsonTaggedAdt.tagged[Action.FetchSecurities],
       "fetch-company-profiles"            -> JsonTaggedAdt.tagged[Action.FetchCompanyProfiles],
       "fetch-financial-metrics"           -> JsonTaggedAdt.tagged[Action.FetchFinancialMetrics],
-      "update-price-analysis"             -> JsonTaggedAdt.tagged[Action.UpdatePriceAnalysis],
+      "fetch-price-performance-summaries" -> JsonTaggedAdt.tagged[Action.FetchPricePerformanceSummaries],
+      "update-company-profiles"           -> JsonTaggedAdt.tagged[Action.UpdateCompanyProfiles],
       "update-financial-metrics"          -> JsonTaggedAdt.tagged[Action.UpdateFinancialMetrics],
+      "update-price-analysis"             -> JsonTaggedAdt.tagged[Action.UpdatePriceAnalysis],
       "record-company-profile-update"     -> JsonTaggedAdt.tagged[Action.RecordCompanyProfileUpdate],
       "record-financial-metrics-update"   -> JsonTaggedAdt.tagged[Action.RecordFinancialMetricsUpdate],
-      "record-price-analytics-update"     -> JsonTaggedAdt.tagged[Action.RecordPriceAnalyticsUpdate],
-      "schedule"                          -> JsonTaggedAdt.tagged[Action.Schedule],
-      "reschedule-all"                    -> JsonTaggedAdt.tagged[Action.RescheduleAll.type],
-      "sequence"                          -> JsonTaggedAdt.tagged[Action.Sequence]
+      "record-price-analytics-update"     -> JsonTaggedAdt.tagged[Action.RecordPriceAnalyticsUpdate]
     ),
     strict = true,
     typeFieldName = "kind"

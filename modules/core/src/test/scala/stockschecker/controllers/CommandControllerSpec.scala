@@ -35,7 +35,7 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
              |    "isActive" : true,
              |    "action" : {
              |      "exchanges" : ["nasdaq"],
-             |      "kind" : "discover-securities"
+             |      "kind" : "fetch-securities"
              |    },
              |    "schedule" : {
              |      "kind" : "periodic",
@@ -89,7 +89,7 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
             """{
               |    "action" : {
               |      "exchanges" : ["nasdaq"],
-              |      "kind" : "discover-securities"
+              |      "kind" : "fetch-securities"
               |    },
               |    "schedule": {
               |        "kind": "periodic",
@@ -131,7 +131,7 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
 
         val res = for
           controller <- CommandController.make(apiConfig, svc)
-          body = """{"action":{"kind":"discover-securities","exchanges":["nasdaq"]},"schedule":{"kind":"periodic","period":"20minutes"}}"""
+          body = """{"action":{"kind":"fetch-securities","exchanges":["nasdaq"]},"schedule":{"kind":"periodic","period":"20minutes"}}"""
           req  = Request[IO](uri = uri"/commands", method = Method.POST).withBody(body)
           res <- controller.routes.orNotFound.run(req)
         yield res

@@ -143,7 +143,7 @@ object fixtures {
   val FetchLatestSecuritiesCommand: Command = Command(
     id = CommandId(ObjectId.gen),
     isActive = true,
-    action = Action.DiscoverSecurities(NonEmptyList.of(Exchange.NASDAQ)),
+    action = Action.FetchSecurities(NonEmptyList.of(Exchange.NASDAQ)),
     schedule = Schedule.Periodic(20.minutes),
     lastExecutedAt = Some(ts),
     executionCount = 1,

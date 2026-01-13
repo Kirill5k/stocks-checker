@@ -29,19 +29,19 @@ final private class LiveActionExecutor[F[_]](
         case Action.Sequence(actions)                     => actions.toList.traverse_(handleAction)
         case Action.RescheduleAll                         => services.command.rescheduleAll
         case Action.Schedule(cid, waiting)                => F.sleep(waiting) >> services.command.execute(cid)
-        case Action.DiscoverSecurities(exchanges)         => services.security.fetchLatest(exchanges)
-        case Action.FetchCompanyProfiles(tickers)         => services.companyProfile.fetchLatest(tickers)
+        case Action.FetchSecurities(exchanges)            => services.security.fetchLatest(exchanges)
+        case Action.UpdateCompanyProfiles(tickers)        => services.companyProfile.fetchLatest(tickers)
         case Action.UpdatePriceAnalysis(tickers)          => services.price.fetchLatestPriceAnalytics(tickers)
         case Action.UpdateFinancialMetrics(tickers)       => services.financialMetrics.fetchLatest(tickers)
         case Action.RecordPriceAnalyticsUpdate(tickers)   => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
         case Action.RecordFinancialMetricsUpdate(tickers) => services.companyProfile.recordFinancialMetricsUpdate(tickers)
         case Action.RecordCompanyProfileUpdate(tickers)   => services.security.recordCompanyProfileUpdate(tickers)
-        case Action.EnrichCompanyProfiles(filter, limit)  =>
+        case Action.FetchCompanyProfiles(filter, limit)   =>
           services.security
             .findTickersBy(filter, limit)
             .flatMap {
-              case Nil     => logger.info("Couldn't find any applicable securities for Action.EnrichCompanyProfiles")
-              case tickers => dispatcher.dispatch(Action.FetchCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)))
+              case Nil     => logger.info("Couldn't find any applicable securities for Action.FetchCompanyProfiles")
+              case tickers => dispatcher.dispatch(Action.UpdateCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)))
             }
         case Action.FetchPricePerformanceSummaries(filter, limit) =>
           services.companyProfile
