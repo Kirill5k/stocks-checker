@@ -31,7 +31,7 @@ final private class LiveActionExecutor[F[_]](
         case Action.Schedule(cid, waiting)                => F.sleep(waiting) >> services.command.execute(cid)
         case Action.FetchSecurities(exchanges)            => services.security.fetchLatest(exchanges)
         case Action.UpdateCompanyProfiles(tickers)        => services.companyProfile.fetchLatest(tickers)
-        case Action.UpdatePriceAnalysis(tickers)          => services.price.fetchLatestPriceAnalytics(tickers)
+        case Action.UpdatePriceAnalytics(tickers)          => services.price.fetchLatestPriceAnalytics(tickers)
         case Action.UpdateFinancialMetrics(tickers)       => services.financialMetrics.fetchLatest(tickers)
         case Action.RecordPriceAnalyticsUpdate(tickers)   => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
         case Action.RecordFinancialMetricsUpdate(tickers) => services.companyProfile.recordFinancialMetricsUpdate(tickers)
@@ -43,12 +43,12 @@ final private class LiveActionExecutor[F[_]](
               case Nil     => logger.info("Couldn't find any applicable securities for Action.FetchCompanyProfiles")
               case tickers => dispatcher.dispatch(Action.UpdateCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)))
             }
-        case Action.FetchPricePerformanceSummaries(filter, limit) =>
+        case Action.FetchPriceAnalytics(filter, limit) =>
           services.companyProfile
             .findTickersBy(filter, limit)
             .flatMap {
               case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchPricePerformanceSummaries")
-              case tickers => dispatcher.dispatch(Action.UpdatePriceAnalysis(NonEmptyList.fromListUnsafe(tickers)))
+              case tickers => dispatcher.dispatch(Action.UpdatePriceAnalytics(NonEmptyList.fromListUnsafe(tickers)))
             }
         case Action.FetchFinancialMetrics(filter, limit) =>
           services.companyProfile

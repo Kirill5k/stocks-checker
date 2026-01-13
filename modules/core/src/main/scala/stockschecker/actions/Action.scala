@@ -15,11 +15,11 @@ enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithCo
   case FetchSecurities(exchanges: NonEmptyList[Exchange])
   case FetchCompanyProfiles(filter: SecurityFilter, limit: Option[Int] = None)
   case FetchFinancialMetrics(filter: CompanyProfileFilter, limit: Option[Int] = None)
-  case FetchPricePerformanceSummaries(filter: CompanyProfileFilter, limit: Option[Int] = None)
+  case FetchPriceAnalytics(filter: CompanyProfileFilter, limit: Option[Int] = None)
   // Update operations - processing/analysis
   case UpdateCompanyProfiles(tickers: NonEmptyList[Ticker])
   case UpdateFinancialMetrics(tickers: NonEmptyList[Ticker])
-  case UpdatePriceAnalysis(tickers: NonEmptyList[Ticker])
+  case UpdatePriceAnalytics(tickers: NonEmptyList[Ticker])
   // Record operations - audit/tracking
   case RecordCompanyProfileUpdate(tickers: List[Ticker])
   case RecordFinancialMetricsUpdate(tickers: List[Ticker])
@@ -28,19 +28,19 @@ enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithCo
 object Action extends JsonCodecs {
   given JsonTaggedAdt.Config[Action] = JsonTaggedAdt.Config.Values[Action](
     mappings = Map(
-      "reschedule-all"                    -> JsonTaggedAdt.tagged[Action.RescheduleAll.type],
-      "schedule"                          -> JsonTaggedAdt.tagged[Action.Schedule],
-      "sequence"                          -> JsonTaggedAdt.tagged[Action.Sequence],
-      "fetch-securities"                  -> JsonTaggedAdt.tagged[Action.FetchSecurities],
-      "fetch-company-profiles"            -> JsonTaggedAdt.tagged[Action.FetchCompanyProfiles],
-      "fetch-financial-metrics"           -> JsonTaggedAdt.tagged[Action.FetchFinancialMetrics],
-      "fetch-price-performance-summaries" -> JsonTaggedAdt.tagged[Action.FetchPricePerformanceSummaries],
-      "update-company-profiles"           -> JsonTaggedAdt.tagged[Action.UpdateCompanyProfiles],
-      "update-financial-metrics"          -> JsonTaggedAdt.tagged[Action.UpdateFinancialMetrics],
-      "update-price-analysis"             -> JsonTaggedAdt.tagged[Action.UpdatePriceAnalysis],
-      "record-company-profile-update"     -> JsonTaggedAdt.tagged[Action.RecordCompanyProfileUpdate],
-      "record-financial-metrics-update"   -> JsonTaggedAdt.tagged[Action.RecordFinancialMetricsUpdate],
-      "record-price-analytics-update"     -> JsonTaggedAdt.tagged[Action.RecordPriceAnalyticsUpdate]
+      "reschedule-all"                  -> JsonTaggedAdt.tagged[Action.RescheduleAll.type],
+      "schedule"                        -> JsonTaggedAdt.tagged[Action.Schedule],
+      "sequence"                        -> JsonTaggedAdt.tagged[Action.Sequence],
+      "fetch-securities"                -> JsonTaggedAdt.tagged[Action.FetchSecurities],
+      "fetch-company-profiles"          -> JsonTaggedAdt.tagged[Action.FetchCompanyProfiles],
+      "fetch-financial-metrics"         -> JsonTaggedAdt.tagged[Action.FetchFinancialMetrics],
+      "fetch-price-analytics"           -> JsonTaggedAdt.tagged[Action.FetchPriceAnalytics],
+      "update-company-profiles"         -> JsonTaggedAdt.tagged[Action.UpdateCompanyProfiles],
+      "update-financial-metrics"        -> JsonTaggedAdt.tagged[Action.UpdateFinancialMetrics],
+      "update-price-analytics"          -> JsonTaggedAdt.tagged[Action.UpdatePriceAnalytics],
+      "record-company-profile-update"   -> JsonTaggedAdt.tagged[Action.RecordCompanyProfileUpdate],
+      "record-financial-metrics-update" -> JsonTaggedAdt.tagged[Action.RecordFinancialMetricsUpdate],
+      "record-price-analytics-update"   -> JsonTaggedAdt.tagged[Action.RecordPriceAnalyticsUpdate]
     ),
     strict = true,
     typeFieldName = "kind"
