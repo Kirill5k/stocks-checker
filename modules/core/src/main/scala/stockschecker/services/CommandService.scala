@@ -55,10 +55,10 @@ final private class LiveCommandService[F[_]](
       nextExecTime = cmd.schedule.nextExecutionTime(now)
       _ <- actionDispatcher.dispatch(Action.Schedule(cid, nextExecTime.durationBetween(now)))
     yield ()
-    
+
   override def executeManually(cid: CommandId): F[Unit] =
     repo.find(cid).flatMap(cmd => actionDispatcher.dispatch(cmd.action))
-  
+
   override def getAll: F[List[Command]] =
     repo.all
 

@@ -13,7 +13,14 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Filter, Index, Sort, Update}
-import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, PricePerformanceSummary, StockAnalysisMetrics, StockAnalysisScores, Ticker}
+import stockschecker.domain.{
+  PriceAnalytics,
+  PriceAnalyticsFilter,
+  PricePerformanceSummary,
+  StockAnalysisMetrics,
+  StockAnalysisScores,
+  Ticker
+}
 import stockschecker.repositories.entities.PriceAnalyticsEntity
 
 import java.time.Instant

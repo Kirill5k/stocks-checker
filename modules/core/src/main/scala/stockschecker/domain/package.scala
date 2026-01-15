@@ -68,17 +68,17 @@ package object domain {
 
   final case class FinancialMetrics(
       ticker: Ticker,
-      peRatioTtm: Option[BigDecimal], // Price-to-Earnings Ratio (Trailing 12 Months)
-      epsTtm: Option[BigDecimal], // Earnings Per Share (Trailing 12 Months)
-      roeTtm: Option[BigDecimal], // Return on Equity (Trailing 12 Months)
-      dividendYieldAnnual: Option[BigDecimal], // Indicated Annual Dividend Yield
-      debtToEquityAnnual: Option[BigDecimal], // Total Debt to Equity (Annual)
-      profitMarginTtm: Option[BigDecimal], // Net Profit Margin (Trailing 12 Months)
+      peRatioTtm: Option[BigDecimal],              // Price-to-Earnings Ratio (Trailing 12 Months)
+      epsTtm: Option[BigDecimal],                  // Earnings Per Share (Trailing 12 Months)
+      roeTtm: Option[BigDecimal],                  // Return on Equity (Trailing 12 Months)
+      dividendYieldAnnual: Option[BigDecimal],     // Indicated Annual Dividend Yield
+      debtToEquityAnnual: Option[BigDecimal],      // Total Debt to Equity (Annual)
+      profitMarginTtm: Option[BigDecimal],         // Net Profit Margin (Trailing 12 Months)
       freeCashFlowPerShareTtm: Option[BigDecimal], // Free Cash Flow Per Share (Trailing 12 Months)
-      revenueGrowth5Y: Option[BigDecimal], // Revenue Growth (5 Year Annualized)
-      epsGrowth5Y: Option[BigDecimal], // EPS Growth (5 Year Annualized)
-      priceHigh52Week: Option[BigDecimal], // 52-Week High Price
-      priceLow52Week: Option[BigDecimal] // 52-Week Low Price
+      revenueGrowth5Y: Option[BigDecimal],         // Revenue Growth (5 Year Annualized)
+      epsGrowth5Y: Option[BigDecimal],             // EPS Growth (5 Year Annualized)
+      priceHigh52Week: Option[BigDecimal],         // 52-Week High Price
+      priceLow52Week: Option[BigDecimal]           // 52-Week Low Price
   ) derives CirceCodec.AsObject
 
   final case class Stock(

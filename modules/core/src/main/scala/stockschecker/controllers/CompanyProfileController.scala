@@ -16,12 +16,13 @@ final private class CompanyProfileController[F[_]: Async](
 ) extends Controller[F](apiKeyRequirement) {
 
   private val getCompanyProfileByTicker = secured(CompanyProfileController.getCompanyProfileByTickerEndpoint)
-    .serverLogic { _ => {
-      case (ticker, fetchLatest) =>
+    .serverLogic { _ =>
+      { case (ticker, fetchLatest) =>
         companyProfileService
           .get(ticker, fetchLatest.getOrElse(false))
           .asResponse
-    }}
+      }
+    }
 
   private val getCompanyProfile = secured(CompanyProfileController.getCompanyProfileEndpoint)
     .serverLogic { _ => limit =>

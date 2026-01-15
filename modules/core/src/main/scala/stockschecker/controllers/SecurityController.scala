@@ -31,9 +31,7 @@ final private class SecurityController[F[_]: Async](
 
   private val getAllTickers = secured(SecurityController.getAllTickersEndpoint)
     .serverLogic { _ => _ =>
-      securityService
-        .getAllTickers
-        .asResponse
+      securityService.getAllTickers.asResponse
     }
 
   val routes: HttpRoutes[F] =
@@ -68,4 +66,3 @@ object SecurityController extends TapirJsonCirce with SchemaDerivation {
   def make[F[_]: Async](service: SecurityService[F], config: ApiConfig): F[Controller[F]] =
     Async[F].pure(SecurityController[F](service, ApiKeyRequirement.Required(config.key)))
 }
-

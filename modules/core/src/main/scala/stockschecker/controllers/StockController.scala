@@ -5,7 +5,7 @@ import io.circe.Codec as CirceCodec
 import org.http4s.HttpRoutes
 import stockschecker.common.config.ApiConfig
 import stockschecker.controllers.StockController.{StockQueryParams, StockView}
-import stockschecker.domain.{Exchange, SecurityKind, Stock, StockAnalysisMetrics, StockAnalysisScores, StockFilters, StockSortField, Ticker, TimePeriod}
+import stockschecker.domain.{Exchange, SecurityKind, Stock, StockAnalysisMetrics, StockAnalysisScores, StockFilters, StockSortField, Ticker}
 import stockschecker.services.StockService
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
@@ -34,12 +34,17 @@ final private class StockController[F[_]: Async](
         maxMarketCap = params.maxMarketCap,
         minPrice = params.minPrice,
         maxPrice = params.maxPrice,
-        minChange = params.minChange,
-        maxChange = params.maxChange,
-        period = params.period,
         minOverallScore = params.minOverallScore,
         minCagrScore = params.minCagrScore,
         minVolatilityScore = params.minVolatilityScore,
+        minPE = params.minPE,
+        maxPE = params.maxPE,
+        minROE = params.minROE,
+        maxDebtToEquity = params.maxDebtToEquity,
+        minProfitMargin = params.minProfitMargin,
+        minFreeCashFlow = params.minFreeCashFlow,
+        minRevenueGrowth5Y = params.minRevenueGrowth5Y,
+        minEpsGrowth5Y = params.minEpsGrowth5Y,
         sortBy = params.sortBy
       )
       stockService.findAll(filters, params.limit).mapToResponse(_.map(StockView.from))
@@ -60,12 +65,17 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       maxMarketCap: Option[Long],
       minPrice: Option[BigDecimal],
       maxPrice: Option[BigDecimal],
-      minChange: Option[BigDecimal],
-      maxChange: Option[BigDecimal],
-      period: Option[TimePeriod],
       minOverallScore: Option[BigDecimal],
       minCagrScore: Option[BigDecimal],
       minVolatilityScore: Option[BigDecimal],
+      minPE: Option[BigDecimal],
+      maxPE: Option[BigDecimal],
+      minROE: Option[BigDecimal],
+      maxDebtToEquity: Option[BigDecimal],
+      minProfitMargin: Option[BigDecimal],
+      minFreeCashFlow: Option[BigDecimal],
+      minRevenueGrowth5Y: Option[BigDecimal],
+      minEpsGrowth5Y: Option[BigDecimal],
       sortBy: Option[StockSortField]
   )
 
@@ -101,47 +111,53 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
         exchange = stock.security.exchange,
         kind = stock.security.kind
       ),
-      profile = stock.profile.map(p => StockCompanyProfileView(
-        country = p.country,
-        industry = p.industry,
-        description = p.description,
-        website = p.website,
-        ipoDate = p.ipoDate,
-        currency = p.currency,
-        marketCap = p.marketCap,
-        lastUpdatedAt = stock.security.companyProfileLastUpdatedAt
-      )),
-      priceAnalytics = stock.priceAnalytics.map(pa => PriceAnalyticsView(
-        performanceSummary = StockPricePerformanceSummaryView(
-          latestPrice = pa.performanceSummary.latestPrice,
-          latestPriceDate = pa.performanceSummary.latestPriceDate,
-          oneMonthChange = pa.performanceSummary.oneMonthChange,
-          threeMonthChange = pa.performanceSummary.threeMonthChange,
-          sixMonthChange = pa.performanceSummary.sixMonthChange,
-          oneYearChange = pa.performanceSummary.oneYearChange,
-          threeYearChange = pa.performanceSummary.threeYearChange,
-          fiveYearChange = pa.performanceSummary.fiveYearChange,
-          tenYearChange = pa.performanceSummary.tenYearChange,
-          maxChange = pa.performanceSummary.maxChange
-        ),
-        metrics = pa.metrics,
-        scores = pa.scores,
-        lastUpdatedAt = stock.profile.flatMap(_.priceAnalyticsLastUpdatedAt)
-      )),
-      financialMetrics = stock.financialMetrics.map(fm => FinancialMetricsView(
-        peRatioTtm = fm.peRatioTtm,
-        epsTtm = fm.epsTtm,
-        roeTtm = fm.roeTtm,
-        dividendYieldAnnual = fm.dividendYieldAnnual,
-        debtToEquityAnnual = fm.debtToEquityAnnual,
-        profitMarginTtm = fm.profitMarginTtm,
-        freeCashFlowPerShareTtm = fm.freeCashFlowPerShareTtm,
-        revenueGrowth5Y = fm.revenueGrowth5Y,
-        epsGrowth5Y = fm.epsGrowth5Y,
-        priceHigh52Week = fm.priceHigh52Week,
-        priceLow52Week = fm.priceLow52Week,
-        lastUpdatedAt = stock.profile.flatMap(_.financialMetricsLastUpdatedAt)
-      ))
+      profile = stock.profile.map(p =>
+        StockCompanyProfileView(
+          country = p.country,
+          industry = p.industry,
+          description = p.description,
+          website = p.website,
+          ipoDate = p.ipoDate,
+          currency = p.currency,
+          marketCap = p.marketCap,
+          lastUpdatedAt = stock.security.companyProfileLastUpdatedAt
+        )
+      ),
+      priceAnalytics = stock.priceAnalytics.map(pa =>
+        PriceAnalyticsView(
+          performanceSummary = StockPricePerformanceSummaryView(
+            latestPrice = pa.performanceSummary.latestPrice,
+            latestPriceDate = pa.performanceSummary.latestPriceDate,
+            oneMonthChange = pa.performanceSummary.oneMonthChange,
+            threeMonthChange = pa.performanceSummary.threeMonthChange,
+            sixMonthChange = pa.performanceSummary.sixMonthChange,
+            oneYearChange = pa.performanceSummary.oneYearChange,
+            threeYearChange = pa.performanceSummary.threeYearChange,
+            fiveYearChange = pa.performanceSummary.fiveYearChange,
+            tenYearChange = pa.performanceSummary.tenYearChange,
+            maxChange = pa.performanceSummary.maxChange
+          ),
+          metrics = pa.metrics,
+          scores = pa.scores,
+          lastUpdatedAt = stock.profile.flatMap(_.priceAnalyticsLastUpdatedAt)
+        )
+      ),
+      financialMetrics = stock.financialMetrics.map(fm =>
+        FinancialMetricsView(
+          peRatioTtm = fm.peRatioTtm,
+          epsTtm = fm.epsTtm,
+          roeTtm = fm.roeTtm,
+          dividendYieldAnnual = fm.dividendYieldAnnual,
+          debtToEquityAnnual = fm.debtToEquityAnnual,
+          profitMarginTtm = fm.profitMarginTtm,
+          freeCashFlowPerShareTtm = fm.freeCashFlowPerShareTtm,
+          revenueGrowth5Y = fm.revenueGrowth5Y,
+          epsGrowth5Y = fm.epsGrowth5Y,
+          priceHigh52Week = fm.priceHigh52Week,
+          priceLow52Week = fm.priceLow52Week,
+          lastUpdatedAt = stock.profile.flatMap(_.financialMetricsLastUpdatedAt)
+        )
+      )
     )
 
   final private case class StockSecurityView(
@@ -180,7 +196,6 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       lastUpdatedAt: Option[Instant]
   ) derives CirceCodec.AsObject
 
-
   private val getStockByTickerEndpoint = Controller.secureEndpoint.get
     .in("stocks" / path[Ticker]("ticker"))
     .out(jsonBody[StockView])
@@ -195,12 +210,17 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
     .in(query[Option[Long]]("maxMarketCap"))
     .in(query[Option[BigDecimal]]("minPrice"))
     .in(query[Option[BigDecimal]]("maxPrice"))
-    .in(query[Option[BigDecimal]]("minChange"))
-    .in(query[Option[BigDecimal]]("maxChange"))
-    .in(query[Option[TimePeriod]]("period"))
     .in(query[Option[BigDecimal]]("minOverallScore"))
     .in(query[Option[BigDecimal]]("minCagrScore"))
     .in(query[Option[BigDecimal]]("minVolatilityScore"))
+    .in(query[Option[BigDecimal]]("minPE"))
+    .in(query[Option[BigDecimal]]("maxPE"))
+    .in(query[Option[BigDecimal]]("minROE"))
+    .in(query[Option[BigDecimal]]("maxDebtToEquity"))
+    .in(query[Option[BigDecimal]]("minProfitMargin"))
+    .in(query[Option[BigDecimal]]("minFreeCashFlow"))
+    .in(query[Option[BigDecimal]]("minRevenueGrowth5Y"))
+    .in(query[Option[BigDecimal]]("minEpsGrowth5Y"))
     .in(query[Option[StockSortField]]("sortBy"))
     .mapInTo[StockQueryParams]
     .out(jsonBody[List[StockView]])

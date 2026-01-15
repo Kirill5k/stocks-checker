@@ -27,9 +27,9 @@ object Repositories:
       fm <- FinancialMetricsRepository.make(db)
     yield new Repositories[F]:
       override def security: SecurityRepository[F]                 = s
-      override def companyProfile: CompanyProfileRepository[F] = cp
+      override def companyProfile: CompanyProfileRepository[F]     = cp
       override def latestPrice: LatestPriceRepository[F]           = lp
-      override def command: CommandRepository[F]               = c
-      override def stock: StockRepository[F]                   = st
-      override def priceAnalytics: PriceAnalyticsRepository[F] = pa
+      override def command: CommandRepository[F]                   = c
+      override def stock: StockRepository[F]                       = st
+      override def priceAnalytics: PriceAnalyticsRepository[F]     = pa
       override def financialMetrics: FinancialMetricsRepository[F] = fm

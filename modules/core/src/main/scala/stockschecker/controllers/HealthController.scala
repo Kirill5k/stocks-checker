@@ -47,7 +47,7 @@ final class HealthController[F[_]: Async](
 
 object HealthController extends TapirJsonCirce with SchemaDerivation {
 
-  private final case class AppStatus(
+  final private case class AppStatus(
       service: String,
       startupTime: Instant,
       upTime: String,

@@ -102,7 +102,7 @@ object CommandRepository:
     val lastExecutedAt = "lastExecutedAt"
     val executionCount = "executionCount"
     val maxExecutions  = "maxExecutions"
-  
+
   def make[F[_]](db: MongoDatabase[F])(using F: MonadThrow[F]): F[CommandRepository[F]] =
     for
       collection <- db.getCollectionWithCodec[CommandEntity](CollectionName)

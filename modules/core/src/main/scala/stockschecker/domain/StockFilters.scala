@@ -23,8 +23,18 @@ final case class StockFilters(
     minOverallScore: Option[BigDecimal] = None,
     minCagrScore: Option[BigDecimal] = None,
     minVolatilityScore: Option[BigDecimal] = None,
+    minPE: Option[BigDecimal] = None,
     maxPE: Option[BigDecimal] = None,
     minROE: Option[BigDecimal] = None,
     maxDebtToEquity: Option[BigDecimal] = None,
+    minProfitMargin: Option[BigDecimal] = None,
+    maxProfitMargin: Option[BigDecimal] = None,
+    minFreeCashFlow: Option[BigDecimal] = None,
+    minRevenueGrowth5Y: Option[BigDecimal] = None,
+    minEpsGrowth5Y: Option[BigDecimal] = None,
+    minDividendYield: Option[BigDecimal] = None,
+    maxDividendYield: Option[BigDecimal] = None,
+    maxDrawdown: Option[BigDecimal] = None,
+    minConsistencyScore: Option[BigDecimal] = None,
     sortBy: Option[StockSortField] = None
 )

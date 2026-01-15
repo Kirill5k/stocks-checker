@@ -31,7 +31,7 @@ final private class LiveActionExecutor[F[_]](
         case Action.Schedule(cid, waiting)                => F.sleep(waiting) >> services.command.execute(cid)
         case Action.FetchSecurities(exchanges)            => services.security.fetchLatest(exchanges)
         case Action.UpdateCompanyProfiles(tickers)        => services.companyProfile.fetchLatest(tickers)
-        case Action.UpdatePriceAnalytics(tickers)          => services.price.fetchLatestPriceAnalytics(tickers)
+        case Action.UpdatePriceAnalytics(tickers)         => services.price.fetchLatestPriceAnalytics(tickers)
         case Action.UpdateFinancialMetrics(tickers)       => services.financialMetrics.fetchLatest(tickers)
         case Action.RecordPriceAnalyticsUpdate(tickers)   => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
         case Action.RecordFinancialMetricsUpdate(tickers) => services.companyProfile.recordFinancialMetricsUpdate(tickers)

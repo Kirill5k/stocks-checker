@@ -43,7 +43,7 @@ final private class PriceController[F[_]: Async](
 
 object PriceController extends TapirJsonCirce with SchemaDerivation {
 
-  private val basePath = "price"
+  private val basePath                 = "price"
   private val performanceSummariesPath = basePath / "performance-summaries"
 
   private case class PriceAnalyticsQueryParams(

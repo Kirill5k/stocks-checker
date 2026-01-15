@@ -32,7 +32,7 @@ object errors {
 
     final case class FinancialMetricsNotFound(ticker: Ticker) extends NotFound:
       override val message: String = s"Could not find financial metrids for $ticker"
-    
+
     final case class JsonParsingFailure(original: String, error: String) extends AppError:
       override val message: String = s"Failed to parse json response: $error\n$original"
 }

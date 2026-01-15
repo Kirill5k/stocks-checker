@@ -141,7 +141,7 @@ object FinnhubClient {
         priceHigh52Week = `52WeekHigh`,
         priceLow52Week = `52WeekLow`
       )
-  
+
   final case class BasicFinancialsResponse(
       metric: JsonObject
   ) derives Codec.AsObject

@@ -32,20 +32,22 @@ final private class CommandController[F[_]: Async](
     }
 
   private val activateCommand = secured(CommandController.activateCommandEndpoint)
-    .serverLogic { _ => {
-      case (cid, req) =>
+    .serverLogic { _ =>
+      { case (cid, req) =>
         service
           .activate(cid, req.isActive)
           .asVoidResponse
-    }}
+      }
+    }
 
   private val updateCommand = secured(CommandController.updateCommandEndpoint)
-    .serverLogic { _ => {
-      case (cid, req) =>
+    .serverLogic { _ =>
+      { case (cid, req) =>
         service
           .update(UpdateCommand(cid, req.isActive, req.action, req.schedule, req.maxExecutions))
           .asResponse
-    }}
+      }
+    }
 
   private val executeManuallyCommand = secured(CommandController.executeManuallyCommandEndpoint)
     .serverLogic { _ => cid =>
@@ -71,7 +73,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
   given Schema[Action]    = Schema.string
   given Schema[Schedule]  = Schema.string
 
-  private val basePath = "commands"
+  private val basePath      = "commands"
   private val commandIdPath = basePath / path[String]
     .validate(Controller.validId)
     .map((s: String) => CommandId(s))(_.value)
@@ -82,13 +84,13 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .out(jsonBody[List[Command]])
     .description("Get all commands")
 
-  private final case class CreateCommandRequest(
+  final private case class CreateCommandRequest(
       action: Action,
       schedule: Schedule,
       maxExecutions: Option[Int] = None
   ) derives Codec.AsObject
 
-  private final case class CreateCommandResponse(
+  final private case class CreateCommandResponse(
       id: CommandId
   ) derives Codec.AsObject
 
@@ -98,7 +100,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .out(jsonBody[CreateCommandResponse].and(statusCode(StatusCode.Created)))
     .description("Create new command")
 
-  private final case class ActivateCommandRequest(
+  final private case class ActivateCommandRequest(
       isActive: Boolean
   ) derives Codec.AsObject
 
@@ -108,7 +110,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .out(statusCode(StatusCode.NoContent))
     .description("Change active status of a command")
 
-  private final case class UpdateCommandRequest(
+  final private case class UpdateCommandRequest(
       isActive: Boolean,
       action: Action,
       schedule: Schedule,

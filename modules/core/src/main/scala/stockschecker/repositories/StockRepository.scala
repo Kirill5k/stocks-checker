@@ -83,10 +83,16 @@ final private class LiveStockRepository[F[_]](
         Filter.lte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.LatestPrice}", max)
       ),
       (sf.minChange, sf.period).mapN { (min, period) =>
-        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.Root}.${period.fieldName}", min)
+        Filter.gte(
+          s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.Root}.${period.fieldName}",
+          min
+        )
       },
       (sf.maxChange, sf.period).mapN { (max, period) =>
-        Filter.lte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.Root}.${period.fieldName}", max)
+        Filter.lte(
+          s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.PerformanceSummary.Root}.${period.fieldName}",
+          max
+        )
       },
       sf.minOverallScore.map(min =>
         Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Scores.OverallScore}", min)
@@ -96,18 +102,42 @@ final private class LiveStockRepository[F[_]](
       ),
       sf.minVolatilityScore.map(min =>
         Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Scores.VolatilityScore}", min)
+      ),
+      sf.maxDrawdown.map(max =>
+        Filter.lte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Metrics.Root}.maxDrawdown", max)
+      ),
+      sf.minConsistencyScore.map(min =>
+        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Metrics.Root}.consistencyScore", min)
       )
     ).flatten.foldLeft(Filter.empty)(_ && _)
 
     private def toFinancialMetricsFilter: Filter = List(
-      sf.maxPE.map(max =>
-        Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.PeRatioTtm}", max)
-      ),
-      sf.minROE.map(min =>
-        Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.RoeTtm}", min)
-      ),
+      sf.minPE.map(min => Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.PeRatioTtm}", min)),
+      sf.maxPE.map(max => Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.PeRatioTtm}", max)),
+      sf.minROE.map(min => Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.RoeTtm}", min)),
       sf.maxDebtToEquity.map(max =>
         Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.DebtToEquityAnnual}", max)
+      ),
+      sf.minProfitMargin.map(min =>
+        Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.ProfitMarginTtm}", min)
+      ),
+      sf.maxProfitMargin.map(max =>
+        Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.ProfitMarginTtm}", max)
+      ),
+      sf.minFreeCashFlow.map(min =>
+        Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.FreeCashFlowPerShareTtm}", min)
+      ),
+      sf.minRevenueGrowth5Y.map(min =>
+        Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.RevenueGrowth5Y}", min)
+      ),
+      sf.minEpsGrowth5Y.map(min =>
+        Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.EpsGrowth5Y}", min)
+      ),
+      sf.minDividendYield.map(min =>
+        Filter.gte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.DividendYieldAnnual}", min)
+      ),
+      sf.maxDividendYield.map(max =>
+        Filter.lte(s"${StockRepository.Field.FinancialMetrics}.0.${FinancialMetricsRepository.Field.DividendYieldAnnual}", max)
       )
     ).flatten.foldLeft(Filter.empty)(_ && _)
 }

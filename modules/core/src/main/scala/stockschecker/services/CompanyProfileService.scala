@@ -68,10 +68,10 @@ final private class LiveCompanyProfileService[F[_]](
 
   override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
-    
+
   override def recordPriceAnalyticsUpdate(tickers: List[Ticker]): F[Unit] =
     repository.updatePriceAnalyticsLastUpdated(tickers)
-  
+
   private def save(cps: List[CompanyProfile]): F[Unit] =
     repository.save(cps) >> dispatcher.dispatch(Action.RecordCompanyProfileUpdate(cps.map(_.ticker)))
 
