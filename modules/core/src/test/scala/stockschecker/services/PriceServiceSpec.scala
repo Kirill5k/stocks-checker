@@ -39,7 +39,7 @@ class PriceServiceSpec extends IOWordSpec {
 
       "ignore errors when fetching price candles fails" in {
         val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val error = new RuntimeException("API error")
+        val error                                       = new RuntimeException("API error")
         when(client.getMonthlyPriceCandles(any[Ticker])).thenRaiseError(error)
 
         val res = for
@@ -56,7 +56,7 @@ class PriceServiceSpec extends IOWordSpec {
 
       "handle errors when saving to repository fails" in {
         val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val error = new RuntimeException("Database error")
+        val error                                       = new RuntimeException("Database error")
         when(client.getMonthlyPriceCandles(any[Ticker])).thenReturnIO(AAPLPriceCandles)
         when(repo.save(anyList[PriceAnalytics])).thenRaiseError(error)
 
@@ -128,7 +128,7 @@ class PriceServiceSpec extends IOWordSpec {
 
       "handle errors when market data client fails with fetch true" in {
         val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val error = new RuntimeException("API error")
+        val error                                       = new RuntimeException("API error")
         when(client.getMonthlyPriceCandles(any[Ticker])).thenRaiseError(error)
 
         val res = for
@@ -147,4 +147,3 @@ class PriceServiceSpec extends IOWordSpec {
   def mocks: (PriceAnalyticsRepository[IO], LatestPriceRepository[IO], MarketDataClient[IO], ActionDispatcher[IO]) =
     (mock[PriceAnalyticsRepository[IO]], mock[LatestPriceRepository[IO]], mock[MarketDataClient[IO]], mock[ActionDispatcher[IO]])
 }
-

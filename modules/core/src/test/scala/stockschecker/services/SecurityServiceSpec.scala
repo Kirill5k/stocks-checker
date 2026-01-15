@@ -35,9 +35,9 @@ class SecurityServiceSpec extends IOWordSpec {
     "markAsEnriched" should {
       "update companyProfileLastUpdated for given tickers" in {
         val (repo, client) = mocks
-        val tickers = List(AAPL, MSFT)
+        val tickers        = List(AAPL, MSFT)
         when(repo.updateCompanyProfileLastUpdated(anyList[stockschecker.domain.Ticker])).thenReturnUnit
-        
+
         val res = for
           svc <- SecurityService.make(repo, client)
           _   <- svc.recordCompanyProfileUpdate(tickers)
@@ -52,7 +52,7 @@ class SecurityServiceSpec extends IOWordSpec {
       "handle empty list gracefully" in {
         val (repo, client) = mocks
         when(repo.updateCompanyProfileLastUpdated(anyList[stockschecker.domain.Ticker])).thenReturnUnit
-        
+
         val res = for
           svc <- SecurityService.make(repo, client)
           _   <- svc.recordCompanyProfileUpdate(List.empty)

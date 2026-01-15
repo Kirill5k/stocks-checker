@@ -15,7 +15,7 @@ class ActionDispatcherSpec extends IOWordSpec {
         _       <- ad.dispatch(a1)
         _       <- ad.dispatch(a2)
         actions <- ad.pendingActions.take(2).compile.toList
-      yield actions).asserting { _ mustBe List(a1, a2) }
+      yield actions).asserting(_ mustBe List(a1, a2))
     }
   }
 }

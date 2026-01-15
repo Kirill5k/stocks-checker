@@ -3,7 +3,19 @@ package stockschecker.repositories
 import cats.data.NonEmptyList
 import cats.effect.IO
 import stockschecker.domain.{Exchange, SecurityKind, StockFilters, Ticker, TimePeriod}
-import stockschecker.fixtures.{AAPL, AAPLCompanyProfile, AAPLFinancialMetrics, AAPLPriceAnalytics, AAPLSecurity, AAPLStock, MSFT, MSFTCompanyProfile, MSFTFinancialMetrics, MSFTSecurity, MSFTStock}
+import stockschecker.fixtures.{
+  AAPL,
+  AAPLCompanyProfile,
+  AAPLFinancialMetrics,
+  AAPLPriceAnalytics,
+  AAPLSecurity,
+  AAPLStock,
+  MSFT,
+  MSFTCompanyProfile,
+  MSFTFinancialMetrics,
+  MSFTSecurity,
+  MSFTStock
+}
 
 class StockRepositorySpec extends RepositorySpec {
 
@@ -13,9 +25,9 @@ class StockRepositorySpec extends RepositorySpec {
     "find" should {
       "return stock with all associated data" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
-          "price-analytics" -> List(toDoc(AAPLPriceAnalytics)),
+          "securities"        -> List(toDoc(AAPLSecurity)),
+          "company-profiles"  -> List(toDoc(AAPLCompanyProfile)),
+          "price-analytics"   -> List(toDoc(AAPLPriceAnalytics)),
           "financial-metrics" -> List(toDoc(AAPLFinancialMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -38,7 +50,7 @@ class StockRepositorySpec extends RepositorySpec {
 
       "return stock with partial data when only profile exists" in {
         val seedData = Map(
-          "securities" -> List(toDoc(MSFTSecurity)),
+          "securities"       -> List(toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(MSFTCompanyProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -51,7 +63,7 @@ class StockRepositorySpec extends RepositorySpec {
 
       "return stock with financial metrics when only financial metrics exist" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity)),
+          "securities"        -> List(toDoc(AAPLSecurity)),
           "financial-metrics" -> List(toDoc(AAPLFinancialMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -62,22 +74,21 @@ class StockRepositorySpec extends RepositorySpec {
         }
       }
 
-      "return None when ticker doesn't exist" in {
+      "return None when ticker doesn't exist" in
         withEmbeddedMongoDatabase(Map.empty) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.find(AAPL)
           yield res mustBe None
         }
-      }
     }
 
     "findAll" should {
       "return all stocks with associated data" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
-          "price-analytics" -> List(toDoc(AAPLPriceAnalytics)),
+          "securities"        -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "company-profiles"  -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
+          "price-analytics"   -> List(toDoc(AAPLPriceAnalytics)),
           "financial-metrics" -> List(toDoc(AAPLFinancialMetrics), toDoc(MSFTFinancialMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -90,7 +101,7 @@ class StockRepositorySpec extends RepositorySpec {
 
       "return limited number of stocks when limit is specified" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -101,14 +112,13 @@ class StockRepositorySpec extends RepositorySpec {
         }
       }
 
-      "return empty list when no securities exist" in {
+      "return empty list when no securities exist" in
         withEmbeddedMongoDatabase(Map.empty) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(), None)
           yield res mustBe List.empty
         }
-      }
 
       "return all stocks when limit is greater than available stocks" in {
         val seedData = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)))
@@ -122,7 +132,7 @@ class StockRepositorySpec extends RepositorySpec {
 
       "filter by exchange" in {
         val nyseStock = MSFTSecurity.copy(ticker = Ticker("NYSE1"), exchange = Exchange.NYSE)
-        val seedData = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock)))
+        val seedData  = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock)))
         withEmbeddedMongoDatabase(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
@@ -148,8 +158,8 @@ class StockRepositorySpec extends RepositorySpec {
 
       "filter by country" in {
         val ukProfile = MSFTCompanyProfile.copy(ticker = Ticker("HSBA"), country = "GB")
-        val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("HSBA")))),
+        val seedData  = Map(
+          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("HSBA")))),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile), toDoc(ukProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -164,8 +174,8 @@ class StockRepositorySpec extends RepositorySpec {
 
       "filter by minimum market cap" in {
         val smallCapProfile = MSFTCompanyProfile.copy(ticker = Ticker("SMALL"), marketCap = 1000000000L)
-        val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("SMALL")))),
+        val seedData        = Map(
+          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("SMALL")))),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile), toDoc(smallCapProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -180,7 +190,7 @@ class StockRepositorySpec extends RepositorySpec {
 
       "filter by maximum market cap" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -195,7 +205,7 @@ class StockRepositorySpec extends RepositorySpec {
 
       "filter by market cap range" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -214,7 +224,7 @@ class StockRepositorySpec extends RepositorySpec {
           performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(latestPrice = BigDecimal("50.00"))
         )
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("LOW")))),
+          "securities"      -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("LOW")))),
           "price-analytics" -> List(toDoc(AAPLPriceAnalytics), toDoc(lowPriceSummary))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -229,7 +239,7 @@ class StockRepositorySpec extends RepositorySpec {
 
       "filter by maximum price" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity)),
+          "securities"      -> List(toDoc(AAPLSecurity)),
           "price-analytics" -> List(toDoc(AAPLPriceAnalytics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -248,7 +258,7 @@ class StockRepositorySpec extends RepositorySpec {
           performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(latestPrice = BigDecimal("500.00"))
         )
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("HIGH")))),
+          "securities"      -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("HIGH")))),
           "price-analytics" -> List(toDoc(AAPLPriceAnalytics), toDoc(highPriceSummary))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -263,9 +273,9 @@ class StockRepositorySpec extends RepositorySpec {
 
       "filter by multiple criteria" in {
         val nyseStock = MSFTSecurity.copy(ticker = Ticker("NYSE1"), exchange = Exchange.NYSE)
-        val etfStock = MSFTSecurity.copy(ticker = Ticker("SPY"), kind = SecurityKind.ETF)
-        val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock), toDoc(etfStock)),
+        val etfStock  = MSFTSecurity.copy(ticker = Ticker("SPY"), kind = SecurityKind.ETF)
+        val seedData  = Map(
+          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock), toDoc(etfStock)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -284,8 +294,8 @@ class StockRepositorySpec extends RepositorySpec {
             res.size mustBe 2
             res.forall(s =>
               s.security.exchange == Exchange.NASDAQ &&
-              s.security.kind == SecurityKind.Stock &&
-              s.profile.exists(p => p.country == "US" && p.marketCap >= 3000000000000L)
+                s.security.kind == SecurityKind.Stock &&
+                s.profile.exists(p => p.country == "US" && p.marketCap >= 3000000000000L)
             ) mustBe true
         }
       }
@@ -391,7 +401,7 @@ class StockRepositorySpec extends RepositorySpec {
           performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneYearChange = Some(BigDecimal("50.00")))
         )
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("PERF")))),
+          "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("PERF")))),
           "price-analytics" -> List(toDoc(performer))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -528,15 +538,282 @@ class StockRepositorySpec extends RepositorySpec {
             res.head.security.ticker mustBe Ticker("GOOD")
             res.head.financialMetrics.exists(m =>
               m.peRatioTtm.exists(_ <= BigDecimal(40.00)) &&
-              m.roeTtm.exists(_ >= BigDecimal(100.00)) &&
-              m.debtToEquityAnnual.exists(_ <= BigDecimal(1.00))
+                m.roeTtm.exists(_ >= BigDecimal(100.00)) &&
+                m.debtToEquityAnnual.exists(_ <= BigDecimal(1.00))
+            ) mustBe true
+        }
+      }
+
+      "filter by minimum PE ratio" in {
+        val lowPEMetrics = AAPLFinancialMetrics.copy(
+          ticker = Ticker("LOWPE"),
+          peRatioTtm = Some(BigDecimal(12.00))
+        )
+        val highPEMetrics = MSFTFinancialMetrics.copy(
+          ticker = Ticker("HIGHPE"),
+          peRatioTtm = Some(BigDecimal(35.00))
+        )
+        val seedData = Map(
+          "securities" -> List(
+            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWPE"))),
+            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHPE")))
+          ),
+          "financial-metrics" -> List(toDoc(lowPEMetrics), toDoc(highPEMetrics))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(StockFilters(minPE = Some(BigDecimal(15.00))), None)
+          yield
+            res.size mustBe 1
+            res.head.security.ticker mustBe Ticker("HIGHPE")
+            res.head.financialMetrics.exists(_.peRatioTtm.exists(_ >= BigDecimal(15.00))) mustBe true
+        }
+      }
+
+      "filter by PE ratio range" in {
+        val lowPEMetrics = AAPLFinancialMetrics.copy(
+          ticker = Ticker("LOWPE"),
+          peRatioTtm = Some(BigDecimal(12.00))
+        )
+        val midPEMetrics = MSFTFinancialMetrics.copy(
+          ticker = Ticker("MIDPE"),
+          peRatioTtm = Some(BigDecimal(25.00))
+        )
+        val highPEMetrics = AAPLFinancialMetrics.copy(
+          ticker = Ticker("HIGHPE"),
+          peRatioTtm = Some(BigDecimal(45.00))
+        )
+        val seedData = Map(
+          "securities" -> List(
+            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWPE"))),
+            toDoc(MSFTSecurity.copy(ticker = Ticker("MIDPE"))),
+            toDoc(AAPLSecurity.copy(ticker = Ticker("HIGHPE")))
+          ),
+          "financial-metrics" -> List(toDoc(lowPEMetrics), toDoc(midPEMetrics), toDoc(highPEMetrics))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(
+              StockFilters(minPE = Some(BigDecimal(15.00)), maxPE = Some(BigDecimal(35.00))),
+              None
+            )
+          yield
+            res.size mustBe 1
+            res.head.security.ticker mustBe Ticker("MIDPE")
+            res.head.financialMetrics.exists(m =>
+              m.peRatioTtm.exists(pe => pe >= BigDecimal(15.00) && pe <= BigDecimal(35.00))
+            ) mustBe true
+        }
+      }
+
+      "filter by minimum profit margin" in {
+        val lowMarginMetrics = AAPLFinancialMetrics.copy(
+          ticker = Ticker("LOWMARGIN"),
+          profitMarginTtm = Some(BigDecimal(5.00))
+        )
+        val highMarginMetrics = MSFTFinancialMetrics.copy(
+          ticker = Ticker("HIGHMARGIN"),
+          profitMarginTtm = Some(BigDecimal(25.00))
+        )
+        val seedData = Map(
+          "securities" -> List(
+            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWMARGIN"))),
+            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHMARGIN")))
+          ),
+          "financial-metrics" -> List(toDoc(lowMarginMetrics), toDoc(highMarginMetrics))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(StockFilters(minProfitMargin = Some(BigDecimal(10.00))), None)
+          yield
+            res.size mustBe 1
+            res.head.security.ticker mustBe Ticker("HIGHMARGIN")
+            res.head.financialMetrics.exists(_.profitMarginTtm.exists(_ >= BigDecimal(10.00))) mustBe true
+        }
+      }
+
+      "filter by maximum profit margin" in {
+        val lowMarginMetrics = AAPLFinancialMetrics.copy(
+          ticker = Ticker("LOWMARGIN"),
+          profitMarginTtm = Some(BigDecimal(5.00))
+        )
+        val highMarginMetrics = MSFTFinancialMetrics.copy(
+          ticker = Ticker("HIGHMARGIN"),
+          profitMarginTtm = Some(BigDecimal(40.00))
+        )
+        val seedData = Map(
+          "securities" -> List(
+            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWMARGIN"))),
+            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHMARGIN")))
+          ),
+          "financial-metrics" -> List(toDoc(lowMarginMetrics), toDoc(highMarginMetrics))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(StockFilters(maxProfitMargin = Some(BigDecimal(30.00))), None)
+          yield
+            res.size mustBe 1
+            res.head.security.ticker mustBe Ticker("LOWMARGIN")
+            res.head.financialMetrics.exists(_.profitMarginTtm.exists(_ <= BigDecimal(30.00))) mustBe true
+        }
+      }
+
+      "filter by minimum free cash flow" in {
+        val lowFCFMetrics = AAPLFinancialMetrics.copy(
+          ticker = Ticker("LOWFCF"),
+          freeCashFlowPerShareTtm = Some(BigDecimal(-2.00))
+        )
+        val highFCFMetrics = MSFTFinancialMetrics.copy(
+          ticker = Ticker("HIGHFCF"),
+          freeCashFlowPerShareTtm = Some(BigDecimal(8.50))
+        )
+        val seedData = Map(
+          "securities" -> List(
+            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWFCF"))),
+            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHFCF")))
+          ),
+          "financial-metrics" -> List(toDoc(lowFCFMetrics), toDoc(highFCFMetrics))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(StockFilters(minFreeCashFlow = Some(BigDecimal(0))), None)
+          yield
+            res.size mustBe 1
+            res.head.security.ticker mustBe Ticker("HIGHFCF")
+            res.head.financialMetrics.exists(_.freeCashFlowPerShareTtm.exists(_ >= BigDecimal(0))) mustBe true
+        }
+      }
+
+      "filter by minimum revenue growth 5Y" in {
+        val lowGrowthMetrics = AAPLFinancialMetrics.copy(
+          ticker = Ticker("LOWGROWTH"),
+          revenueGrowth5Y = Some(BigDecimal(3.00))
+        )
+        val highGrowthMetrics = MSFTFinancialMetrics.copy(
+          ticker = Ticker("HIGHGROWTH"),
+          revenueGrowth5Y = Some(BigDecimal(15.00))
+        )
+        val seedData = Map(
+          "securities" -> List(
+            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWGROWTH"))),
+            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHGROWTH")))
+          ),
+          "financial-metrics" -> List(toDoc(lowGrowthMetrics), toDoc(highGrowthMetrics))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(StockFilters(minRevenueGrowth5Y = Some(BigDecimal(8.00))), None)
+          yield
+            res.size mustBe 1
+            res.head.security.ticker mustBe Ticker("HIGHGROWTH")
+            res.head.financialMetrics.exists(_.revenueGrowth5Y.exists(_ >= BigDecimal(8.00))) mustBe true
+        }
+      }
+
+      "filter by minimum EPS growth 5Y" in {
+        val lowGrowthMetrics = AAPLFinancialMetrics.copy(
+          ticker = Ticker("LOWEPS"),
+          epsGrowth5Y = Some(BigDecimal(5.00))
+        )
+        val highGrowthMetrics = MSFTFinancialMetrics.copy(
+          ticker = Ticker("HIGHEPS"),
+          epsGrowth5Y = Some(BigDecimal(20.00))
+        )
+        val seedData = Map(
+          "securities" -> List(
+            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWEPS"))),
+            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHEPS")))
+          ),
+          "financial-metrics" -> List(toDoc(lowGrowthMetrics), toDoc(highGrowthMetrics))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(StockFilters(minEpsGrowth5Y = Some(BigDecimal(10.00))), None)
+          yield
+            res.size mustBe 1
+            res.head.security.ticker mustBe Ticker("HIGHEPS")
+            res.head.financialMetrics.exists(_.epsGrowth5Y.exists(_ >= BigDecimal(10.00))) mustBe true
+        }
+      }
+
+      "filter by comprehensive long-term investment criteria" in {
+        val goodStock = AAPLFinancialMetrics.copy(
+          ticker = Ticker("GOOD"),
+          peRatioTtm = Some(BigDecimal(25.00)),
+          roeTtm = Some(BigDecimal(120.00)),
+          debtToEquityAnnual = Some(BigDecimal(0.80)),
+          profitMarginTtm = Some(BigDecimal(20.00)),
+          freeCashFlowPerShareTtm = Some(BigDecimal(8.00)),
+          revenueGrowth5Y = Some(BigDecimal(12.00)),
+          epsGrowth5Y = Some(BigDecimal(18.00))
+        )
+        val badPEStock = MSFTFinancialMetrics.copy(
+          ticker = Ticker("BADPE"),
+          peRatioTtm = Some(BigDecimal(50.00)),
+          roeTtm = Some(BigDecimal(120.00)),
+          profitMarginTtm = Some(BigDecimal(20.00)),
+          freeCashFlowPerShareTtm = Some(BigDecimal(8.00)),
+          revenueGrowth5Y = Some(BigDecimal(12.00)),
+          epsGrowth5Y = Some(BigDecimal(18.00))
+        )
+        val lowGrowthStock = AAPLFinancialMetrics.copy(
+          ticker = Ticker("LOWGROWTH"),
+          peRatioTtm = Some(BigDecimal(25.00)),
+          roeTtm = Some(BigDecimal(120.00)),
+          profitMarginTtm = Some(BigDecimal(20.00)),
+          freeCashFlowPerShareTtm = Some(BigDecimal(8.00)),
+          revenueGrowth5Y = Some(BigDecimal(5.00)),
+          epsGrowth5Y = Some(BigDecimal(6.00))
+        )
+        val seedData = Map(
+          "securities" -> List(
+            toDoc(AAPLSecurity.copy(ticker = Ticker("GOOD"))),
+            toDoc(MSFTSecurity.copy(ticker = Ticker("BADPE"))),
+            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWGROWTH")))
+          ),
+          "financial-metrics" -> List(toDoc(goodStock), toDoc(badPEStock), toDoc(lowGrowthStock))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(
+              StockFilters(
+                minPE = Some(BigDecimal(15.00)),
+                maxPE = Some(BigDecimal(35.00)),
+                minROE = Some(BigDecimal(15.00)),
+                maxDebtToEquity = Some(BigDecimal(1.50)),
+                minProfitMargin = Some(BigDecimal(10.00)),
+                minFreeCashFlow = Some(BigDecimal(0)),
+                minRevenueGrowth5Y = Some(BigDecimal(8.00)),
+                minEpsGrowth5Y = Some(BigDecimal(10.00))
+              ),
+              None
+            )
+          yield
+            res.size mustBe 1
+            res.head.security.ticker mustBe Ticker("GOOD")
+            res.head.financialMetrics.exists(m =>
+              m.peRatioTtm.exists(pe => pe >= BigDecimal(15.00) && pe <= BigDecimal(35.00)) &&
+                m.roeTtm.exists(_ >= BigDecimal(15.00)) &&
+                m.debtToEquityAnnual.exists(_ <= BigDecimal(1.50)) &&
+                m.profitMarginTtm.exists(_ >= BigDecimal(10.00)) &&
+                m.freeCashFlowPerShareTtm.exists(_ >= BigDecimal(0)) &&
+                m.revenueGrowth5Y.exists(_ >= BigDecimal(8.00)) &&
+                m.epsGrowth5Y.exists(_ >= BigDecimal(10.00))
             ) mustBe true
         }
       }
 
       "return empty list when filters don't match any stocks" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -549,7 +826,7 @@ class StockRepositorySpec extends RepositorySpec {
 
       "respect limit when applying filters" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -564,9 +841,9 @@ class StockRepositorySpec extends RepositorySpec {
     "findByTickers" should {
       "return stocks for all specified tickers" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
-          "price-analytics" -> List(toDoc(AAPLPriceAnalytics)),
+          "securities"        -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "company-profiles"  -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
+          "price-analytics"   -> List(toDoc(AAPLPriceAnalytics)),
           "financial-metrics" -> List(toDoc(AAPLFinancialMetrics), toDoc(MSFTFinancialMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -579,8 +856,8 @@ class StockRepositorySpec extends RepositorySpec {
 
       "return only existing stocks when some tickers don't exist" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
+          "securities"        -> List(toDoc(AAPLSecurity)),
+          "company-profiles"  -> List(toDoc(AAPLCompanyProfile)),
           "financial-metrics" -> List(toDoc(AAPLFinancialMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -596,9 +873,9 @@ class StockRepositorySpec extends RepositorySpec {
 
       "return stock for single ticker" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
-          "price-analytics" -> List(toDoc(AAPLPriceAnalytics)),
+          "securities"        -> List(toDoc(AAPLSecurity)),
+          "company-profiles"  -> List(toDoc(AAPLCompanyProfile)),
+          "price-analytics"   -> List(toDoc(AAPLPriceAnalytics)),
           "financial-metrics" -> List(toDoc(AAPLFinancialMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -611,7 +888,7 @@ class StockRepositorySpec extends RepositorySpec {
         }
       }
 
-      "return empty list when no tickers exist" in {
+      "return empty list when no tickers exist" in
         withEmbeddedMongoDatabase(Map.empty) { db =>
           val nonExistent1 = Ticker("GOOG")
           val nonExistent2 = Ticker("AMZN")
@@ -620,12 +897,11 @@ class StockRepositorySpec extends RepositorySpec {
             res       <- stockRepo.findByTickers(NonEmptyList.of(nonExistent1, nonExistent2))
           yield res mustBe List.empty
         }
-      }
 
       "return stocks with partial data when profile or performance missing" in {
         val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile)),
+          "securities"        -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          "company-profiles"  -> List(toDoc(AAPLCompanyProfile)),
           "financial-metrics" -> List(toDoc(AAPLFinancialMetrics), toDoc(MSFTFinancialMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -641,4 +917,3 @@ class StockRepositorySpec extends RepositorySpec {
     }
   }
 }
-

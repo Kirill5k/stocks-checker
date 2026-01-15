@@ -202,7 +202,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
       }
 
       "return 200 and filter by exchange" in {
-        val svc     = mocks
+        val svc = mocks
         when(svc.findAll(any[StockFilters], anyOpt[Int])).thenReturnIO(List(AAPLStock))
 
         val res = for
@@ -247,9 +247,32 @@ class StockControllerSpec extends HttpRoutesWordSpec {
         val svc = mocks
         when(svc.findAll(any[StockFilters], anyOpt[Int])).thenReturnIO(List(AAPLStock))
 
+        val queryParams = List(
+          "exchange=nasdaq",
+          "kind=stock",
+          "country=US",
+          "minMarketCap=1000000000000",
+          "maxMarketCap=5000000000000",
+          "minPrice=100",
+          "maxPrice=500",
+          "minOverallScore=60",
+          "minCagrScore=50",
+          "minVolatilityScore=40",
+          "minPE=15",
+          "maxPE=35",
+          "minROE=15",
+          "maxDebtToEquity=1.5",
+          "minProfitMargin=10",
+          "minFreeCashFlow=5",
+          "minRevenueGrowth5Y=8",
+          "minEpsGrowth5Y=10",
+          "sortBy=overall-score",
+          "limit=10"
+        ).mkString("&")
+
         val res = for
           controller <- StockController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/stocks?exchange=nasdaq&kind=stock&minMarketCap=1000000000000&limit=10", method = Method.GET)
+          req = Request[IO](uri = Uri.unsafeFromString(s"/stocks?$queryParams"), method = Method.GET)
             .withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
@@ -259,7 +282,23 @@ class StockControllerSpec extends HttpRoutesWordSpec {
           StockFilters(
             exchange = Some(stockschecker.domain.Exchange.NASDAQ),
             kind = Some(stockschecker.domain.SecurityKind.Stock),
-            minMarketCap = Some(1000000000000L)
+            country = Some("US"),
+            minMarketCap = Some(1000000000000L),
+            maxMarketCap = Some(5000000000000L),
+            minPrice = Some(BigDecimal(100)),
+            maxPrice = Some(BigDecimal(500)),
+            minOverallScore = Some(BigDecimal(60)),
+            minCagrScore = Some(BigDecimal(50)),
+            minVolatilityScore = Some(BigDecimal(40)),
+            minPE = Some(BigDecimal(15)),
+            maxPE = Some(BigDecimal(35)),
+            minROE = Some(BigDecimal(15)),
+            maxDebtToEquity = Some(BigDecimal(1.5)),
+            minProfitMargin = Some(BigDecimal(10)),
+            minFreeCashFlow = Some(BigDecimal(5)),
+            minRevenueGrowth5Y = Some(BigDecimal(8)),
+            minEpsGrowth5Y = Some(BigDecimal(10)),
+            sortBy = Some(stockschecker.domain.StockSortField.OverallScore)
           ),
           Some(10)
         )

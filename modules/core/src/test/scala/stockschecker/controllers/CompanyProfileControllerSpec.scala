@@ -79,7 +79,7 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
         val res = for
           controller <- CompanyProfileController.make(svc, apiConfig)
           invalidApiKeyHeader = Header.Raw(CIString("X-API-Key"), "wrong-key")
-          req = Request[IO](uri = uri"/company-profiles/AAPL", method = Method.GET).withHeaders(invalidApiKeyHeader)
+          req                 = Request[IO](uri = uri"/company-profiles/AAPL", method = Method.GET).withHeaders(invalidApiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 

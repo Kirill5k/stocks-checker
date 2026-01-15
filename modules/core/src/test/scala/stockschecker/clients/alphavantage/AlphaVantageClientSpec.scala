@@ -78,7 +78,7 @@ class AlphaVantageClientSpec extends Sttp4WordSpec {
           }
 
         val result = for
-          client <- AlphaVantageClient.make[IO](config.copy(apiKey = "key1,key2"), testingBackend)
+          client  <- AlphaVantageClient.make[IO](config.copy(apiKey = "key1,key2"), testingBackend)
           candles <- client.getMonthlyPriceCandles(Ticker("AAPL"))
         yield candles
 

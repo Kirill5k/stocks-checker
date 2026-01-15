@@ -37,7 +37,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
 
       "ignore errors when fetching financial metrics fails" in {
         val (repo, client, dispatcher) = mocks
-        val error = new RuntimeException("API error")
+        val error                      = new RuntimeException("API error")
         when(client.getFinancialMetrics(any[Ticker])).thenRaiseError(error)
 
         val res = for
@@ -54,7 +54,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
 
       "handle multiple tickers and batch save" in {
         val (repo, client, dispatcher) = mocks
-        val msftMetrics = AAPLFinancialMetrics.copy(ticker = MSFT)
+        val msftMetrics                = AAPLFinancialMetrics.copy(ticker = MSFT)
         when(client.getFinancialMetrics(AAPL)).thenReturnIO(Some(AAPLFinancialMetrics))
         when(client.getFinancialMetrics(MSFT)).thenReturnIO(Some(msftMetrics))
         when(repo.save(anyList[FinancialMetrics])).thenReturnUnit
@@ -97,7 +97,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
 
       "handle errors when saving to repository fails" in {
         val (repo, client, dispatcher) = mocks
-        val error = new RuntimeException("Database error")
+        val error                      = new RuntimeException("Database error")
         when(client.getFinancialMetrics(any[Ticker])).thenReturnIO(Some(AAPLFinancialMetrics))
         when(repo.save(anyList[FinancialMetrics])).thenRaiseError(error)
 
@@ -184,7 +184,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
 
       "handle errors when market data client fails with fetch true" in {
         val (repo, client, dispatcher) = mocks
-        val error = new RuntimeException("API error")
+        val error                      = new RuntimeException("API error")
         when(client.getFinancialMetrics(any[Ticker])).thenRaiseError(error)
 
         val res = for
@@ -203,4 +203,3 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
   def mocks: (FinancialMetricsRepository[IO], MarketDataClient[IO], ActionDispatcher[IO]) =
     (mock[FinancialMetricsRepository[IO]], mock[MarketDataClient[IO]], mock[ActionDispatcher[IO]])
 }
-

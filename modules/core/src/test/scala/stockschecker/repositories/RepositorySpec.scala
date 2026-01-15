@@ -24,60 +24,60 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
 
   protected def toDoc(security: Security): Document =
     Document(
-      "_id" := security.ticker.value,
-      "ticker" := security.ticker.value,
-      "exchange" := security.exchange.print,
-      "name" := security.name,
-      "kind" := security.kind.print,
-      "isActive" := security.isActive,
+      "_id"                         := security.ticker.value,
+      "ticker"                      := security.ticker.value,
+      "exchange"                    := security.exchange.print,
+      "name"                        := security.name,
+      "kind"                        := security.kind.print,
+      "isActive"                    := security.isActive,
       "companyProfileLastUpdatedAt" := security.companyProfileLastUpdatedAt,
-      "createdAt" := now,
-      "updatedAt" := now
+      "createdAt"                   := now,
+      "updatedAt"                   := now
     )
 
   protected def toDoc(profile: CompanyProfile): Document =
     Document(
-      "_id" := profile.ticker.value,
-      "name" := profile.name,
-      "country" := profile.country,
-      "industry" := profile.industry,
-      "description" := profile.description,
-      "website" := profile.website,
-      "ipoDate" := profile.ipoDate,
-      "currency" := profile.currency,
-      "marketCap" := profile.marketCap,
-      "priceAnalyticsLastUpdatedAt" := profile.priceAnalyticsLastUpdatedAt,
+      "_id"                           := profile.ticker.value,
+      "name"                          := profile.name,
+      "country"                       := profile.country,
+      "industry"                      := profile.industry,
+      "description"                   := profile.description,
+      "website"                       := profile.website,
+      "ipoDate"                       := profile.ipoDate,
+      "currency"                      := profile.currency,
+      "marketCap"                     := profile.marketCap,
+      "priceAnalyticsLastUpdatedAt"   := profile.priceAnalyticsLastUpdatedAt,
       "financialMetricsLastUpdatedAt" := profile.financialMetricsLastUpdatedAt,
-      "createdAt" := now,
-      "updatedAt" := now
+      "createdAt"                     := now,
+      "updatedAt"                     := now
     )
 
   protected def toDoc(analytics: PriceAnalytics): Document =
     Document(
-      "_id" := analytics.ticker,
+      "_id"                := analytics.ticker,
       "performanceSummary" := analytics.performanceSummary,
-      "metrics" := analytics.metrics,
-      "scores" := analytics.scores,
-      "createdAt" := now,
-      "updatedAt" := now
+      "metrics"            := analytics.metrics,
+      "scores"             := analytics.scores,
+      "createdAt"          := now,
+      "updatedAt"          := now
     )
 
   protected def toDoc(metrics: FinancialMetrics): Document =
     Document(
-      "_id" := metrics.ticker.value,
-      "peRatioTtm" := metrics.peRatioTtm,
-      "epsTtm" := metrics.epsTtm,
-      "roeTtm" := metrics.roeTtm,
-      "dividendYieldAnnual" := metrics.dividendYieldAnnual,
-      "debtToEquityAnnual" := metrics.debtToEquityAnnual,
-      "profitMarginTtm" := metrics.profitMarginTtm,
+      "_id"                     := metrics.ticker.value,
+      "peRatioTtm"              := metrics.peRatioTtm,
+      "epsTtm"                  := metrics.epsTtm,
+      "roeTtm"                  := metrics.roeTtm,
+      "dividendYieldAnnual"     := metrics.dividendYieldAnnual,
+      "debtToEquityAnnual"      := metrics.debtToEquityAnnual,
+      "profitMarginTtm"         := metrics.profitMarginTtm,
       "freeCashFlowPerShareTtm" := metrics.freeCashFlowPerShareTtm,
-      "revenueGrowth5Y" := metrics.revenueGrowth5Y,
-      "epsGrowth5Y" := metrics.epsGrowth5Y,
-      "priceHigh52Week" := metrics.priceHigh52Week,
-      "priceLow52Week" := metrics.priceLow52Week,
-      "createdAt" := now,
-      "updatedAt" := now
+      "revenueGrowth5Y"         := metrics.revenueGrowth5Y,
+      "epsGrowth5Y"             := metrics.epsGrowth5Y,
+      "priceHigh52Week"         := metrics.priceHigh52Week,
+      "priceLow52Week"          := metrics.priceLow52Week,
+      "createdAt"               := now,
+      "updatedAt"               := now
     )
 
   protected def withEmbeddedMongoDatabase[A](test: MongoDatabase[IO] => IO[A]): Future[A] =

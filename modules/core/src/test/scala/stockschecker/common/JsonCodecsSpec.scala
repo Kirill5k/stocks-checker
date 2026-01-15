@@ -12,7 +12,7 @@ import scala.concurrent.duration.*
 class JsonCodecsSpec extends AnyWordSpec with Matchers with Inspectors {
 
   "FiniteDuration codec" should {
-    "convert json to finite duration" in {
+    "convert json to finite duration" in
       forAll(
         Map(
           "1minute"   -> 1.minute,
@@ -25,9 +25,8 @@ class JsonCodecsSpec extends AnyWordSpec with Matchers with Inspectors {
       ) { (str, fd) =>
         Json.fromString(str).as[FiniteDuration] mustBe Right(fd)
       }
-    }
 
-    "handle errors for invalid jsons" in {
+    "handle errors for invalid jsons" in
       forAll(
         Map(
           "foo"  -> "foo is not valid finite duration string. Expected format is '<length> <unit>'",
@@ -36,9 +35,8 @@ class JsonCodecsSpec extends AnyWordSpec with Matchers with Inspectors {
       ) { (str, err) =>
         Json.fromString(str).as[FiniteDuration].left.map(_.getMessage) mustBe Left("DecodingFailure at : " + err)
       }
-    }
 
-    "convert finite duration to json" in {
+    "convert finite duration to json" in
       forAll(
         Map(
           1.minute   -> "1minute",
@@ -48,6 +46,5 @@ class JsonCodecsSpec extends AnyWordSpec with Matchers with Inspectors {
       ) { (fd, str) =>
         fd.asJson mustBe Json.fromString(str)
       }
-    }
   }
 }

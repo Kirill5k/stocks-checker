@@ -14,7 +14,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
 
     "given a single price candle" should {
       "return analytics with no period changes and minimal metrics" in {
-        val candle = PriceCandle(LocalDate.of(2024, 1, 1), 100, 105, 95, 102, 1000000)
+        val candle    = PriceCandle(LocalDate.of(2024, 1, 1), 100, 105, 95, 102, 1000000)
         val analytics = PriceAnalytics.from(ticker, NonEmptyList.one(candle))
 
         analytics.ticker.mustBe(ticker)
@@ -57,16 +57,16 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
           PriceCandle(LocalDate.of(2024, 12, 1), 100, 105, 95, 200, 1000000), // latest (index 0)
           PriceCandle(LocalDate.of(2024, 11, 1), 100, 105, 95, 190, 1000000), // 1 month ago
           PriceCandle(LocalDate.of(2024, 10, 1), 100, 105, 95, 185, 1000000),
-          PriceCandle(LocalDate.of(2024, 9, 1), 100, 105, 95, 160, 1000000),  // 3 months ago
+          PriceCandle(LocalDate.of(2024, 9, 1), 100, 105, 95, 160, 1000000), // 3 months ago
           PriceCandle(LocalDate.of(2024, 8, 1), 100, 105, 95, 155, 1000000),
           PriceCandle(LocalDate.of(2024, 7, 1), 100, 105, 95, 152, 1000000),
-          PriceCandle(LocalDate.of(2024, 6, 1), 100, 105, 95, 150, 1000000),  // 6 months ago
+          PriceCandle(LocalDate.of(2024, 6, 1), 100, 105, 95, 150, 1000000), // 6 months ago
           PriceCandle(LocalDate.of(2024, 5, 1), 100, 105, 95, 145, 1000000),
           PriceCandle(LocalDate.of(2024, 4, 1), 100, 105, 95, 140, 1000000),
           PriceCandle(LocalDate.of(2024, 3, 1), 100, 105, 95, 135, 1000000),
           PriceCandle(LocalDate.of(2024, 2, 1), 100, 105, 95, 130, 1000000),
           PriceCandle(LocalDate.of(2024, 1, 1), 100, 105, 95, 125, 1000000),
-          PriceCandle(LocalDate.of(2023, 12, 1), 100, 105, 95, 100, 1000000)  // 12 months ago/oldest
+          PriceCandle(LocalDate.of(2023, 12, 1), 100, 105, 95, 100, 1000000) // 12 months ago/oldest
         )
 
         val analytics = PriceAnalytics.from(ticker, candles)
@@ -75,11 +75,11 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         val summary = analytics.performanceSummary
         summary.latestPrice.mustBe(BigDecimal(200))
         summary.latestPriceDate.mustBe(LocalDate.of(2024, 12, 1))
-        summary.oneMonthChange.mustBe(Some(BigDecimal("5.26")))  // (200-190)/190 * 100
+        summary.oneMonthChange.mustBe(Some(BigDecimal("5.26")))    // (200-190)/190 * 100
         summary.threeMonthChange.mustBe(Some(BigDecimal("25.00"))) // (200-160)/160 * 100
         summary.sixMonthChange.mustBe(Some(BigDecimal("33.33")))   // (200-150)/150 * 100
-        summary.oneYearChange.mustBe(Some(BigDecimal("100.00")))    // (200-100)/100 * 100
-        summary.maxChange.mustBe(Some(BigDecimal("100.00")))        // from oldest
+        summary.oneYearChange.mustBe(Some(BigDecimal("100.00")))   // (200-100)/100 * 100
+        summary.maxChange.mustBe(Some(BigDecimal("100.00")))       // from oldest
 
         // Metrics - should have volatility with 13 months of data
         val metrics = analytics.metrics
@@ -95,13 +95,13 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
     "given 37 months of data" should {
       "calculate 3-year CAGR" in {
         val startPrice = BigDecimal(100)
-        val endPrice = BigDecimal(200)
+        val endPrice   = BigDecimal(200)
 
         val candles = NonEmptyList.fromListUnsafe(
           (0 until 37).map { i =>
             val monthsAgo = i
-            val year = 2024 - (monthsAgo / 12)
-            val month = 12 - (monthsAgo % 12)
+            val year      = 2024 - (monthsAgo / 12)
+            val month     = 12 - (monthsAgo % 12)
             // Newest first: i=0 is latest (endPrice), i=36 is oldest (startPrice)
             val price = endPrice - ((endPrice - startPrice) * i / 36)
             PriceCandle(LocalDate.of(year, if (month == 0) 12 else month, 1), 100, 105, 95, price, 1000000)
@@ -109,7 +109,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         )
 
         val analytics = PriceAnalytics.from(ticker, candles)
-        val metrics = analytics.metrics
+        val metrics   = analytics.metrics
 
         metrics.cagr3Year.must(be(defined))
         // (200/100)^(1/3) - 1 = 25.99%
@@ -123,13 +123,13 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
     "given 61 months of steady growth" should {
       "calculate both 3-year and 5-year CAGR with high scores" in {
         val startPrice = BigDecimal(100)
-        val endPrice = BigDecimal(250)
+        val endPrice   = BigDecimal(250)
 
         val candles = NonEmptyList.fromListUnsafe(
           (0 until 61).map { i =>
             val monthsAgo = i
-            val year = 2024 - (monthsAgo / 12)
-            val month = 12 - (monthsAgo % 12)
+            val year      = 2024 - (monthsAgo / 12)
+            val month     = 12 - (monthsAgo % 12)
             // Newest first: i=0 is latest (endPrice), i=60 is oldest (startPrice)
             val price = endPrice - ((endPrice - startPrice) * i / 60)
             PriceCandle(LocalDate.of(year, if (month == 0) 12 else month, 1), 100, 105, 95, price, 1000000)
@@ -137,7 +137,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         )
 
         val analytics = PriceAnalytics.from(ticker, candles)
-        val metrics = analytics.metrics
+        val metrics   = analytics.metrics
 
         metrics.cagr3Year.must(be(defined))
         metrics.cagr5Year.must(be(defined))
@@ -173,8 +173,8 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         val candles = NonEmptyList.fromListUnsafe(
           (0 until 25).map { i =>
             val monthsAgo = i
-            val year = 2024 - (monthsAgo / 12)
-            val month = 12 - (monthsAgo % 12)
+            val year      = 2024 - (monthsAgo / 12)
+            val month     = 12 - (monthsAgo % 12)
             // Oscillating prices
             val price = if (i % 2 == 0) BigDecimal(150) else BigDecimal(100)
             PriceCandle(LocalDate.of(year, if (month == 0) 12 else month, 1), 100, 105, 95, price, 1000000)
@@ -182,7 +182,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         )
 
         val analytics = PriceAnalytics.from(ticker, candles)
-        val metrics = analytics.metrics
+        val metrics   = analytics.metrics
 
         metrics.volatility.must(be(defined))
         metrics.volatility.get.toDouble.must(be > 30.0) // High volatility
@@ -197,8 +197,8 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         val candles = NonEmptyList.fromListUnsafe(
           (0 until 37).map { i =>
             val monthsAgo = i
-            val year = 2024 - (monthsAgo / 12)
-            val month = 12 - (monthsAgo % 12)
+            val year      = 2024 - (monthsAgo / 12)
+            val month     = 12 - (monthsAgo % 12)
             // Declining: newest (i=0) has lowest price (65), oldest (i=36) has highest price (101)
             val price = BigDecimal(65 + i) // Declining from 101 to 65
             PriceCandle(LocalDate.of(year, if (month == 0) 12 else month, 1), 100, 105, 95, price, 1000000)
@@ -206,7 +206,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         )
 
         val analytics = PriceAnalytics.from(ticker, candles)
-        val metrics = analytics.metrics
+        val metrics   = analytics.metrics
 
         metrics.cagr3Year.must(be(defined))
         metrics.cagr3Year.get.toDouble.must(be < 0.0) // Negative growth
@@ -215,7 +215,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         metrics.positiveYears.mustBe(0) // All years negative
 
         val scores = analytics.scores
-        scores.cagrScore.mustBe(BigDecimal(0)) // Negative CAGR = 0 score
+        scores.cagrScore.mustBe(BigDecimal(0))       // Negative CAGR = 0 score
         scores.overallScore.toDouble.must(be < 60.0) // Low overall score
       }
     }
@@ -241,7 +241,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         )
 
         val analytics = PriceAnalytics.from(ticker, candles)
-        val metrics = analytics.metrics
+        val metrics   = analytics.metrics
 
         metrics.maxDrawdown.must(be(defined))
         // Peak 150 -> Low 60. (150-60)/150 = 60.00%
@@ -301,8 +301,8 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         val candles = NonEmptyList.fromListUnsafe(
           (0 until 37).map { i =>
             val monthsAgo = i
-            val year = 2024 - (monthsAgo / 12)
-            val month = 12 - (monthsAgo % 12)
+            val year      = 2024 - (monthsAgo / 12)
+            val month     = 12 - (monthsAgo % 12)
             // 40% annual growth: newest (i=0) has highest price, oldest (i=36) has lowest
             // i=0: 1.4^3 = 2.744, i=36: 1.4^0 = 1.0
             val price = BigDecimal(100 * Math.pow(1.4, (36 - i) / 12.0))
@@ -320,8 +320,8 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         val candles = NonEmptyList.fromListUnsafe(
           (0 until 25).map { i =>
             val monthsAgo = i
-            val year = 2024 - (monthsAgo / 12)
-            val month = 12 - (monthsAgo % 12)
+            val year      = 2024 - (monthsAgo / 12)
+            val month     = 12 - (monthsAgo % 12)
             // Almost no change - slight gradual increase from oldest to newest
             val price = BigDecimal(100) + BigDecimal((24 - i) * 0.1)
             PriceCandle(LocalDate.of(year, if (month == 0) 12 else month, 1), 100, 105, 95, price, 1000000)
@@ -339,8 +339,8 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         val candles = NonEmptyList.fromListUnsafe(
           (0 until 37).map { i =>
             val monthsAgo = i
-            val year = 2024 - (monthsAgo / 12)
-            val month = 12 - (monthsAgo % 12)
+            val year      = 2024 - (monthsAgo / 12)
+            val month     = 12 - (monthsAgo % 12)
             // Steady growth: newest (i=0) has highest, oldest (i=36) has lowest
             val price = BigDecimal(172 - i * 2)
             PriceCandle(LocalDate.of(year, if (month == 0) 12 else month, 1), 100, 105, 95, price, 1000000)
@@ -348,13 +348,13 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers {
         )
 
         val analytics = PriceAnalytics.from(ticker, candles)
-        val scores = analytics.scores
+        val scores    = analytics.scores
 
         val expectedOverall = (
           scores.cagrScore * 0.30 +
-          scores.volatilityScore * 0.25 +
-          scores.drawdownScore * 0.20 +
-          scores.consistencyScore * 0.25
+            scores.volatilityScore * 0.25 +
+            scores.drawdownScore * 0.20 +
+            scores.consistencyScore * 0.25
         ).setScale(2, scala.math.BigDecimal.RoundingMode.HALF_UP)
 
         scores.overallScore.mustBe(expectedOverall)

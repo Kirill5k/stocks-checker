@@ -18,7 +18,7 @@ class CommandRepositorySpec extends RepositorySpec {
 
   "A  CommandRepository" when {
     "create" should {
-      "store new command in db" in {
+      "store new command in db" in
         withEmbeddedMongoDatabase { db =>
           for
             repo     <- CommandRepository.make(db)
@@ -32,31 +32,28 @@ class CommandRepositorySpec extends RepositorySpec {
             assert(cmd.action == action)
           }
         }
-      }
     }
 
     "find" should {
-      "return an error when cmd is not found" in {
+      "return an error when cmd is not found" in
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CommandRepository.make(db)
             res  <- repo.find(FetchLatestSecuritiesCommand.id).attempt
           yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestSecuritiesCommand.id.value))
         }
-      }
     }
 
     "update" should {
-      "return an error when cmd is not found" in {
+      "return an error when cmd is not found" in
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CommandRepository.make(db)
             res  <- repo.update(FetchLatestSecuritiesCommand).attempt
           yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestSecuritiesCommand.id.value))
         }
-      }
 
-      "store updated fields" in {
+      "store updated fields" in
         withEmbeddedMongoDatabase { db =>
           for
             repo       <- CommandRepository.make(db)
@@ -70,20 +67,18 @@ class CommandRepositorySpec extends RepositorySpec {
             updatedCmd.maxExecutions mustBe Some(10)
           }
         }
-      }
     }
 
     "setActive" should {
-      "return an error when cmd is not found" in {
+      "return an error when cmd is not found" in
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CommandRepository.make(db)
             res  <- repo.setActive(FetchLatestSecuritiesCommand.id, false).attempt
           yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestSecuritiesCommand.id.value))
         }
-      }
 
-      "update isActive field" in {
+      "update isActive field" in
         withEmbeddedMongoDatabase { db =>
           for
             repo       <- CommandRepository.make(db)
@@ -92,11 +87,10 @@ class CommandRepositorySpec extends RepositorySpec {
             updatedCmd <- repo.find(cmd.id)
           yield updatedCmd.isActive mustBe false
         }
-      }
     }
 
     "streamActive" should {
-      "stream active commands" in {
+      "stream active commands" in
         withEmbeddedMongoDatabase { db =>
           for
             repo           <- CommandRepository.make(db)
@@ -106,20 +100,18 @@ class CommandRepositorySpec extends RepositorySpec {
             activeCommands <- repo.streamActive.compile.toList
           yield activeCommands mustBe List(activeCmd)
         }
-      }
     }
 
     "all" should {
-      "return empty list when there are no commands in db" in {
+      "return empty list when there are no commands in db" in
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CommandRepository.make(db)
             cmds <- repo.all
           yield cmds mustBe Nil
         }
-      }
 
-      "return all commands from repo" in {
+      "return all commands from repo" in
         withEmbeddedMongoDatabase { db =>
           for
             repo      <- CommandRepository.make(db)
@@ -129,7 +121,6 @@ class CommandRepositorySpec extends RepositorySpec {
             cmds      <- repo.all
           yield cmds mustBe List(cmd.copy(isActive = false), activeCmd)
         }
-      }
     }
   }
 

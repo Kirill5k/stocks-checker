@@ -182,8 +182,9 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
       }
 
       "return 200 with multiple summaries when no filters are provided" in {
-        val svc = mocks
-        val msftAnalytics = AAPLPriceAnalytics.copy(ticker = MSFT, performanceSummary = AAPLPricePerformanceSummary.copy(latestPrice = BigDecimal("400.00")))
+        val svc           = mocks
+        val msftAnalytics =
+          AAPLPriceAnalytics.copy(ticker = MSFT, performanceSummary = AAPLPricePerformanceSummary.copy(latestPrice = BigDecimal("400.00")))
         when(svc.getAllPriceAnalytics(any[Option[Int]])).thenReturnIO(List(AAPLPriceAnalytics, msftAnalytics))
 
         val res = for
@@ -391,7 +392,8 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |  }
                              |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
-        val expectedFilter = PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PerformanceAbove(TimePeriod.OneYear, BigDecimal(10.5))))
+        val expectedFilter =
+          PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PerformanceAbove(TimePeriod.OneYear, BigDecimal(10.5))))
         verify(svc).findPriceAnalyticsBy(expectedFilter, None)
       }
 
@@ -502,7 +504,8 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
 
         val res = for
           controller <- PriceController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/price/performance-summaries?minLatestPrice=200&limit=5", method = Method.GET).withHeaders(apiKeyHeader)
+          req = Request[IO](uri = uri"/price/performance-summaries?minLatestPrice=200&limit=5", method = Method.GET)
+            .withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 
@@ -561,7 +564,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
         val res = for
           controller <- PriceController.make(svc, apiConfig)
           invalidApiKeyHeader = Header.Raw(CIString("X-API-Key"), "wrong-key")
-          req = Request[IO](uri = uri"/price/performance-summaries", method = Method.GET).withHeaders(invalidApiKeyHeader)
+          req                 = Request[IO](uri = uri"/price/performance-summaries", method = Method.GET).withHeaders(invalidApiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
         yield res
 

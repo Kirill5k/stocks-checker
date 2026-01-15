@@ -89,7 +89,9 @@ class FinnhubClientSpec extends Sttp4WordSpec {
               name = "APPLE INC",
               country = "US",
               industry = "Technology",
-              description = Some("Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide."),
+              description = Some(
+                "Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide."
+              ),
               website = "https://www.apple.com/",
               ipoDate = Some(LocalDate.parse("1980-12-12")),
               currency = "USD",
@@ -119,15 +121,14 @@ class FinnhubClientSpec extends Sttp4WordSpec {
       }
 
       "retry on 429 Too Many Requests and succeed on second attempt" in {
-        val testingBackend = fs2BackendStub
-          .whenAnyRequest
+        val testingBackend = fs2BackendStub.whenAnyRequest
           .thenRespondCyclic(
             ResponseStub.adjust("""{"error":"API limit exceeded"}""", StatusCode.TooManyRequests),
             ResponseStub.adjust(readJson("finnhub/company-profile-success.json"))
           )
 
         val result = for
-          client <- FinnhubClient.make[IO](config, testingBackend)
+          client  <- FinnhubClient.make[IO](config, testingBackend)
           profile <- client.getCompanyProfile(Ticker("AAPL"))
         yield profile
 
@@ -138,7 +139,9 @@ class FinnhubClientSpec extends Sttp4WordSpec {
               name = "APPLE INC",
               country = "US",
               industry = "Technology",
-              description = Some("Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide."),
+              description = Some(
+                "Apple Inc. designs, manufactures, and markets smartphones, personal computers, tablets, wearables, and accessories worldwide."
+              ),
               website = "https://www.apple.com/",
               ipoDate = Some(LocalDate.parse("1980-12-12")),
               currency = "USD",
@@ -204,15 +207,14 @@ class FinnhubClientSpec extends Sttp4WordSpec {
       }
 
       "retry on 429 Too Many Requests and succeed on second attempt" in {
-        val testingBackend = fs2BackendStub
-          .whenAnyRequest
+        val testingBackend = fs2BackendStub.whenAnyRequest
           .thenRespondCyclic(
             ResponseStub.adjust("""{"error":"API limit exceeded"}""", StatusCode.TooManyRequests),
             ResponseStub.adjust(readJson("finnhub/basic-financials-success.json"))
           )
 
         val result = for
-          client <- FinnhubClient.make[IO](config, testingBackend)
+          client  <- FinnhubClient.make[IO](config, testingBackend)
           profile <- client.getFinancialMetrics(Ticker("AAPL"))
         yield profile
 

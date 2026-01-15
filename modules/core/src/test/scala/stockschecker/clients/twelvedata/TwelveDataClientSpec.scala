@@ -171,4 +171,3 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
     }
   }
 }
-
