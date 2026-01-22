@@ -40,6 +40,7 @@ final private class LiveCompanyProfileRepository[F[_]](
       Update
         .setOnInsert(Field.Id, cp.ticker)
         .setOnInsert(Field.CreatedAt, now)
+        .setOnInsert(Field.IsActive, true)
         .set(Field.Name, cp.name)
         .set(Field.Country, cp.country)
         .set(Field.Industry, cp.industry)
@@ -113,6 +114,8 @@ final private class LiveCompanyProfileRepository[F[_]](
 
   extension (f: CompanyProfileFilter)
     private def toFilter: F[Filter] = f match
+      case CompanyProfileFilter.IsActive(active) =>
+        Filter.eq(Field.IsActive, active).pure
       case CompanyProfileFilter.MarketCapAbove(min) =>
         Filter.gt(Field.MarketCap, min).pure
       case CompanyProfileFilter.MarketCapBelow(max) =>
@@ -146,6 +149,7 @@ object CompanyProfileRepository extends MongoJsonCodecs:
   object Field:
     val Id                            = "_id"
     val Name                          = "name"
+    val IsActive                      = "isActive"
     val Country                       = "country"
     val Industry                      = "industry"
     val Description                   = "description"

@@ -56,6 +56,7 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   final case class CompanyProfileEntity(
       _id: Ticker,
+      isActive: Option[Boolean],
       name: String,
       country: String,
       industry: String,

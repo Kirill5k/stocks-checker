@@ -8,6 +8,7 @@ import java.time.LocalDate
 import scala.concurrent.duration.FiniteDuration
 
 enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
+  case IsActive(active: Boolean)
   case MarketCapAbove(min: Long)
   case MarketCapBelow(min: Long)
   case CountryIs(countryCode: String)
@@ -23,6 +24,7 @@ enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt
 object CompanyProfileFilter extends JsonCodecs:
   given JsonTaggedAdt.Config[CompanyProfileFilter] = JsonTaggedAdt.Config.Values[CompanyProfileFilter](
     mappings = Map(
+      "is-active"                         -> JsonTaggedAdt.tagged[CompanyProfileFilter.IsActive],
       "market-cap-above"                  -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapAbove],
       "market-cap-below"                  -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapBelow],
       "country-is"                        -> JsonTaggedAdt.tagged[CompanyProfileFilter.CountryIs],
