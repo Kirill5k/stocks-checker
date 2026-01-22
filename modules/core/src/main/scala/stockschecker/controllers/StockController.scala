@@ -109,7 +109,8 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       name = stock.security.name,
       security = StockSecurityView(
         exchange = stock.security.exchange,
-        kind = stock.security.kind
+        kind = stock.security.kind,
+        isActive = stock.security.isActive
       ),
       profile = stock.profile.map(p =>
         StockCompanyProfileView(
@@ -162,7 +163,8 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
 
   final private case class StockSecurityView(
       exchange: Exchange,
-      kind: SecurityKind
+      kind: SecurityKind,
+      isActive: Boolean
   ) derives CirceCodec.AsObject
 
   final private case class StockCompanyProfileView(

@@ -21,7 +21,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
       |{
       |"ticker":"AAPL",
       |"name":"Apple Inc.",
-      |"security":{"exchange":"nasdaq","kind":"stock"},
+      |"security":{"exchange":"nasdaq","kind":"stock","isActive":true},
       |"profile":{
       | "country":"US",
       |  "industry":"Consumer Electronics",
@@ -128,7 +128,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
             |,{
             |"ticker":"MSFT",
             |"name":"Microsoft Corporation",
-            |"security":{"exchange":"nasdaq","kind":"stock"},
+            |"security":{"exchange":"nasdaq","kind":"stock","isActive":true},
             |"profile":{
             | "country":"US",
             |  "industry":"Software—Infrastructure",
