@@ -304,6 +304,35 @@ class StockControllerSpec extends HttpRoutesWordSpec {
         )
       }
     }
+
+    "PUT /stocks/:ticker/deactivate" should {
+      "return 204 on successful deactivation" in {
+        val svc = mocks
+        when(svc.deactivate(any[Ticker])).thenReturnUnit
+
+        val res = for
+          controller <- StockController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/stocks/aapl/deactivate", method = Method.PUT).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.NoContent, None)
+        verify(svc).deactivate(AAPL)
+      }
+
+      "return 401 when accessed without API key" in {
+        val svc = mocks
+
+        val res = for
+          controller <- StockController.make(svc, apiConfig)
+          req = Request[IO](uri = uri"/stocks/aapl/deactivate", method = Method.PUT)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
+        verifyNoInteractions(svc)
+      }
+    }
   }
 
   def mocks: StockService[IO] = mock[StockService[IO]]

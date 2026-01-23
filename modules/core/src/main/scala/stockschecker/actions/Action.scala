@@ -24,6 +24,9 @@ enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithCo
   case RecordCompanyProfileUpdate(tickers: List[Ticker])
   case RecordFinancialMetricsUpdate(tickers: List[Ticker])
   case RecordPriceAnalyticsUpdate(tickers: List[Ticker])
+  // Deactivate operations
+  case DeactivateSecurity(ticker: Ticker)
+  case DeactivateCompanyProfile(ticker: Ticker)
 
 object Action extends JsonCodecs {
   given JsonTaggedAdt.Config[Action] = JsonTaggedAdt.Config.Values[Action](
@@ -40,7 +43,9 @@ object Action extends JsonCodecs {
       "update-price-analytics"          -> JsonTaggedAdt.tagged[Action.UpdatePriceAnalytics],
       "record-company-profile-update"   -> JsonTaggedAdt.tagged[Action.RecordCompanyProfileUpdate],
       "record-financial-metrics-update" -> JsonTaggedAdt.tagged[Action.RecordFinancialMetricsUpdate],
-      "record-price-analytics-update"   -> JsonTaggedAdt.tagged[Action.RecordPriceAnalyticsUpdate]
+      "record-price-analytics-update"   -> JsonTaggedAdt.tagged[Action.RecordPriceAnalyticsUpdate],
+      "deactivate-security"             -> JsonTaggedAdt.tagged[Action.DeactivateSecurity],
+      "deactivate-company-profile"      -> JsonTaggedAdt.tagged[Action.DeactivateCompanyProfile]
     ),
     strict = true,
     typeFieldName = "kind"

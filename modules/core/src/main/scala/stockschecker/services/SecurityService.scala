@@ -20,6 +20,7 @@ trait SecurityService[F[_]]:
   def fetchLatest(exchanges: NonEmptyList[Exchange]): F[Unit]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
   def recordCompanyProfileUpdate(tickers: List[Ticker]): F[Unit]
+  def deactivate(ticker: Ticker): F[Unit]
 
 final private class LiveSecurityService[F[_]](
     private val repository: SecurityRepository[F],
@@ -61,6 +62,10 @@ final private class LiveSecurityService[F[_]](
 
   override def recordCompanyProfileUpdate(tickers: List[Ticker]): F[Unit] =
     repository.updateCompanyProfileLastUpdated(tickers)
+
+  override def deactivate(ticker: Ticker): F[Unit] =
+    repository.deactivate(ticker)
+      
 }
 
 object SecurityService:

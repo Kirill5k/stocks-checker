@@ -7,6 +7,7 @@ import stockschecker.common.config.ApiConfig
 import stockschecker.controllers.StockController.{StockQueryParams, StockView}
 import stockschecker.domain.{Exchange, SecurityKind, Stock, StockAnalysisMetrics, StockAnalysisScores, StockFilters, StockSortField, Ticker}
 import stockschecker.services.StockService
+import sttp.model.StatusCode
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
 import sttp.tapir.json.circe.TapirJsonCirce
@@ -50,8 +51,13 @@ final private class StockController[F[_]: Async](
       stockService.findAll(filters, params.limit).mapToResponse(_.map(StockView.from))
     }
 
+  private val deactivateStock = secured(StockController.deactivateStockEndpoint)
+    .serverLogic { _ => ticker =>
+      stockService.deactivate(ticker).asResponse
+    }
+
   override val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(getStockByTicker, getAllStocks))
+    Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(getStockByTicker, getAllStocks, deactivateStock))
 }
 
 object StockController extends TapirJsonCirce with SchemaDerivation {
@@ -226,6 +232,11 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
     .in(query[Option[StockSortField]]("sortBy"))
     .mapInTo[StockQueryParams]
     .out(jsonBody[List[StockView]])
+
+  private val deactivateStockEndpoint = Controller.secureEndpoint.put
+    .in("stocks" / path[Ticker]("ticker") / "deactivate")
+    .out(statusCode(StatusCode.NoContent))
+    .description("Deactivate a stock by setting isActive to false")
 
   def make[F[_]: Async](stockService: StockService[F], config: ApiConfig): F[Controller[F]] =
     Async[F].pure(StockController[F](stockService, ApiKeyRequirement.Required(config.key)))

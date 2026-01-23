@@ -36,7 +36,9 @@ final private class LiveActionExecutor[F[_]](
         case Action.RecordPriceAnalyticsUpdate(tickers)   => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
         case Action.RecordFinancialMetricsUpdate(tickers) => services.companyProfile.recordFinancialMetricsUpdate(tickers)
         case Action.RecordCompanyProfileUpdate(tickers)   => services.security.recordCompanyProfileUpdate(tickers)
-        case Action.FetchCompanyProfiles(filter, limit)   =>
+        case Action.DeactivateSecurity(ticker)       => services.security.deactivate(ticker)
+        case Action.DeactivateCompanyProfile(ticker) => services.companyProfile.deactivate(ticker)
+        case Action.FetchCompanyProfiles(filter, limit) =>
           services.security
             .findTickersBy(filter, limit)
             .flatMap {

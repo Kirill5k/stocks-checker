@@ -22,6 +22,7 @@ trait CompanyProfileService[F[_]]:
   def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]]
   def recordPriceAnalyticsUpdate(tickers: List[Ticker]): F[Unit]
   def recordFinancialMetricsUpdate(tickers: List[Ticker]): F[Unit]
+  def deactivate(ticker: Ticker): F[Unit]
 
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
@@ -77,6 +78,9 @@ final private class LiveCompanyProfileService[F[_]](
 
   override def recordFinancialMetricsUpdate(tickers: List[Ticker]): F[Unit] =
     repository.updateFinancialMetricsLastUpdated(tickers)
+
+  override def deactivate(ticker: Ticker): F[Unit] =
+    repository.deactivate(ticker)
 }
 
 object CompanyProfileService:

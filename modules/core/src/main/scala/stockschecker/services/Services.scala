@@ -24,7 +24,7 @@ object Services:
       cp <- CompanyProfileService.make(repos.companyProfile, clients.marketData, ad)
       p  <- PriceService.make(repos.priceAnalytics, repos.latestPrice, clients.marketData, ad)
       c  <- CommandService.make(repos.command, ad)
-      st <- StockService.make(repos.stock)
+      st <- StockService.make(repos.stock, ad)
       fm <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, ad)
     yield new Services[F]:
       override def security: SecurityService[F]                 = s

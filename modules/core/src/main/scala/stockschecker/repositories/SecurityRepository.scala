@@ -28,6 +28,7 @@ trait SecurityRepository[F[_]]:
   def getAllTickers: F[List[Ticker]]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
   def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit]
+  def deactivate(ticker: Ticker): F[Unit]
 
 final private class LiveSecurityRepository[F[_]](
     private val collection: MongoCollection[F, SecurityEntity]
@@ -44,12 +45,12 @@ final private class LiveSecurityRepository[F[_]](
       var update = Update
         .setOnInsert(Field.Id, id)
         .setOnInsert(Field.CreatedAt, now)
+        .setOnInsert(Field.IsActive, true)
         .set(Field.UpdatedAt, now)
         .set(Field.Ticker, security.ticker)
         .set(Field.Exchange, security.exchange)
         .set(Field.Name, security.name)
         .set(Field.Kind, security.kind)
-        .set(Field.IsActive, security.isActive)
       update = security.companyProfileLastUpdatedAt.fold(update)(ts => update.set(Field.CompanyProfileLastUpdatedAt, ts))
       WriteCommand.UpdateOne(Filter.idEq(id), update, UpdateOptions(upsert = true))
 
@@ -100,6 +101,14 @@ final private class LiveSecurityRepository[F[_]](
         )
         .void
     }
+
+  override def deactivate(ticker: Ticker): F[Unit] =
+    collection
+      .updateOne(
+        Filter.idEq(ticker.value),
+        Update.set(Field.IsActive, false).currentDate(Field.UpdatedAt)
+      )
+      .void
 
   extension (f: SecurityFilter)
     private def toFilter: F[Filter] = f match
