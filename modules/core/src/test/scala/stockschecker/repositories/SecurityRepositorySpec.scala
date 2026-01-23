@@ -104,11 +104,12 @@ class SecurityRepositorySpec extends RepositorySpec {
 
       "return tickers filtered by IsActive" in
         withEmbeddedMongoDatabase { db =>
-          val inactiveSec = AAPLSecurity.copy(ticker = Ticker("INACTIVE"), isActive = false)
+          val inactiveTicker = Ticker("INACTIVE")
           for
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
-            _    <- repo.save(inactiveSec)
+            _    <- repo.save(AAPLSecurity.copy(ticker = inactiveTicker))
+            _    <- repo.deactivate(inactiveTicker)
             res  <- repo.findTickersBy(SecurityFilter.IsActive(true), None)
           yield res mustBe List(AAPL)
         }
