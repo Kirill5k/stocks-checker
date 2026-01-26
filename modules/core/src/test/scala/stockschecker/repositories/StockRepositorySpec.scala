@@ -156,6 +156,19 @@ class StockRepositorySpec extends RepositorySpec {
         }
       }
 
+      "filter by isActive" in {
+        val inactiveSecurity = MSFTSecurity.copy(ticker = Ticker("INACTIVE"), isActive = false)
+        val seedData         = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(inactiveSecurity)))
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            stockRepo <- StockRepository.make[IO](db)
+            res       <- stockRepo.findAll(StockFilters(isActive = Some(true)), None)
+          yield
+            res.size mustBe 2
+            res.forall(_.security.isActive) mustBe true
+        }
+      }
+
       "filter by country" in {
         val ukProfile = MSFTCompanyProfile.copy(ticker = Ticker("HSBA"), country = "GB")
         val seedData  = Map(
@@ -272,10 +285,11 @@ class StockRepositorySpec extends RepositorySpec {
       }
 
       "filter by multiple criteria" in {
-        val nyseStock = MSFTSecurity.copy(ticker = Ticker("NYSE1"), exchange = Exchange.NYSE)
-        val etfStock  = MSFTSecurity.copy(ticker = Ticker("SPY"), kind = SecurityKind.ETF)
-        val seedData  = Map(
-          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock), toDoc(etfStock)),
+        val nyseStock       = MSFTSecurity.copy(ticker = Ticker("NYSE1"), exchange = Exchange.NYSE)
+        val etfStock        = MSFTSecurity.copy(ticker = Ticker("SPY"), kind = SecurityKind.ETF)
+        val inactiveSecurity = AAPLSecurity.copy(ticker = Ticker("INACTIVE"), isActive = false)
+        val seedData        = Map(
+          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock), toDoc(etfStock), toDoc(inactiveSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -285,6 +299,7 @@ class StockRepositorySpec extends RepositorySpec {
               StockFilters(
                 exchange = Some(Exchange.NASDAQ),
                 kind = Some(SecurityKind.Stock),
+                isActive = Some(true),
                 country = Some("US"),
                 minMarketCap = Some(3000000000000L)
               ),
@@ -295,6 +310,7 @@ class StockRepositorySpec extends RepositorySpec {
             res.forall(s =>
               s.security.exchange == Exchange.NASDAQ &&
                 s.security.kind == SecurityKind.Stock &&
+                s.security.isActive &&
                 s.profile.exists(p => p.country == "US" && p.marketCap >= 3000000000000L)
             ) mustBe true
         }

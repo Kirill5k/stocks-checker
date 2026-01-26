@@ -30,6 +30,7 @@ final private class StockController[F[_]: Async](
       val filters = StockFilters(
         exchange = params.exchange,
         kind = params.kind,
+        isActive = params.isActive,
         country = params.country,
         minMarketCap = params.minMarketCap,
         maxMarketCap = params.maxMarketCap,
@@ -66,6 +67,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       limit: Option[Int],
       exchange: Option[Exchange],
       kind: Option[SecurityKind],
+      isActive: Option[Boolean],
       country: Option[String],
       minMarketCap: Option[Long],
       maxMarketCap: Option[Long],
@@ -213,6 +215,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
     .in(query[Option[Int]]("limit"))
     .in(query[Option[Exchange]]("exchange"))
     .in(query[Option[SecurityKind]]("kind"))
+    .in(query[Option[Boolean]]("isActive"))
     .in(query[Option[String]]("country"))
     .in(query[Option[Long]]("minMarketCap"))
     .in(query[Option[Long]]("maxMarketCap"))

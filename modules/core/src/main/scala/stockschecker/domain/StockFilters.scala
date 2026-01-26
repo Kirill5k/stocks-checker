@@ -12,6 +12,7 @@ enum StockSortField:
 final case class StockFilters(
     exchange: Option[Exchange] = None,
     kind: Option[SecurityKind] = None,
+    isActive: Option[Boolean] = None,
     country: Option[String] = None,
     minMarketCap: Option[Long] = None,
     maxMarketCap: Option[Long] = None,
