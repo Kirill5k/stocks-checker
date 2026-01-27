@@ -41,10 +41,10 @@ final private class LiveAlphaVantageClient[F[_]](
     for
       apiKey <- getNextApiKey
       _      <- F.raiseWhen(triedKeys.contains(apiKey) && triedKeys.size >= apiKeys.length) {
-        AppError.Http(429, s"All Alpha Vantage API keys exhausted due to rate limiting: ${triedKeys.mkString(",")}")
+        AppError.HttpClient("AlphaVantage", 429, s"All API keys exhausted due to rate limiting: ${triedKeys.mkString(",")}")
       }
       result <- sendRequest(ticker, apiKey).recoverWith {
-        case err: AppError.Http if err.status == 429 => attemptWithKeyRotation(ticker, triedKeys + apiKey)
+        case err: AppError.HttpClient if err.status == 429 => attemptWithKeyRotation(ticker, triedKeys + apiKey)
       }
     yield result
 
@@ -61,7 +61,7 @@ final private class LiveAlphaVantageClient[F[_]](
         case Left(ResponseException.DeserializationException(responseBody, error, _)) =>
           F.raiseError(AppError.JsonParsingFailure(responseBody, s"Alpha Vantage client returned ${error.getMessage}"))
         case Left(ResponseException.UnexpectedStatusCode(body, meta)) =>
-          F.raiseError(AppError.Http(meta.code.code, s"Alpha Vantage client returned unexpected status ${meta.code.code} with body: $body"))
+          F.raiseError(AppError.HttpClient("AlphaVantage", meta.code.code, body))
     yield result
 
   private def processData(data: AlphaVantageClient.MonthlyTimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
@@ -76,9 +76,9 @@ final private class LiveAlphaVantageClient[F[_]](
     errorMessage match
       case Some(msg) =>
         val statusCode = if msg.contains("API rate limit") then 429 else 500
-        F.raiseError(AppError.Http(statusCode, s"AlphaVantage API error: $msg"))
+        F.raiseError(AppError.HttpClient("AlphaVantage", statusCode, s"API error: $msg"))
       case None =>
-        F.raiseError(AppError.Http(500, s"No time series data returned for ticker ${ticker.value}"))
+        F.raiseError(AppError.HttpClient("AlphaVantage", 500, s"No time series data returned for ticker $ticker"))
 }
 
 object AlphaVantageClient {

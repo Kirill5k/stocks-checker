@@ -42,9 +42,7 @@ final private class LiveFinnhubClient[F[_]](
             case Right(metrics) =>
               F.pure(Some(metrics.toDomain(ticker)))
             case Left(err) =>
-              F.raiseError(
-                AppError.JsonParsingFailure(body.metric.toString, s"Error decoding financial metrics for $ticker: ${err.getMessage}")
-              )
+              F.raiseError(AppError.JsonParsingFailure(body.metric.toString, s"Error decoding financial metrics for $ticker: ${err.getMessage}"))
         case Left(ResponseException.DeserializationException(_, error, _)) =>
           F.raiseError(AppError.JsonParsingFailure(response.body.toString, s"Error decoding financials for $ticker: ${error.getMessage}"))
         case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.NotFound =>
@@ -52,7 +50,7 @@ final private class LiveFinnhubClient[F[_]](
         case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.TooManyRequests =>
           F.sleep(2.second) >> getFinancialMetrics(ticker)
         case Left(err) =>
-          F.raiseError(AppError.Http(response.code.code, s"Error retrieving basic financials for $ticker: ${err.getMessage}"))
+          F.raiseError(AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving basic financials for $ticker: ${err.getMessage}"))
     }
   }
 
@@ -74,7 +72,7 @@ final private class LiveFinnhubClient[F[_]](
         case Left(ResponseException.UnexpectedStatusCode(body, meta)) if meta.code == StatusCode.TooManyRequests =>
           F.sleep(2.second) >> getCompanyProfile(ticker)
         case Left(err) =>
-          F.raiseError(AppError.Http(response.code.code, s"Error retrieving company profile for $ticker: ${err.getMessage}"))
+          F.raiseError(AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving company profile for $ticker: ${err.getMessage}"))
     }
   }
 
@@ -95,7 +93,7 @@ final private class LiveFinnhubClient[F[_]](
             .through(decoder[F, FinnhubClient.StockSymbol])
             .map(_.toDomain(exchange))
         case Left(err) =>
-          Stream.raiseError(AppError.Http(response.code.code, s"Error retrieving traded stocks from finnhub: $err"))
+          Stream.raiseError(AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving traded stocks: $err"))
     yield data
   }
 

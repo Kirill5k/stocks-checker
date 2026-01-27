@@ -37,19 +37,19 @@ final private class LiveTwelveDataClient[F[_]](
         case Left(ResponseException.DeserializationException(responseBody, error, _)) =>
           F.raiseError(AppError.JsonParsingFailure(responseBody, s"TwelveData client returned ${error.getMessage}"))
         case Left(ResponseException.UnexpectedStatusCode(body, meta)) =>
-          F.raiseError(AppError.Http(meta.code.code, s"TwelveData client returned unexpected status ${meta.code.code} with body: $body"))
+          F.raiseError(AppError.HttpClient("TwelveData", meta.code.code, body))
     yield result
 
   private def processData(data: TwelveDataClient.TimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
     if data.isOk then
       data.values match
         case Some(values) if values.nonEmpty => F.pure(NonEmptyList.fromListUnsafe(values.map(_.toDomain)))
-        case _                               => F.raiseError(AppError.Http(500, s"No values returned for ticker $ticker"))
+        case _                               => F.raiseError(AppError.HttpClient("TwelveData", 500, s"No values returned for ticker $ticker"))
     else if data.isError then
       val errorCode    = data.code.getOrElse(500)
       val errorMessage = data.message.getOrElse("Unknown error from TwelveData API")
-      F.raiseError(AppError.Http(errorCode, s"TwelveData API error for getting time series data for $ticker: $errorMessage"))
-    else F.raiseError(AppError.Http(500, s"TwelveData time series API for $ticker returned status: ${data.status}"))
+      F.raiseError(AppError.HttpClient("TwelveData", errorCode, s"API error for getting time series data for $ticker: $errorMessage"))
+    else F.raiseError(AppError.HttpClient("TwelveData", 500, s"Time series API returned unexpected status code for ticker $ticker: $data"))
 }
 
 object TwelveDataClient {

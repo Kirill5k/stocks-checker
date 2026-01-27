@@ -64,7 +64,7 @@ class AlphaVantageClientSpec extends Sttp4WordSpec {
           candles <- client.getMonthlyPriceCandles(Ticker("AAPL"))
         yield candles
 
-        result.attempt.asserting(_ mustBe Left(AppError.Http(429, "All Alpha Vantage API keys exhausted due to rate limiting: api-key")))
+        result.attempt.asserting(_ mustBe Left(AppError.HttpClient("AlphaVantage", 429, "All API keys exhausted due to rate limiting: api-key")))
       }
 
       "retry on 429 errors when one of the keys is exhausted" in {
@@ -99,7 +99,7 @@ class AlphaVantageClientSpec extends Sttp4WordSpec {
           candles <- client.getMonthlyPriceCandles(Ticker("INVALID"))
         yield candles
 
-        result.attempt.asserting(_ mustBe Left(AppError.Http(500, "No time series data returned for ticker INVALID")))
+        result.attempt.asserting(_ mustBe Left(AppError.HttpClient("AlphaVantage", 500, "No time series data returned for ticker INVALID")))
       }
 
       "return error when empty candle data is returned" in {
@@ -116,7 +116,7 @@ class AlphaVantageClientSpec extends Sttp4WordSpec {
           candles <- client.getMonthlyPriceCandles(Ticker("EMPTY"))
         yield candles
 
-        result.attempt.asserting(_ mustBe Left(AppError.Http(500, "No time series data returned for ticker EMPTY")))
+        result.attempt.asserting(_ mustBe Left(AppError.HttpClient("AlphaVantage", 500, "No time series data returned for ticker EMPTY")))
       }
     }
   }
