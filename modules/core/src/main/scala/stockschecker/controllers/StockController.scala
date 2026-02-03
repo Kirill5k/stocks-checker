@@ -206,8 +206,10 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       lastUpdatedAt: Option[Instant]
   ) derives CirceCodec.AsObject
 
+  private val stockByTickerPath = "stocks" / path[Ticker]("ticker")
+  
   private val getStockByTickerEndpoint = Controller.secureEndpoint.get
-    .in("stocks" / path[Ticker]("ticker"))
+    .in(stockByTickerPath)
     .out(jsonBody[StockView])
 
   private val getAllStocksEndpoint = Controller.secureEndpoint.get
@@ -237,7 +239,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
     .out(jsonBody[List[StockView]])
 
   private val deactivateStockEndpoint = Controller.secureEndpoint.put
-    .in("stocks" / path[Ticker]("ticker") / "deactivate")
+    .in(stockByTickerPath / "deactivate")
     .out(statusCode(StatusCode.NoContent))
     .description("Deactivate a stock by setting isActive to false")
 
