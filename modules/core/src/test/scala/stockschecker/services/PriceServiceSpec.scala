@@ -54,6 +54,26 @@ class PriceServiceSpec extends IOWordSpec {
         }
       }
 
+      "dispatch deactivation actions when 404 error is encountered" in {
+        val (repo, latestPriceRepo, client, dispatcher) = mocks
+        val error = stockschecker.domain.errors.AppError.HttpClient("TwelveData", 404, "Ticker not found")
+        when(client.getMonthlyPriceCandles(any[Ticker])).thenRaiseError(error)
+        when(dispatcher.dispatch(any[Action])).thenReturnUnit
+
+        val res = for
+          svc <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
+          _   <- svc.fetchLatestPriceAnalytics(NonEmptyList.of(AAPL))
+        yield ()
+
+        res.asserting { result =>
+          verify(client).getMonthlyPriceCandles(AAPL)
+          verify(dispatcher).dispatch(Action.DeactivateSecurity(AAPL))
+          verify(dispatcher).dispatch(Action.DeactivateCompanyProfile(AAPL))
+          verifyNoInteractions(repo, latestPriceRepo)
+          result mustBe ()
+        }
+      }
+
       "handle errors when saving to repository fails" in {
         val (repo, latestPriceRepo, client, dispatcher) = mocks
         val error                                       = new RuntimeException("Database error")
