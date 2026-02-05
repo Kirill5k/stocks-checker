@@ -39,8 +39,13 @@ final private class LivePriceService[F[_]](
         .evalMap { ticker =>
           fetchPriceAnalytics(ticker)
             .map(result => Some(result))
-            .handleErrorWith { error =>
-              logger.error(s"Error fetching price analytics for $ticker: ${error.getMessage}").as(None)
+            .handleErrorWith {
+              case AppError.HttpClient(_, 404, _) =>
+                logger.warn(s"Ticker $ticker not found (404), deactivating security and company profile") >>
+                  dispatcher.dispatch(Action.DeactivateSecurity(ticker)) >>
+                  dispatcher.dispatch(Action.DeactivateCompanyProfile(ticker)).as(None)
+              case error =>
+                logger.error(s"Error fetching price analytics for $ticker: ${error.getMessage}").as(None)
             }
         }
         .unNone
