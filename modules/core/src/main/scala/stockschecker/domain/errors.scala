@@ -12,7 +12,6 @@ object errors {
     sealed trait BadReq        extends AppError
     sealed trait Forbidden     extends AppError
     sealed trait Unprocessable extends AppError
-    sealed trait BadData       extends AppError
 
     final case class FailedValidation(message: String)  extends Unprocessable
     final case class Critical(message: String)          extends AppError
