@@ -3,7 +3,6 @@ package stockschecker.clients
 import cats.effect.Async
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
-import stockschecker.clients.alphavantage.AlphaVantageClient
 import stockschecker.clients.finnhub.FinnhubClient
 import stockschecker.clients.twelvedata.TwelveDataClient
 import stockschecker.common.config.ClientsConfig
@@ -17,7 +16,6 @@ object Clients:
   def make[F[_]: Async](config: ClientsConfig, backend: WebSocketStreamBackend[F, Fs2Streams[F]]): F[Clients[F]] =
     for
       finnhubClient    <- FinnhubClient.make[F](config.finnhub, backend)
-      _                <- AlphaVantageClient.make(config.alphaVantage, backend)
       twelveDataClient <- TwelveDataClient.make(config.twelveData, backend)
       marketDataClient <- MarketDataClient.make[F](finnhubClient, twelveDataClient)
     yield new Clients[F]:
