@@ -49,7 +49,7 @@ final private class LiveActionExecutor[F[_]](
           services.companyProfile
             .findTickersBy(filter, limit)
             .flatMap {
-              case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchPricePerformanceSummaries")
+              case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchPriceAnalytics")
               case tickers => dispatcher.dispatch(Action.UpdatePriceAnalytics(NonEmptyList.fromListUnsafe(tickers)))
             }
         case Action.FetchFinancialMetrics(filter, limit) =>
