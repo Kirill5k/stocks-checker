@@ -59,7 +59,7 @@ object TwelveDataClient {
       high: BigDecimal,
       low: BigDecimal,
       close: BigDecimal,
-      volume: String
+      volume: BigDecimal
   ) derives Codec.AsObject {
     def toDomain: PriceCandle =
       PriceCandle(
