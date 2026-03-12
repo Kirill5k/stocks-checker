@@ -193,6 +193,7 @@ The application provides comprehensive filtering capabilities for selecting stoc
 curl -H "X-API-Key: $API_KEY" \
   "http://localhost:7070/stocks?\
 kind=stock&\
+isActive=true&\
 minMarketCap=10000000000&\
 minPE=15&maxPE=35&\
 minROE=15&\
