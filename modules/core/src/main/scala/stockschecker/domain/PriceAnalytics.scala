@@ -138,7 +138,7 @@ object PriceAnalytics:
 
     Option.when(returns.nonEmpty) {
       val mean     = returns.sum / returns.size
-      val variance = returns.map(r => Math.pow(r - mean, 2)).sum / returns.size
+      val variance = returns.map(r => Math.pow(r - mean, 2)).sum / (returns.size - 1)
       val stdDev   = Math.sqrt(variance)
       // Annualize the volatility (monthly to annual)
       val annualizedVolatility = stdDev * Math.sqrt(12)
@@ -204,7 +204,12 @@ object PriceAnalytics:
       .toList
 
   private def calculateScores(metrics: StockAnalysisMetrics): StockAnalysisScores = {
-    val cagrScore        = scoreCAGR(metrics.cagr3Year.orElse(metrics.cagr5Year))
+    val blendedCagr = (metrics.cagr5Year, metrics.cagr3Year) match
+      case (Some(c5), Some(c3)) => Some((c5 * 0.6 + c3 * 0.4).setScale(2, RoundingMode.HALF_UP))
+      case (Some(c5), None)     => Some(c5)
+      case (None, Some(c3))     => Some(c3)
+      case _                    => None
+    val cagrScore        = scoreCAGR(blendedCagr)
     val volatilityScore  = scoreVolatility(metrics.volatility)
     val drawdownScore    = scoreDrawdown(metrics.maxDrawdown)
     val consistencyScore = scoreConsistency(metrics.consistencyScore, metrics.positiveYears, metrics.totalYears)
@@ -230,9 +235,9 @@ object PriceAnalytics:
   private def scoreVolatility(volatility: Option[BigDecimal]): BigDecimal =
     volatility match
       case None               => BigDecimal(0)
-      case Some(v) if v >= 50 => BigDecimal(0)
+      case Some(v) if v >= 35 => BigDecimal(0)
       case Some(v) if v <= 10 => BigDecimal(100)
-      case Some(v)            => ((50 - v) / 40 * 100).setScale(2, RoundingMode.HALF_UP)
+      case Some(v)            => ((35 - v) / 25 * 100).setScale(2, RoundingMode.HALF_UP)
 
   private def scoreDrawdown(drawdown: Option[BigDecimal]): BigDecimal =
     drawdown match
