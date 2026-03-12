@@ -1,6 +1,7 @@
 package stockschecker.actions
 
 import cats.effect.IO
+import fs2.Stream
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import org.typelevel.log4cats.Logger
@@ -60,20 +61,21 @@ class ActionExecutorSpec extends IOWordSpec {
       "queue a Retried action on first failure" in {
         val securityService = mock[SecurityService[IO]]
         val services        = mock[Services[IO]]
+        val dispatcher      = mock[ActionDispatcher[IO]]
         val tickers         = List(AAPL, MSFT)
 
         when(services.security).thenReturn(securityService)
         when(securityService.recordCompanyProfileUpdate(anyList[Ticker])).thenRaiseError(new RuntimeException("transient error"))
+        when(dispatcher.dispatch(any[Action])).thenReturnUnit
+        when(dispatcher.pendingActions).thenReturn(Stream.emit(Action.RecordCompanyProfileUpdate(tickers)))
 
         (for
-          dispatcher <- ActionDispatcher.make[IO]
-          executor   <- ActionExecutor.make(dispatcher, services)
-          _          <- dispatcher.dispatch(Action.RecordCompanyProfileUpdate(tickers))
-          _          <- executor.run.take(1).compile.drain
-          retried    <- dispatcher.pendingActions.head.compile.lastOrError
-        yield retried).asserting { retried =>
+          executor <- ActionExecutor.make(dispatcher, services)
+          _        <- executor.run.take(1).compile.drain
+        yield ()).asserting { _ =>
           verify(securityService).recordCompanyProfileUpdate(tickers)
-          assert(retried == Action.Retried(Action.RecordCompanyProfileUpdate(tickers), 1))
+          verify(dispatcher).dispatch(Action.Retried(Action.RecordCompanyProfileUpdate(tickers), 1))
+          succeed
         }
       }
 
