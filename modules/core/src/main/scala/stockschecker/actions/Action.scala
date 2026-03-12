@@ -27,6 +27,8 @@ enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithCo
   // Deactivate operations
   case DeactivateSecurity(ticker: Ticker)
   case DeactivateCompanyProfile(ticker: Ticker)
+  // Retry wrapper
+  case Retried(action: Action, attempt: Int)
 
 object Action extends JsonCodecs {
   given JsonTaggedAdt.Config[Action] = JsonTaggedAdt.Config.Values[Action](
@@ -45,7 +47,8 @@ object Action extends JsonCodecs {
       "record-financial-metrics-update" -> JsonTaggedAdt.tagged[Action.RecordFinancialMetricsUpdate],
       "record-price-analytics-update"   -> JsonTaggedAdt.tagged[Action.RecordPriceAnalyticsUpdate],
       "deactivate-security"             -> JsonTaggedAdt.tagged[Action.DeactivateSecurity],
-      "deactivate-company-profile"      -> JsonTaggedAdt.tagged[Action.DeactivateCompanyProfile]
+      "deactivate-company-profile"      -> JsonTaggedAdt.tagged[Action.DeactivateCompanyProfile],
+      "retried"                         -> JsonTaggedAdt.tagged[Action.Retried]
     ),
     strict = true,
     typeFieldName = "kind"

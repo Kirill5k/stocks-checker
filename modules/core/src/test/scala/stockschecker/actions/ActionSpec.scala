@@ -64,6 +64,10 @@ class ActionSpec extends AnyWordSpec with Matchers with TableDrivenPropertyCheck
           Action.UpdateCompanyProfiles(NonEmptyList.one(Ticker("AAPL")))
         )
       )
+    ),
+    (
+      """{"action":{"kind":"reschedule-all"},"attempt":1,"kind":"retried"}""",
+      Action.Retried(Action.RescheduleAll, 1)
     )
   )
 

@@ -6,9 +6,11 @@ import cats.implicits.toFoldableOps
 import cats.syntax.flatMap.*
 import cats.syntax.applicativeError.*
 import fs2.Stream
+import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
-import stockschecker.domain.errors.AppError
 import stockschecker.services.Services
+
+import scala.concurrent.duration.*
 
 trait ActionExecutor[F[_]]:
   def run: Stream[F, Unit]
@@ -18,57 +20,69 @@ final private class LiveActionExecutor[F[_]](
     private val services: Services[F]
 )(using
     F: Temporal[F],
-    logger: Logger[F]
+    logger: Logger[F],
+    C: Clock[F]
 ) extends ActionExecutor[F] {
+  private val MaxRetries = 3
+  private val BaseDelay  = 1.second
+
   override def run: Stream[F, Unit] =
     dispatcher.pendingActions.map(a => Stream.eval(handleAction(a))).parJoinUnbounded
 
+  private def executeAction(action: Action): F[Unit] =
+    action match
+      case Action.Retried(original, attempt)            => C.sleep(BaseDelay * (1L << (attempt - 1))) >> executeAction(original)
+      case Action.Sequence(actions)                     => actions.toList.traverse_(handleAction)
+      case Action.RescheduleAll                         => services.command.rescheduleAll
+      case Action.Schedule(cid, waiting)                => C.sleep(waiting) >> services.command.execute(cid)
+      case Action.FetchSecurities(exchanges)            => services.security.fetchLatest(exchanges)
+      case Action.UpdateCompanyProfiles(tickers)        => services.companyProfile.fetchLatest(tickers)
+      case Action.UpdatePriceAnalytics(tickers)         => services.price.fetchLatestPriceAnalytics(tickers)
+      case Action.UpdateFinancialMetrics(tickers)       => services.financialMetrics.fetchLatest(tickers)
+      case Action.RecordPriceAnalyticsUpdate(tickers)   => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
+      case Action.RecordFinancialMetricsUpdate(tickers) => services.companyProfile.recordFinancialMetricsUpdate(tickers)
+      case Action.RecordCompanyProfileUpdate(tickers)   => services.security.recordCompanyProfileUpdate(tickers)
+      case Action.DeactivateSecurity(ticker)            => services.security.deactivate(ticker)
+      case Action.DeactivateCompanyProfile(ticker)      => services.companyProfile.deactivate(ticker)
+      case Action.FetchCompanyProfiles(filter, limit)   =>
+        services.security
+          .findTickersBy(filter, limit)
+          .flatMap {
+            case Nil     => logger.info("Couldn't find any applicable securities for Action.FetchCompanyProfiles")
+            case tickers => dispatcher.dispatch(Action.UpdateCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)))
+          }
+      case Action.FetchPriceAnalytics(filter, limit) =>
+        services.companyProfile
+          .findTickersBy(filter, limit)
+          .flatMap {
+            case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchPriceAnalytics")
+            case tickers => dispatcher.dispatch(Action.UpdatePriceAnalytics(NonEmptyList.fromListUnsafe(tickers)))
+          }
+      case Action.FetchFinancialMetrics(filter, limit) =>
+        services.companyProfile
+          .findTickersBy(filter, limit)
+          .flatMap {
+            case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchFinancialMetrics")
+            case tickers => dispatcher.dispatch(Action.UpdateFinancialMetrics(NonEmptyList.fromListUnsafe(tickers)))
+          }
+
   private def handleAction(action: Action): F[Unit] =
     logger.info(s"Processing $action") >>
-      (action match
-        case Action.Sequence(actions)                     => actions.toList.traverse_(handleAction)
-        case Action.RescheduleAll                         => services.command.rescheduleAll
-        case Action.Schedule(cid, waiting)                => F.sleep(waiting) >> services.command.execute(cid)
-        case Action.FetchSecurities(exchanges)            => services.security.fetchLatest(exchanges)
-        case Action.UpdateCompanyProfiles(tickers)        => services.companyProfile.fetchLatest(tickers)
-        case Action.UpdatePriceAnalytics(tickers)         => services.price.fetchLatestPriceAnalytics(tickers)
-        case Action.UpdateFinancialMetrics(tickers)       => services.financialMetrics.fetchLatest(tickers)
-        case Action.RecordPriceAnalyticsUpdate(tickers)   => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
-        case Action.RecordFinancialMetricsUpdate(tickers) => services.companyProfile.recordFinancialMetricsUpdate(tickers)
-        case Action.RecordCompanyProfileUpdate(tickers)   => services.security.recordCompanyProfileUpdate(tickers)
-        case Action.DeactivateSecurity(ticker)       => services.security.deactivate(ticker)
-        case Action.DeactivateCompanyProfile(ticker) => services.companyProfile.deactivate(ticker)
-        case Action.FetchCompanyProfiles(filter, limit) =>
-          services.security
-            .findTickersBy(filter, limit)
-            .flatMap {
-              case Nil     => logger.info("Couldn't find any applicable securities for Action.FetchCompanyProfiles")
-              case tickers => dispatcher.dispatch(Action.UpdateCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)))
-            }
-        case Action.FetchPriceAnalytics(filter, limit) =>
-          services.companyProfile
-            .findTickersBy(filter, limit)
-            .flatMap {
-              case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchPriceAnalytics")
-              case tickers => dispatcher.dispatch(Action.UpdatePriceAnalytics(NonEmptyList.fromListUnsafe(tickers)))
-            }
-        case Action.FetchFinancialMetrics(filter, limit) =>
-          services.companyProfile
-            .findTickersBy(filter, limit)
-            .flatMap {
-              case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchFinancialMetrics")
-              case tickers => dispatcher.dispatch(Action.UpdateFinancialMetrics(NonEmptyList.fromListUnsafe(tickers)))
-            }
-      ).handleErrorWith {
-        case error: AppError =>
-          logger.warn(error)(s"Domain error while processing action $action")
-        case error =>
-          logger.error(error)(s"Unexpected error while processing action $action")
-        // TODO: add retry logic
-      } >>
+      executeAction(action)
+        .handleErrorWith { error =>
+          action match
+            case Action.Retried(original, attempt) if attempt < MaxRetries =>
+              logger.warn(error)(s"Retry $attempt/$MaxRetries failed for $original, re-queuing") >>
+                dispatcher.dispatch(Action.Retried(original, attempt + 1))
+            case Action.Retried(original, _) =>
+              logger.error(error)(s"$original failed after $MaxRetries retries, giving up")
+            case _ =>
+              logger.warn(error)(s"$action failed, queuing retry 1/$MaxRetries") >>
+                dispatcher.dispatch(Action.Retried(action, 1))
+        } >>
       logger.info(s"Finished processing $action")
 }
 
 object ActionExecutor:
-  def make[F[_]](dispatcher: ActionDispatcher[F], services: Services[F])(using Temporal[F], Logger[F]): F[ActionExecutor[F]] =
+  def make[F[_]: {Temporal, Logger, Clock}](dispatcher: ActionDispatcher[F], services: Services[F]): F[ActionExecutor[F]] =
     Temporal[F].pure(LiveActionExecutor(dispatcher, services))
