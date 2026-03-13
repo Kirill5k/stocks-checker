@@ -71,11 +71,11 @@ final private class LiveActionExecutor[F[_]](
       executeAction(action)
         .handleErrorWith { error =>
           action match
-            case Action.Retried(original, attempt) if attempt < MaxRetries =>
+            case Action.Retried(original, attempt) if attempt == MaxRetries =>
+              logger.error(error)(s"$original failed after $MaxRetries retries, giving up")
+            case Action.Retried(original, attempt) =>
               logger.warn(error)(s"Retry $attempt/$MaxRetries failed for $original, re-queuing") >>
                 dispatcher.dispatch(Action.Retried(original, attempt + 1))
-            case Action.Retried(original, _) =>
-              logger.error(error)(s"$original failed after $MaxRetries retries, giving up")
             case _ =>
               logger.warn(error)(s"$action failed, queuing retry 1/$MaxRetries") >>
                 dispatcher.dispatch(Action.Retried(action, 1))
