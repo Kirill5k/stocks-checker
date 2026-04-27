@@ -57,8 +57,7 @@ object config {
       mongo: MongoConfig
   ) derives ConfigReader
 
-  object AppConfig {
+  object AppConfig:
     def loadDefault[F[_]](using F: Async[F]): F[AppConfig] =
       F.blocking(ConfigSource.default.loadOrThrow[AppConfig])
-  }
 }
