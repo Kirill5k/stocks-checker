@@ -53,7 +53,7 @@ final private class LiveCommandService[F[_]](
           repo.update(cmd.incExecutionCount(now))
       }
       nextExecTime = cmd.schedule.nextExecutionTime(now)
-      _ <- actionDispatcher.dispatch(Action.Schedule(cid, nextExecTime.durationBetween(now)))
+      _ <- actionDispatcher.dispatch(Action.Schedule(cid, now.durationBetween(nextExecTime)))
     yield ()
 
   override def executeManually(cid: CommandId): F[Unit] =
