@@ -42,9 +42,8 @@ final private class LiveTwelveDataClient[F[_]](
 
   private def processData(data: TwelveDataClient.TimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
     if data.isOk then
-      data.values match
-        case Some(values) if values.nonEmpty => F.pure(NonEmptyList.fromListUnsafe(values.map(_.toDomain)))
-        case _                               => F.raiseError(AppError.HttpClient("TwelveData", 500, s"No values returned for ticker $ticker"))
+      val maybeValues = data.values.flatMap(v => NonEmptyList.fromList(v.map(_.toDomain)))
+      F.fromOption(maybeValues, AppError.HttpClient("TwelveData", 500, s"No values returned for ticker $ticker"))
     else if data.isError then
       val errorCode    = data.code.getOrElse(500)
       val errorMessage = data.message.getOrElse("Unknown error from TwelveData API")
