@@ -46,9 +46,13 @@ object config {
   ) derives ConfigReader
 
   final case class MongoConfig(
-      connectionUri: String,
+      user: String,
+      password: String,
+      host: String,
       dbName: String
-  ) derives ConfigReader
+  ) derives ConfigReader:
+    def connectionUri: String =
+      s"mongodb+srv://$user:$password@$host/$dbName"
 
   final case class AppConfig(
       api: ApiConfig,
