@@ -3,6 +3,7 @@ package stockschecker.domain
 import cats.data.NonEmptyList
 import io.circe.Codec as CirceCodec
 
+import java.lang.Double.{isNaN, isInfinite}
 import java.time.LocalDate
 import scala.math.BigDecimal.RoundingMode
 
@@ -184,8 +185,9 @@ object PriceAnalytics:
         Math.pow(y - yPred, 2)
       }.sum
 
-      val rSquared = if (ssTotal == 0) 0.0 else 1.0 - (ssRes / ssTotal)
-      BigDecimal(Math.max(0.0, Math.min(1.0, rSquared))).setScale(4, RoundingMode.HALF_UP)
+      val rSquared        = if (ssTotal == 0) 0.0 else 1.0 - (ssRes / ssTotal)
+      val safeRSquared    = if (isNaN(rSquared) || isInfinite(rSquared)) 0.0 else rSquared
+      BigDecimal(Math.max(0.0, Math.min(1.0, safeRSquared))).setScale(4, RoundingMode.HALF_UP)
     }
   }
 
