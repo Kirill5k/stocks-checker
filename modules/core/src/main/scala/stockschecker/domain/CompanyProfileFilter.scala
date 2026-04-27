@@ -10,7 +10,7 @@ import scala.concurrent.duration.FiniteDuration
 enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
   case IsActive(active: Boolean)
   case MarketCapAbove(min: Long)
-  case MarketCapBelow(min: Long)
+  case MarketCapBelow(max: Long)
   case CountryIs(countryCode: String)
   case IpoDateAfter(date: LocalDate)
   case IpoDateBefore(date: LocalDate)
