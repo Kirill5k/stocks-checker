@@ -21,18 +21,34 @@ object Resources {
   private def fs2Backend[F[_]: Async](timeout: FiniteDuration): Resource[F, WebSocketStreamBackend[F, Fs2Streams[F]]] =
     Fs2Backend.resource[F](options = BackendOptions(timeout, None))
 
+  private def mongoConnectionUri(c: MongoConfig): Either[Throwable, String] =
+    val blank = List("user" -> c.user, "password" -> c.password, "host" -> c.host)
+      .collect { case (name, value) if value.isBlank => name }
+    Either.cond(
+      blank.nonEmpty,
+      s"mongodb+srv://${c.user}:${c.password}@${c.host}/${c.dbName}",
+      new IllegalArgumentException(
+        s"MongoDB config is missing required fields: ${blank.mkString(", ")}. " +
+          "Please set the MONGO_USER, MONGO_PASSWORD, and MONGO_HOST environment variables."
+      )
+    )
+
   private def mkMongoDatabase[F[_]: Async](config: MongoConfig): Resource[F, MongoDatabase[F]] =
-    val settings = MongoClientSettings
-      .builder()
-      .applyConnectionString(ConnectionString(config.connectionUri))
-      .applyToSocketSettings { builder =>
-        val _ = builder.connectTimeout(3, TimeUnit.MINUTES).readTimeout(3, TimeUnit.MINUTES)
+    Resource
+      .eval(Async[F].fromEither(mongoConnectionUri(config)))
+      .flatMap { uri =>
+        val settings = MongoClientSettings
+          .builder()
+          .applyConnectionString(ConnectionString(uri))
+          .applyToSocketSettings { builder =>
+            val _ = builder.connectTimeout(3, TimeUnit.MINUTES).readTimeout(3, TimeUnit.MINUTES)
+          }
+          .applyToClusterSettings { builder =>
+            val _ = builder.serverSelectionTimeout(3, TimeUnit.MINUTES)
+          }
+          .build()
+        MongoClient.create[F](settings).evalMap(_.getDatabase(config.dbName))
       }
-      .applyToClusterSettings { builder =>
-        val _ = builder.serverSelectionTimeout(3, TimeUnit.MINUTES)
-      }
-      .build()
-    MongoClient.create[F](settings).evalMap(_.getDatabase(config.dbName))
 
   def make[F[_]](config: AppConfig)(using F: Async[F]): Resource[F, Resources[F]] =
     for

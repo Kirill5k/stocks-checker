@@ -50,9 +50,7 @@ object config {
       password: String,
       host: String,
       dbName: String
-  ) derives ConfigReader:
-    def connectionUri: String =
-      s"mongodb+srv://$user:$password@$host/$dbName"
+  ) derives ConfigReader
 
   final case class AppConfig(
       api: ApiConfig,
