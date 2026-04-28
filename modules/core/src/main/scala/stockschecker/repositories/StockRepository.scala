@@ -39,9 +39,11 @@ final private class LiveStockRepository[F[_]](
       .matchBy(securityFilter)
       .replaceWith(Document("security" := "$$ROOT"))
       .lookup(CompanyProfileRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.Profile)
+      .matchBy(filters.toProfileFilter)
       .lookup(PriceAnalyticsRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.PriceAnalytics)
+      .matchBy(filters.toPriceAnalyticsFilter)
       .lookup(FinancialMetricsRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.FinancialMetrics)
-      .matchBy(filters.toProfileFilter && filters.toPriceAnalyticsFilter && filters.toFinancialMetricsFilter)
+      .matchBy(filters.toFinancialMetricsFilter)
       .sort(Sort.desc(sortField))
       .limit(limit)
 
