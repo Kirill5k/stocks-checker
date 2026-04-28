@@ -18,11 +18,6 @@ object config {
     given Conversion[ServerConfig, Server.Config] =
       (sc: ServerConfig) => Server.Config(sc.host, sc.port)
 
-  final case class FinancialModelingPrepConfig(
-      baseUri: String,
-      apiKey: String
-  ) derives ConfigReader
-
   final case class FinnhubClientConfig(
       baseUri: String,
       apiKey: String
@@ -39,7 +34,6 @@ object config {
   ) derives ConfigReader
 
   final case class ClientsConfig(
-      financialModelingPrep: FinancialModelingPrepConfig,
       finnhub: FinnhubClientConfig,
       alphaVantage: AlphaVantageClientConfig,
       twelveData: TwelveDataConfig

@@ -87,7 +87,6 @@ The application uses `PureConfig` to load settings from `modules/core/src/main/r
 | `API_KEY` | Master API key for securing internal endpoints |
 | `HOST` | Server host (default: 0.0.0.0) |
 | `PORT` | Server port (default: 7070) |
-| `FINANCIAL_MODELING_PREP_API_KEY` | API key for Financial Modeling Prep |
 | `ALPHA_VANTAGE_API_KEY` | API key for Alpha Vantage |
 | `FINNHUB_API_KEY` | API key for Finnhub |
 | `TWELVE_DATA_API_KEY` | API key for Twelve Data |
