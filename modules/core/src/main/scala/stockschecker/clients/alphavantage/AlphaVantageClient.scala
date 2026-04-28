@@ -65,12 +65,10 @@ final private class LiveAlphaVantageClient[F[_]](
     yield result
 
   private def processData(data: AlphaVantageClient.MonthlyTimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
-    data.timeSeries match
-      case Some(series) if series.nonEmpty =>
-        val candles = series.map { case (dateStr, candle) => candle.toDomain(LocalDate.parse(dateStr)) }.toList
-        F.pure(NonEmptyList.fromListUnsafe(candles))
-      case _ =>
-        handleError(data.note.orElse(data.information), ticker)
+    data.timeSeries
+      .map(series => series.map { case (dateStr, candle) => candle.toDomain(LocalDate.parse(dateStr)) }.toList)
+      .flatMap(NonEmptyList.fromList)
+      .fold(handleError(data.note.orElse(data.information), ticker))(F.pure)
 
   private def handleError(errorMessage: Option[String], ticker: Ticker): F[NonEmptyList[PriceCandle]] =
     errorMessage match

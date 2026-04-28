@@ -4,6 +4,7 @@ import cats.data.NonEmptyList
 import cats.effect.Temporal
 import cats.implicits.toFoldableOps
 import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import cats.syntax.applicativeError.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
@@ -47,23 +48,26 @@ final private class LiveActionExecutor[F[_]](
       case Action.FetchCompanyProfiles(filter, limit)   =>
         services.security
           .findTickersBy(filter, limit)
+          .map(NonEmptyList.fromList)
           .flatMap {
-            case Nil     => logger.info("Couldn't find any applicable securities for Action.FetchCompanyProfiles")
-            case tickers => dispatcher.dispatch(Action.UpdateCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)))
+            case Some(tickers) => dispatcher.dispatch(Action.UpdateCompanyProfiles(tickers))
+            case None          => logger.info("Couldn't find any applicable securities for Action.FetchCompanyProfiles")
           }
       case Action.FetchPriceAnalytics(filter, limit) =>
         services.companyProfile
           .findTickersBy(filter, limit)
+          .map(NonEmptyList.fromList)
           .flatMap {
-            case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchPriceAnalytics")
-            case tickers => dispatcher.dispatch(Action.UpdatePriceAnalytics(NonEmptyList.fromListUnsafe(tickers)))
+            case Some(tickers) => dispatcher.dispatch(Action.UpdatePriceAnalytics(tickers))
+            case None          => logger.info("Couldn't find any applicable company profiles for Action.FetchPriceAnalytics")
           }
       case Action.FetchFinancialMetrics(filter, limit) =>
         services.companyProfile
           .findTickersBy(filter, limit)
+          .map(NonEmptyList.fromList)
           .flatMap {
-            case Nil     => logger.info("Couldn't find any applicable company profiles for Action.FetchFinancialMetrics")
-            case tickers => dispatcher.dispatch(Action.UpdateFinancialMetrics(NonEmptyList.fromListUnsafe(tickers)))
+            case Some(tickers) => dispatcher.dispatch(Action.UpdateFinancialMetrics(tickers))
+            case None          => logger.info("Couldn't find any applicable company profiles for Action.FetchFinancialMetrics")
           }
 
   private def handleAction(action: Action): F[Unit] =
