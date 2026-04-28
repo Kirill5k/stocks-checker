@@ -69,6 +69,7 @@ final private class LiveActionExecutor[F[_]](
   private def handleAction(action: Action): F[Unit] =
     logger.info(s"Processing $action") >>
       executeAction(action)
+        .flatTap(_ => logger.info(s"Finished processing $action"))
         .handleErrorWith { error =>
           action match
             case Action.Retried(original, attempt) if attempt == MaxRetries =>
@@ -79,8 +80,7 @@ final private class LiveActionExecutor[F[_]](
             case _ =>
               logger.warn(error)(s"$action failed, queuing retry 1/$MaxRetries") >>
                 dispatcher.dispatch(Action.Retried(action, 1))
-        } >>
-      logger.info(s"Finished processing $action")
+        }
 }
 
 object ActionExecutor:
