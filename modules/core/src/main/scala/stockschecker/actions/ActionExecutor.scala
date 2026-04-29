@@ -9,6 +9,7 @@ import cats.syntax.applicativeError.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
+import stockschecker.common.config.ActionExecutorConfig
 import stockschecker.services.Services
 
 import scala.concurrent.duration.*
@@ -18,7 +19,8 @@ trait ActionExecutor[F[_]]:
 
 final private class LiveActionExecutor[F[_]](
     private val dispatcher: ActionDispatcher[F],
-    private val services: Services[F]
+    private val services: Services[F],
+    private val config: ActionExecutorConfig
 )(using
     F: Temporal[F],
     logger: Logger[F],
@@ -28,7 +30,7 @@ final private class LiveActionExecutor[F[_]](
   private val BaseDelay  = 1.second
 
   override def run: Stream[F, Unit] =
-    dispatcher.pendingActions.map(a => Stream.eval(handleAction(a))).parJoinUnbounded
+    dispatcher.pendingActions.map(a => Stream.eval(handleAction(a))).parJoin(config.concurrency)
 
   private def executeAction(action: Action): F[Unit] =
     action match
@@ -88,5 +90,9 @@ final private class LiveActionExecutor[F[_]](
 }
 
 object ActionExecutor:
-  def make[F[_]: {Temporal, Logger, Clock}](dispatcher: ActionDispatcher[F], services: Services[F]): F[ActionExecutor[F]] =
-    Temporal[F].pure(LiveActionExecutor(dispatcher, services))
+  def make[F[_]: {Temporal, Logger, Clock}](
+      dispatcher: ActionDispatcher[F],
+      services: Services[F],
+      config: ActionExecutorConfig
+  ): F[ActionExecutor[F]] =
+    Temporal[F].pure(LiveActionExecutor(dispatcher, services, config))

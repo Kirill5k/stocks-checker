@@ -34,7 +34,7 @@ object Application extends IOApp.Simple {
             repositories     <- Repositories.make(res.mongoDatabase)
             services         <- Services.make(clients, repositories, actionDispatcher)
             controllers      <- Controllers.make(services, config.api)
-            actionExecutor   <- ActionExecutor.make(actionDispatcher, services)
+            actionExecutor   <- ActionExecutor.make(actionDispatcher, services, config.actionExecutor)
             _                <- actionDispatcher.dispatch(Action.RescheduleAll)
             _                <- Stream(
               Server.serveEmber(config.server, controllers.routes),

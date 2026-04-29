@@ -46,11 +46,16 @@ object config {
       dbName: String
   ) derives ConfigReader
 
+  final case class ActionExecutorConfig(
+      concurrency: Int
+  ) derives ConfigReader
+
   final case class AppConfig(
       api: ApiConfig,
       server: ServerConfig,
       clients: ClientsConfig,
-      mongo: MongoConfig
+      mongo: MongoConfig,
+      actionExecutor: ActionExecutorConfig
   ) derives ConfigReader
 
   object AppConfig:
