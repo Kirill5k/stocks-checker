@@ -13,6 +13,7 @@ import sttp.client4.*
 import sttp.client4.circe.asJson
 
 import java.time.LocalDate
+import scala.concurrent.duration.*
 
 trait TwelveDataClient[F[_]]:
   def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]]
@@ -30,6 +31,7 @@ final private class LiveTwelveDataClient[F[_]](
         emptyRequest
           .get(uri"${config.baseUri}/time_series?symbol=$ticker&interval=1month&apikey=${config.apiKey}&outputsize=150")
           .response(asJson[TwelveDataClient.TimeSeriesResponse])
+          .readTimeout(30.seconds)
       }
       result <- response.body match
         case Right(data) =>

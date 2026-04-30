@@ -15,6 +15,7 @@ import sttp.client4.circe.asJson
 
 import java.time.LocalDate
 import scala.collection.immutable.ListMap
+import scala.concurrent.duration.*
 
 trait AlphaVantageClient[F[_]]:
   def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]]
@@ -54,6 +55,7 @@ final private class LiveAlphaVantageClient[F[_]](
         emptyRequest
           .get(uri"${config.baseUri}/query?function=TIME_SERIES_MONTHLY&symbol=$ticker&apikey=$apiKey")
           .response(asJson[AlphaVantageClient.MonthlyTimeSeriesResponse])
+          .readTimeout(30.seconds)
       }
       result <- response.body match
         case Right(data) =>

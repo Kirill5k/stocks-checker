@@ -33,6 +33,7 @@ final private class LiveFinnhubClient[F[_]](
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v1/stock/metric?token=${config.apiKey}&symbol=$ticker&metric=all")
       .response(asJson[FinnhubClient.BasicFinancialsResponse])
+      .readTimeout(30.seconds)
 
     backend.send(request).flatMap { response =>
       response.body match
@@ -58,6 +59,7 @@ final private class LiveFinnhubClient[F[_]](
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v1/stock/profile2?token=${config.apiKey}&symbol=$ticker")
       .response(asJson[JsonObject])
+      .readTimeout(30.seconds)
 
     backend.send(request).flatMap { response =>
       response.body match
