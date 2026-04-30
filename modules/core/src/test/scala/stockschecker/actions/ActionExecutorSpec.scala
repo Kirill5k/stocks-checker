@@ -6,6 +6,7 @@ import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import stockschecker.common.config.ActionExecutorConfig
 import stockschecker.domain.Ticker
 import stockschecker.services.{SecurityService, Services}
 import stockschecker.fixtures.*
@@ -17,6 +18,8 @@ class ActionExecutorSpec extends IOWordSpec {
   given Logger[IO] = Slf4jLogger.getLogger[IO]
   given Clock[IO]  = Clock.mock(Instant.now())
 
+  val config = ActionExecutorConfig(3)
+  
   "An ActionExecutor" when {
     "handling RecordCompanyProfileUpdate action" should {
       "call security service markAsEnriched method" in {
@@ -29,7 +32,7 @@ class ActionExecutorSpec extends IOWordSpec {
 
         (for
           dispatcher <- ActionDispatcher.make[IO]
-          executor   <- ActionExecutor.make(dispatcher, services)
+          executor   <- ActionExecutor.make(dispatcher, services, config)
           _          <- dispatcher.dispatch(Action.RecordCompanyProfileUpdate(tickers))
           _          <- executor.run.take(1).compile.drain
         yield ()).asserting { _ =>
@@ -47,7 +50,7 @@ class ActionExecutorSpec extends IOWordSpec {
 
         (for
           dispatcher <- ActionDispatcher.make[IO]
-          executor   <- ActionExecutor.make(dispatcher, services)
+          executor   <- ActionExecutor.make(dispatcher, services, config)
           _          <- dispatcher.dispatch(Action.RecordCompanyProfileUpdate(List.empty))
           _          <- executor.run.take(1).compile.drain
         yield ()).asserting { _ =>
@@ -70,7 +73,7 @@ class ActionExecutorSpec extends IOWordSpec {
         when(dispatcher.pendingActions).thenReturn(Stream.emit(Action.RecordCompanyProfileUpdate(tickers)))
 
         (for
-          executor <- ActionExecutor.make(dispatcher, services)
+          executor <- ActionExecutor.make(dispatcher, services, config)
           _        <- executor.run.take(1).compile.drain
         yield ()).asserting { _ =>
           verify(securityService).recordCompanyProfileUpdate(tickers)
@@ -89,7 +92,7 @@ class ActionExecutorSpec extends IOWordSpec {
 
         (for
           dispatcher <- ActionDispatcher.make[IO]
-          executor   <- ActionExecutor.make(dispatcher, services)
+          executor   <- ActionExecutor.make(dispatcher, services, config)
           _          <- dispatcher.dispatch(Action.Retried(Action.RecordCompanyProfileUpdate(tickers), 1))
           _          <- executor.run.take(1).compile.drain
         yield ()).asserting { _ =>
@@ -108,7 +111,7 @@ class ActionExecutorSpec extends IOWordSpec {
 
         (for
           dispatcher <- ActionDispatcher.make[IO]
-          executor   <- ActionExecutor.make(dispatcher, services)
+          executor   <- ActionExecutor.make(dispatcher, services, config)
           _          <- dispatcher.dispatch(Action.Retried(Action.RecordCompanyProfileUpdate(tickers), 3))
           _          <- executor.run.take(1).compile.drain
           pending    <- dispatcher.pendingActions.head.interruptAfter(200.millis).compile.toList

@@ -5,7 +5,8 @@ import cats.effect.kernel.{Async, Ref}
 import cats.syntax.applicativeError.*
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
-import io.circe.{Decoder, HCursor}
+import cats.syntax.either.*
+import io.circe.{Decoder, DecodingFailure, HCursor}
 import stockschecker.common.config.AlphaVantageClientConfig
 import stockschecker.domain.{PriceCandle, Ticker}
 import stockschecker.domain.errors.AppError
@@ -29,25 +30,21 @@ final private class LiveAlphaVantageClient[F[_]](
     F: Async[F]
 ) extends AlphaVantageClient[F] {
 
-  private def getNextApiKey: F[String] =
-    keyIndex.modify { currentIndex =>
-      val nextIndex = (currentIndex + 1) % apiKeys.length
-      (nextIndex, apiKeys(currentIndex))
-    }
+  private def claimStartIndex: F[Int] =
+    keyIndex.getAndUpdate(i => (i + 1) % apiKeys.length)
 
   override def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]] =
-    attemptWithKeyRotation(ticker, Set.empty)
+    claimStartIndex.flatMap(startIndex => attemptWithKeyRotation(ticker, startIndex, Set.empty))
 
-  private def attemptWithKeyRotation(ticker: Ticker, triedKeys: Set[String]): F[NonEmptyList[PriceCandle]] =
-    for
-      apiKey <- getNextApiKey
-      _      <- F.raiseWhen(triedKeys.contains(apiKey) && triedKeys.size >= apiKeys.length) {
-        AppError.HttpClient("AlphaVantage", 429, s"All API keys exhausted due to rate limiting: ${triedKeys.mkString(",")}")
+  private def attemptWithKeyRotation(ticker: Ticker, startIndex: Int, triedKeys: Set[String]): F[NonEmptyList[PriceCandle]] =
+    if triedKeys.size >= apiKeys.length then
+      F.raiseError(AppError.HttpClient("AlphaVantage", 429, s"All API keys exhausted due to rate limiting: ${triedKeys.mkString(",")}"))
+    else
+      val apiKey = apiKeys((startIndex + triedKeys.size) % apiKeys.length)
+      sendRequest(ticker, apiKey).recoverWith {
+        case err: AppError.HttpClient if err.status == 429 =>
+          attemptWithKeyRotation(ticker, startIndex, triedKeys + apiKey)
       }
-      result <- sendRequest(ticker, apiKey).recoverWith {
-        case err: AppError.HttpClient if err.status == 429 => attemptWithKeyRotation(ticker, triedKeys + apiKey)
-      }
-    yield result
 
   private def sendRequest(ticker: Ticker, apiKey: String): F[NonEmptyList[PriceCandle]] =
     for
@@ -83,31 +80,34 @@ final private class LiveAlphaVantageClient[F[_]](
 
 object AlphaVantageClient {
   final case class CandleData(
-      open: String,  // "1. open"
-      high: String,  // "2. high"
-      low: String,   // "3. low"
-      close: String, // "4. close"
-      volume: String // "5. volume"
+      open: BigDecimal,
+      high: BigDecimal,
+      low: BigDecimal,
+      close: BigDecimal,
+      volume: Long
   ) {
     def toDomain(date: LocalDate): PriceCandle =
-      PriceCandle(
-        date = date,
-        open = BigDecimal(open),
-        high = BigDecimal(high),
-        low = BigDecimal(low),
-        close = BigDecimal(close),
-        volume = volume.toLong
-      )
+      PriceCandle(date = date, open = open, high = high, low = low, close = close, volume = volume)
   }
 
   object CandleData {
+    private def parseDecimal(s: String, field: String): Decoder.Result[BigDecimal] =
+      Either
+        .catchNonFatal(BigDecimal(s))
+        .leftMap(e => DecodingFailure(s"Invalid decimal '$s' for field '$field': ${e.getMessage}", Nil))
+
+    private def parseLong(s: String, field: String): Decoder.Result[Long] =
+      Either
+        .catchNonFatal(s.toLong)
+        .leftMap(e => DecodingFailure(s"Invalid long '$s' for field '$field': ${e.getMessage}", Nil))
+
     given Decoder[CandleData] = (c: HCursor) =>
       for
-        open   <- c.downField("1. open").as[String]
-        high   <- c.downField("2. high").as[String]
-        low    <- c.downField("3. low").as[String]
-        close  <- c.downField("4. close").as[String]
-        volume <- c.downField("5. volume").as[String]
+        open   <- c.downField("1. open").as[String].flatMap(parseDecimal(_, "1. open"))
+        high   <- c.downField("2. high").as[String].flatMap(parseDecimal(_, "2. high"))
+        low    <- c.downField("3. low").as[String].flatMap(parseDecimal(_, "3. low"))
+        close  <- c.downField("4. close").as[String].flatMap(parseDecimal(_, "4. close"))
+        volume <- c.downField("5. volume").as[String].flatMap(parseLong(_, "5. volume"))
       yield CandleData(open, high, low, close, volume)
   }
 
