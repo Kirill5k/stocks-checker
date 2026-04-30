@@ -7,10 +7,10 @@ object Dependencies {
     val pureConfig     = "0.17.10"
     val circe          = "0.14.15"
     val circeFs2       = "0.14.1"
-    val sttp           = "4.0.21"
+    val sttp           = "4.0.23"
     val logback        = "1.5.32"
     val log4cats       = "2.8.0"
-    val tapir          = "1.13.15"
+    val tapir          = "1.13.17"
     val cronUtils      = "9.2.1"
     val taggedAdtCodec = "0.11.0"
   }
