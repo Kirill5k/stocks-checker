@@ -12,13 +12,11 @@ object Dependencies {
     val log4cats       = "2.8.0"
     val tapir          = "1.13.15"
     val cronUtils      = "9.2.1"
-    val http4s         = "0.23.17"
     val taggedAdtCodec = "0.11.0"
   }
 
   private object Libraries {
     val cronUtils      = "com.cronutils"  % "cron-utils"             % Versions.cronUtils
-    val blazeClient    = "org.http4s"    %% "http4s-blaze-client"    % Versions.http4s
     val taggedAdtCodec = "org.latestbit" %% "circe-tagged-adt-codec" % Versions.taggedAdtCodec
 
     object commonScala {
@@ -75,7 +73,6 @@ object Dependencies {
 
   val core = Seq(
     Libraries.cronUtils,
-    Libraries.blazeClient,
     Libraries.taggedAdtCodec,
     Libraries.mongo4cats.core,
     Libraries.mongo4cats.circe,
