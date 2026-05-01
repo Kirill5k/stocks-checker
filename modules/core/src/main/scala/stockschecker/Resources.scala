@@ -25,7 +25,7 @@ object Resources {
     val blank = List("user" -> c.user, "password" -> c.password, "host" -> c.host)
       .collect { case (name, value) if value.isBlank => name }
     Either.cond(
-      blank.nonEmpty,
+      blank.isEmpty,
       s"mongodb+srv://${c.user}:${c.password}@${c.host}/${c.dbName}",
       new IllegalArgumentException(
         s"MongoDB config is missing required fields: ${blank.mkString(", ")}. " +
@@ -41,10 +41,10 @@ object Resources {
           .builder()
           .applyConnectionString(ConnectionString(uri))
           .applyToSocketSettings { builder =>
-            val _ = builder.connectTimeout(3, TimeUnit.MINUTES).readTimeout(3, TimeUnit.MINUTES)
+            val _ = builder.connectTimeout(10, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
           }
           .applyToClusterSettings { builder =>
-            val _ = builder.serverSelectionTimeout(3, TimeUnit.MINUTES)
+            val _ = builder.serverSelectionTimeout(30, TimeUnit.SECONDS)
           }
           .build()
         MongoClient.create[F](settings).evalMap(_.getDatabase(config.dbName))
