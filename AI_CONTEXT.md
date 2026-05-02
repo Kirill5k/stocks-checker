@@ -10,8 +10,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Key Technologies
 
-*   **Language:** Scala 3.7.4
-*   **Runtime:** Java 25 (Temurin)
+*   **Language:** Scala 3.8.3
+*   **Runtime:** Java 26 (Corretto)
 *   **Build Tool:** sbt
 *   **Core Stack:**
     *   **Effect System:** Cats Effect 3
