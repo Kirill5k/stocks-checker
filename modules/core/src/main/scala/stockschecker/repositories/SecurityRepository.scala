@@ -150,6 +150,7 @@ object SecurityRepository extends MongoJsonCodecs:
       _          <- collection.createIndex(Index.ascending(Field.Exchange))
       _          <- collection.createIndex(Index.ascending(Field.Kind))
       _          <- collection.createIndex(Index.ascending(Field.IsActive))
+      _          <- collection.createIndex(Index.ascending(List(Field.Exchange, Field.Kind, Field.IsActive)))
       _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
       _          <- collection.createIndex(Index.ascending(Field.CompanyProfileLastUpdatedAt))
       collWithCodecs = collection.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity]
