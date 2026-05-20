@@ -89,6 +89,8 @@ object Dependencies {
   val test = Seq(
     Libraries.commonScala.testHttp4s % Test,
     Libraries.commonScala.testSttp   % Test,
-    Libraries.mongo4cats.embedded    % Test
+    Libraries.mongo4cats.embedded    % Test,
+    "org.scalacheck"                %% "scalacheck"      % "1.18.1"   % Test,
+    "org.scalatestplus"             %% "scalacheck-1-18" % "3.2.19.0" % Test
   )
 }
