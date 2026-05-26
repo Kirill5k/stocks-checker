@@ -7,10 +7,10 @@ object Dependencies {
     val pureConfig     = "0.17.10"
     val circe          = "0.14.15"
     val circeFs2       = "0.14.1"
-    val sttp           = "4.0.23"
+    val sttp           = "4.0.24"
     val logback        = "1.5.32"
     val log4cats       = "2.8.0"
-    val tapir          = "1.13.18"
+    val tapir          = "1.13.19"
     val cronUtils      = "9.2.1"
     val taggedAdtCodec = "0.11.0"
   }
@@ -90,7 +90,7 @@ object Dependencies {
     Libraries.commonScala.testHttp4s % Test,
     Libraries.commonScala.testSttp   % Test,
     Libraries.mongo4cats.embedded    % Test,
-    "org.scalacheck"                %% "scalacheck"      % "1.18.1"   % Test,
+    "org.scalacheck"                %% "scalacheck"      % "1.19.0"   % Test,
     "org.scalatestplus"             %% "scalacheck-1-18" % "3.2.19.0" % Test
   )
 }
