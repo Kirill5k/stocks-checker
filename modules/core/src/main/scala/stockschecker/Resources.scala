@@ -39,12 +39,16 @@ object Resources {
       .flatMap { uri =>
         val settings = MongoClientSettings
           .builder()
+          .retryReads(true)
+          .retryWrites(true)
           .applyConnectionString(ConnectionString(uri))
           .applyToSocketSettings { builder =>
-            val _ = builder.connectTimeout(10, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS)
+            val _ = builder
+              .connectTimeout(config.connectTimeout.toMillis, TimeUnit.MILLISECONDS)
+              .readTimeout(config.readTimeout.toMillis, TimeUnit.MILLISECONDS)
           }
           .applyToClusterSettings { builder =>
-            val _ = builder.serverSelectionTimeout(30, TimeUnit.SECONDS)
+            val _ = builder.serverSelectionTimeout(config.serverSelectionTimeout.toMillis, TimeUnit.MILLISECONDS)
           }
           .build()
         MongoClient.create[F](settings).evalMap(_.getDatabase(config.dbName))

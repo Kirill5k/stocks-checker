@@ -4,6 +4,8 @@ import cats.effect.Async
 import pureconfig.*
 import kirill5k.common.http4s.*
 
+import scala.concurrent.duration.FiniteDuration
+
 object config {
   final case class ApiConfig(
       key: String
@@ -43,7 +45,10 @@ object config {
       user: String,
       password: String,
       host: String,
-      dbName: String
+      dbName: String,
+      connectTimeout: FiniteDuration,
+      readTimeout: FiniteDuration,
+      serverSelectionTimeout: FiniteDuration
   ) derives ConfigReader
 
   final case class ActionExecutorConfig(
