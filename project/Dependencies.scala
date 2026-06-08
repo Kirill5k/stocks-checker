@@ -2,13 +2,13 @@ import sbt.*
 
 object Dependencies {
   private object Versions {
-    val mongo4cats     = "0.7.17"
-    val commonScala    = "0.1.27"
+    val mongo4cats     = "0.7.18"
+    val commonScala    = "0.1.29"
     val pureConfig     = "0.17.10"
     val circe          = "0.14.15"
     val circeFs2       = "0.14.1"
-    val sttp           = "4.0.24"
-    val logback        = "1.5.32"
+    val sttp           = "4.0.25"
+    val logback        = "1.5.34"
     val log4cats       = "2.8.0"
     val tapir          = "1.13.19"
     val cronUtils      = "9.2.1"
