@@ -10,7 +10,7 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ### Key Technologies
 
-*   **Language:** Scala 3.8.3
+*   **Language:** Scala 3.8.4
 *   **Runtime:** Java 26 (Corretto)
 *   **Build Tool:** sbt
 *   **Core Stack:**
