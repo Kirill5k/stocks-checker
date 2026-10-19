@@ -10,9 +10,9 @@ This file provides guidance to AI agents when working with code in this reposito
 
 ### Key Technologies
 
-*   **Language:** Scala 3.8.4
-*   **Runtime:** Java 26 (Corretto)
-*   **Build Tool:** sbt
+*   **Language:** Scala 3.10.0
+*   **Runtime:** Java 27
+*   **Build Tool:** sbt 2.0.11
 *   **Core Stack:**
     *   **Effect System:** Cats Effect 3
     *   **Streaming:** FS2
@@ -37,8 +37,8 @@ The application follows a functional architecture with a clear separation of con
 
 ### Prerequisites
 
-*   Java 25 (Temurin recommended)
-*   sbt
+*   Java 27, selected via `JAVA_HOME` and available on `PATH`
+*   sbt launcher (the project pins sbt 2.0.11 in `project/build.properties`)
 
 ### Key Commands
 
@@ -59,7 +59,7 @@ The application follows a functional architecture with a clear separation of con
 
 *   **Run Application:**
     ```bash
-    sbt "project core" run
+    sbt "core/run"
     ```
     *Note: You may need to set environment variables for API keys and database connections (see Configuration).*
 

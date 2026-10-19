@@ -1,13 +1,13 @@
 package stockschecker.domain
 
 import cats.data.NonEmptyList
-import org.latestbit.circe.adt.codec.*
+import io.circe.derivation.{Configuration, ConfiguredCodec}
 import stockschecker.common.JsonCodecs
 
 import java.time.LocalDate
 import scala.concurrent.duration.FiniteDuration
 
-enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
+enum CompanyProfileFilter derives ConfiguredCodec:
   case IsActive(active: Boolean)
   case MarketCapAbove(min: Long)
   case MarketCapBelow(max: Long)
@@ -22,21 +22,4 @@ enum CompanyProfileFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt
   case TickerMatching(pattern: String)
 
 object CompanyProfileFilter extends JsonCodecs:
-  given JsonTaggedAdt.Config[CompanyProfileFilter] = JsonTaggedAdt.Config.Values[CompanyProfileFilter](
-    mappings = Map(
-      "is-active"                         -> JsonTaggedAdt.tagged[CompanyProfileFilter.IsActive],
-      "market-cap-above"                  -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapAbove],
-      "market-cap-below"                  -> JsonTaggedAdt.tagged[CompanyProfileFilter.MarketCapBelow],
-      "country-is"                        -> JsonTaggedAdt.tagged[CompanyProfileFilter.CountryIs],
-      "ipo-date-after"                    -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateAfter],
-      "ipo-date-before"                   -> JsonTaggedAdt.tagged[CompanyProfileFilter.IpoDateBefore],
-      "updated-within"                    -> JsonTaggedAdt.tagged[CompanyProfileFilter.UpdatedWithin],
-      "not-updated-for"                   -> JsonTaggedAdt.tagged[CompanyProfileFilter.NotUpdatedFor],
-      "price-analytics-not-updated-for"   -> JsonTaggedAdt.tagged[CompanyProfileFilter.PriceAnalyticsNotUpdatedFor],
-      "financial-metrics-not-updated-for" -> JsonTaggedAdt.tagged[CompanyProfileFilter.FinancialMetricsNotUpdatedFor],
-      "ticker-matching"                   -> JsonTaggedAdt.tagged[CompanyProfileFilter.TickerMatching],
-      "composite"                         -> JsonTaggedAdt.tagged[CompanyProfileFilter.Composite]
-    ),
-    strict = true,
-    typeFieldName = "kind"
-  )
+  given Configuration = Configuration.default.withKebabCaseConstructorNames.withDiscriminator("kind").withDefaults

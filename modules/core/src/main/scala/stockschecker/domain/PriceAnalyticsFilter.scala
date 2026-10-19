@@ -1,7 +1,7 @@
 package stockschecker.domain
 
 import cats.data.NonEmptyList
-import org.latestbit.circe.adt.codec.{JsonTaggedAdt, *}
+import io.circe.derivation.{Configuration, ConfiguredCodec}
 import stockschecker.common.JsonCodecs
 import stockschecker.common.types.EnumType
 
@@ -18,7 +18,7 @@ enum TimePeriod(val fieldName: String):
   case TenYear    extends TimePeriod("tenYearChange")
   case Max        extends TimePeriod("maxChange")
 
-enum PriceAnalyticsFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
+enum PriceAnalyticsFilter derives ConfiguredCodec:
   case Composite(filters: NonEmptyList[PriceAnalyticsFilter])
   case UpdatedWithin(duration: FiniteDuration)
   case NotUpdatedFor(duration: FiniteDuration)
@@ -28,16 +28,4 @@ enum PriceAnalyticsFilter derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt
   case PerformanceBelow(period: TimePeriod, maxPercentage: BigDecimal)
 
 object PriceAnalyticsFilter extends JsonCodecs:
-  given JsonTaggedAdt.Config[PriceAnalyticsFilter] = JsonTaggedAdt.Config.Values[PriceAnalyticsFilter](
-    mappings = Map(
-      "composite"         -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.Composite],
-      "updated-within"    -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.UpdatedWithin],
-      "not-updated-for"   -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.NotUpdatedFor],
-      "price-above"       -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.PriceAbove],
-      "price-below"       -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.PriceBelow],
-      "performance-above" -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.PerformanceAbove],
-      "performance-below" -> JsonTaggedAdt.tagged[PriceAnalyticsFilter.PerformanceBelow]
-    ),
-    strict = true,
-    typeFieldName = "kind"
-  )
+  given Configuration = Configuration.default.withKebabCaseConstructorNames.withDiscriminator("kind").withDefaults

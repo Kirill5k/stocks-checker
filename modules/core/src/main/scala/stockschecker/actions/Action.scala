@@ -1,13 +1,13 @@
 package stockschecker.actions
 
 import cats.data.NonEmptyList
+import io.circe.derivation.{Configuration, ConfiguredCodec}
 import stockschecker.common.JsonCodecs
 import stockschecker.domain.{CommandId, CompanyProfileFilter, Exchange, SecurityFilter, Ticker}
-import org.latestbit.circe.adt.codec.*
 
 import scala.concurrent.duration.FiniteDuration
 
-enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithConfig:
+enum Action derives ConfiguredCodec:
   case RescheduleAll
   case Schedule(cid: CommandId, duration: FiniteDuration)
   case Sequence(actions: NonEmptyList[Action])
@@ -31,26 +31,5 @@ enum Action derives JsonTaggedAdt.EncoderWithConfig, JsonTaggedAdt.DecoderWithCo
   case Retried(action: Action, attempt: Int)
 
 object Action extends JsonCodecs {
-  given JsonTaggedAdt.Config[Action] = JsonTaggedAdt.Config.Values[Action](
-    mappings = Map(
-      "reschedule-all"                  -> JsonTaggedAdt.tagged[Action.RescheduleAll.type],
-      "schedule"                        -> JsonTaggedAdt.tagged[Action.Schedule],
-      "sequence"                        -> JsonTaggedAdt.tagged[Action.Sequence],
-      "fetch-securities"                -> JsonTaggedAdt.tagged[Action.FetchSecurities],
-      "fetch-company-profiles"          -> JsonTaggedAdt.tagged[Action.FetchCompanyProfiles],
-      "fetch-financial-metrics"         -> JsonTaggedAdt.tagged[Action.FetchFinancialMetrics],
-      "fetch-price-analytics"           -> JsonTaggedAdt.tagged[Action.FetchPriceAnalytics],
-      "update-company-profiles"         -> JsonTaggedAdt.tagged[Action.UpdateCompanyProfiles],
-      "update-financial-metrics"        -> JsonTaggedAdt.tagged[Action.UpdateFinancialMetrics],
-      "update-price-analytics"          -> JsonTaggedAdt.tagged[Action.UpdatePriceAnalytics],
-      "record-company-profile-update"   -> JsonTaggedAdt.tagged[Action.RecordCompanyProfileUpdate],
-      "record-financial-metrics-update" -> JsonTaggedAdt.tagged[Action.RecordFinancialMetricsUpdate],
-      "record-price-analytics-update"   -> JsonTaggedAdt.tagged[Action.RecordPriceAnalyticsUpdate],
-      "deactivate-security"             -> JsonTaggedAdt.tagged[Action.DeactivateSecurity],
-      "deactivate-company-profile"      -> JsonTaggedAdt.tagged[Action.DeactivateCompanyProfile],
-      "retried"                         -> JsonTaggedAdt.tagged[Action.Retried]
-    ),
-    strict = true,
-    typeFieldName = "kind"
-  )
+  given Configuration = Configuration.default.withKebabCaseConstructorNames.withDiscriminator("kind").withDefaults
 }

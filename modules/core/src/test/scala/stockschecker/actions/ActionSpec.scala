@@ -1,7 +1,7 @@
 package stockschecker.actions
 
 import cats.data.NonEmptyList
-import io.circe.parser.decode
+import io.circe.parser.{decode, parse}
 import io.circe.syntax.*
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -68,16 +68,92 @@ class ActionSpec extends AnyWordSpec with Matchers with TableDrivenPropertyCheck
     (
       """{"action":{"kind":"reschedule-all"},"attempt":1,"kind":"retried"}""",
       Action.Retried(Action.RescheduleAll, 1)
-    )
+    ),
+    ("""{"ticker":"AAPL","kind":"deactivate-security"}""", Action.DeactivateSecurity(Ticker("AAPL"))),
+    ("""{"ticker":"MSFT","kind":"deactivate-company-profile"}""", Action.DeactivateCompanyProfile(Ticker("MSFT")))
   )
 
   "Action codec" should {
     "correctly encode and decode all action types" in
       forAll(testCases) { (json, action) =>
         withClue(s"Testing ${action.getClass.getSimpleName}: ") {
-          action.asJson.noSpaces mustBe json
+          Right(action.asJson) mustBe parse(json)
           decode[Action](json) mustBe Right(action)
         }
       }
+
+    "decode missing optional limits in existing payloads" in {
+      val filter = """{"kind":"is-active","active":true}"""
+      val cases  = Table(
+        ("kind", "action"),
+        ("fetch-company-profiles", Action.FetchCompanyProfiles(SecurityFilter.IsActive(true))),
+        ("fetch-financial-metrics", Action.FetchFinancialMetrics(CompanyProfileFilter.IsActive(true))),
+        ("fetch-price-analytics", Action.FetchPriceAnalytics(CompanyProfileFilter.IsActive(true)))
+      )
+
+      forAll(cases) { (kind, action) =>
+        decode[Action](s"""{"kind":"$kind","filter":$filter}""") mustBe Right(action)
+      }
+    }
+
+    "continue accepting extra fields in existing payloads" in {
+      decode[Action]("""{"kind":"reschedule-all","extra":true}""") mustBe Right(Action.RescheduleAll)
+      decode[Action]("""{"kind":"deactivate-security","ticker":"AAPL","extra":true}""") mustBe
+        Right(Action.DeactivateSecurity(Ticker("AAPL")))
+    }
+
+    "reject invalid discriminators and malformed action fields" in {
+      val invalid = Table(
+        "json",
+        """{}""",
+        """{"kind":"unknown"}""",
+        """{"kind":"RescheduleAll"}""",
+        """{"kind":null}""",
+        """{"kind":123}""",
+        """{"kind":"schedule","cid":"cmd-123"}""",
+        """{"kind":"retried","action":{"kind":"reschedule-all"}}""",
+        """{"kind":"sequence","actions":[]}""",
+        """{"kind":"sequence","actions":[{"kind":"unknown"}]}""",
+        """{"kind":"fetch-company-profiles","filter":{"kind":"is-active","active":true},"limit":"bad"}"""
+      )
+
+      forAll(invalid) { json =>
+        withClue(json) {
+          decode[Action](json).isLeft mustBe true
+        }
+      }
+    }
+
+    "decode stored commands containing nested actions" in {
+      val json   = """{
+        "id":"cmd-123",
+        "isActive":true,
+        "action":{"kind":"sequence","actions":[
+          {"kind":"fetch-company-profiles","filter":{"kind":"composite","filters":[
+            {"kind":"exchange-is","exchange":"nasdaq"},{"kind":"is-active","active":true}
+          ]}},
+          {"kind":"retried","action":{"kind":"reschedule-all"},"attempt":2}
+        ]},
+        "schedule":{"kind":"periodic","period":"10seconds"},
+        "lastExecutedAt":null,
+        "executionCount":0,
+        "maxExecutions":null
+      }"""
+      val action = Action.Sequence(
+        NonEmptyList.of(
+          Action.FetchCompanyProfiles(
+            SecurityFilter.Composite(
+              NonEmptyList.of(
+                SecurityFilter.ExchangeIs(Exchange.NASDAQ),
+                SecurityFilter.IsActive(true)
+              )
+            )
+          ),
+          Action.Retried(Action.RescheduleAll, 2)
+        )
+      )
+
+      decode[Command](json) mustBe Right(Command(CommandId("cmd-123"), true, action, Schedule.Periodic(10.seconds), None, 0, None))
+    }
   }
 }

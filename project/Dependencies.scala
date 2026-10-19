@@ -2,22 +2,20 @@ import sbt.*
 
 object Dependencies {
   private object Versions {
-    val mongo4cats     = "0.7.18"
-    val commonScala    = "0.1.29"
-    val pureConfig     = "0.17.10"
-    val circe          = "0.14.16"
-    val circeFs2       = "0.14.1"
-    val sttp           = "4.0.26"
-    val logback        = "1.6.3"
-    val log4cats       = "2.8.0"
-    val tapir          = "1.13.31"
-    val cronUtils      = "9.2.1"
-    val taggedAdtCodec = "0.11.0"
+    val mongo4cats  = "0.8.0"
+    val commonScala = "0.1.29"
+    val pureConfig  = "0.17.11"
+    val circe       = "0.14.17"
+    val circeFs2    = "0.14.1"
+    val sttp        = "4.1.0"
+    val logback     = "1.6.5"
+    val log4cats    = "2.8.0"
+    val tapir       = "1.14.0"
+    val cronUtils   = "9.2.1"
   }
 
   private object Libraries {
-    val cronUtils      = "com.cronutils"  % "cron-utils"             % Versions.cronUtils
-    val taggedAdtCodec = "org.latestbit" %% "circe-tagged-adt-codec" % Versions.taggedAdtCodec
+    val cronUtils = "com.cronutils" % "cron-utils" % Versions.cronUtils
 
     object commonScala {
       val cats       = "io.github.kirill5k" %% "common-cats"        % Versions.commonScala
@@ -73,7 +71,6 @@ object Dependencies {
 
   val core = Seq(
     Libraries.cronUtils,
-    Libraries.taggedAdtCodec,
     Libraries.mongo4cats.core,
     Libraries.mongo4cats.circe,
     Libraries.commonScala.cats,
