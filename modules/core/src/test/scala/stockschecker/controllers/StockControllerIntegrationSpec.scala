@@ -1,7 +1,7 @@
 package stockschecker.controllers
 
 import cats.effect.IO
-import cats.syntax.all.*
+import cats.syntax.traverse.*
 import io.circe.parser.parse
 import org.http4s.{Header, Request, Status, Uri}
 import org.http4s.implicits.*

@@ -1,7 +1,9 @@
 package stockschecker.services
 
 import cats.effect.Temporal
-import cats.syntax.all.*
+import cats.syntax.applicative.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.{DateRange, EvaluationClose, EvaluationPriceSeries, PriceAdjustment, PriceHistorySnapshot, Ticker}
 import stockschecker.repositories.PriceHistoryRepository

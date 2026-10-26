@@ -1,7 +1,7 @@
 package stockschecker.clients.twelvedata
 
 import cats.effect.{Deferred, IO, Ref}
-import cats.syntax.all.*
+import cats.syntax.traverse.*
 import io.circe.syntax.*
 import kirill5k.common.sttp.test.Sttp4WordSpec
 import stockschecker.clients.{ProviderAccess, ProviderLimits}

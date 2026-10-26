@@ -1,7 +1,12 @@
 package stockschecker.actions
 
 import cats.effect.Temporal
-import cats.syntax.all.*
+import cats.syntax.applicative.*
+import cats.syntax.applicativeError.*
+import cats.syntax.flatMap.*
+import cats.syntax.foldable.*
+import cats.syntax.functor.*
+import cats.syntax.traverse.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger

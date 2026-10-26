@@ -1,7 +1,13 @@
 package stockschecker.repositories
 
 import cats.MonadThrow
-import cats.syntax.all.*
+import cats.syntax.applicative.*
+import cats.syntax.applicativeError.*
+import cats.syntax.flatMap.*
+import cats.syntax.foldable.*
+import cats.syntax.functor.*
+import cats.syntax.option.*
+import cats.syntax.traverse.*
 import io.circe.Codec
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.database.MongoDatabase

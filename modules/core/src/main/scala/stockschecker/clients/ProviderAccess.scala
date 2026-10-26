@@ -1,7 +1,9 @@
 package stockschecker.clients
 
 import cats.effect.{Ref, Temporal}
-import cats.syntax.all.*
+import cats.syntax.applicativeError.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import cats.effect.syntax.all.*
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{ProviderFailure, Ticker}

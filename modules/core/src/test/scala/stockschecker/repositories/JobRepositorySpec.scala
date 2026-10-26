@@ -2,7 +2,10 @@ package stockschecker.repositories
 
 import cats.data.NonEmptyList
 import cats.effect.{Deferred, IO, Ref}
-import cats.syntax.all.*
+import cats.syntax.foldable.*
+import cats.syntax.functor.*
+import cats.syntax.parallel.*
+import cats.syntax.traverse.*
 import kirill5k.common.cats.Clock
 import mongo4cats.operations.Filter
 import org.mockito.Mockito.{mock, when}

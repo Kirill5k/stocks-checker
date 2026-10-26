@@ -1,7 +1,8 @@
 package stockschecker.repositories
 
 import cats.effect.Concurrent
-import cats.syntax.all.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import io.circe.Codec
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider

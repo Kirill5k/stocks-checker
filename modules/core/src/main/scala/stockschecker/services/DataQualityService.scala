@@ -1,7 +1,8 @@
 package stockschecker.services
 
 import cats.effect.Async
-import cats.syntax.all.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.domain.*
 import stockschecker.repositories.Repositories

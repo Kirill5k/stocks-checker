@@ -2,7 +2,10 @@ package stockschecker.actions
 
 import cats.data.NonEmptyList
 import cats.effect.Async
-import cats.syntax.all.*
+import cats.syntax.applicativeError.*
+import cats.syntax.flatMap.*
+import cats.syntax.foldable.*
+import cats.syntax.functor.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger

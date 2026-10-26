@@ -1,7 +1,7 @@
 package stockschecker.services
 
 import cats.effect.IO
-import cats.syntax.all.*
+import cats.syntax.foldable.*
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.*

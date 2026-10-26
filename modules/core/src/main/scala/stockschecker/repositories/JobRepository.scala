@@ -1,7 +1,9 @@
 package stockschecker.repositories
 
 import cats.effect.Async
-import cats.syntax.all.*
+import cats.syntax.applicative.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import com.mongodb.client.model.{Indexes, ReturnDocument}
 import io.circe.Codec
 import mongo4cats.circe.MongoJsonCodecs

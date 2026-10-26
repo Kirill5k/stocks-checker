@@ -1,7 +1,7 @@
 package stockschecker.clients
 
 import cats.effect.{Deferred, IO}
-import cats.syntax.all.*
+import cats.syntax.traverse.*
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.{DataQualityRepository, ProviderBudgetRepository}

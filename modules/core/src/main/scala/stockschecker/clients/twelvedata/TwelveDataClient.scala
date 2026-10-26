@@ -2,7 +2,9 @@ package stockschecker.clients.twelvedata
 
 import cats.data.NonEmptyList
 import cats.effect.kernel.{Async, Ref}
-import cats.syntax.all.*
+import cats.syntax.applicativeError.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import io.circe.Codec
 import stockschecker.common.config.TwelveDataConfig
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceCandle, PriceHistorySnapshot, Ticker}

@@ -1,7 +1,8 @@
 package stockschecker.services
 
 import cats.effect.Sync
-import cats.syntax.all.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{FinancialMetrics, Ticker}

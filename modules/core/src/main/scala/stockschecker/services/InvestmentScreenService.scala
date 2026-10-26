@@ -1,7 +1,10 @@
 package stockschecker.services
 
 import cats.effect.Sync
-import cats.syntax.all.*
+import cats.syntax.applicative.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
+import cats.syntax.option.*
 import kirill5k.common.cats.Clock
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError

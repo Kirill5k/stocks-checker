@@ -1,7 +1,7 @@
 package stockschecker.repositories
 
 import cats.effect.{IO, Ref}
-import cats.syntax.all.*
+import cats.syntax.parallel.*
 import stockschecker.clients.{ProviderAccess, ProviderLimits}
 import stockschecker.domain.errors.AppError
 

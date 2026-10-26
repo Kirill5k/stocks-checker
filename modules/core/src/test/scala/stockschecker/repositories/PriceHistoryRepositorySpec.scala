@@ -1,7 +1,8 @@
 package stockschecker.repositories
 
 import cats.effect.IO
-import cats.syntax.all.*
+import cats.syntax.foldable.*
+import cats.syntax.traverse.*
 import mongo4cats.bson.Document
 import mongo4cats.bson.syntax.*
 import mongo4cats.operations.Filter

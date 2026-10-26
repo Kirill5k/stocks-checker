@@ -1,7 +1,8 @@
 package stockschecker.clients.finnhub
 
 import cats.effect.Async
-import cats.syntax.all.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import fs2.Stream
 import io.circe.{Codec, JsonObject}
 import io.circe.fs2.{byteArrayParser, decoder}

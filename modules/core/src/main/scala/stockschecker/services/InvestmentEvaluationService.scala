@@ -1,7 +1,11 @@
 package stockschecker.services
 
 import cats.effect.Sync
-import cats.syntax.all.*
+import cats.syntax.applicative.*
+import cats.syntax.flatMap.*
+import cats.syntax.functor.*
+import cats.syntax.option.*
+import cats.syntax.traverse.*
 import kirill5k.common.cats.Clock
 import stockschecker.actions.Action
 import stockschecker.domain.*

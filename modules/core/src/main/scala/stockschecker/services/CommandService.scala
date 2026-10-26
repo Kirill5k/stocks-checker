@@ -1,7 +1,10 @@
 package stockschecker.services
 
 import cats.effect.kernel.Temporal
-import cats.syntax.all.*
+import cats.syntax.either.*
+import cats.syntax.flatMap.*
+import cats.syntax.foldable.*
+import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.domain.{Command, CommandId, CreateCommand, JobCommand, Schedule, UpdateCommand}
