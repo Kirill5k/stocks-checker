@@ -10,7 +10,7 @@ final case class PriceHistorySnapshot(
     candles: List[PriceCandle],
     provider: String,
     currency: String,
-    adjustment: String,
+    adjustment: PriceAdjustment,
     fetchedAt: Instant,
     requestedFrom: LocalDate,
     requestedThrough: LocalDate

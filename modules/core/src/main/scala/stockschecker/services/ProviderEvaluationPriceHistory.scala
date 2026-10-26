@@ -3,7 +3,7 @@ package stockschecker.services
 import cats.effect.Temporal
 import cats.syntax.all.*
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{EvaluationClose, EvaluationPriceSeries, PriceHistorySnapshot, Ticker}
+import stockschecker.domain.{DateRange, EvaluationClose, EvaluationPriceSeries, PriceAdjustment, PriceHistorySnapshot, Ticker}
 import stockschecker.repositories.PriceHistoryRepository
 import java.time.{LocalDate, ZoneOffset}
 
@@ -29,7 +29,7 @@ object ProviderEvaluationPriceHistory {
           snapshot.provider,
           snapshot.fetchedAt,
           audited && issues.isEmpty,
-          snapshot.adjustment,
+          snapshot.adjustment.value,
           snapshot.requestedFrom,
           snapshot.requestedThrough,
           issues,
@@ -39,7 +39,7 @@ object ProviderEvaluationPriceHistory {
 
       def cached(ticker: Ticker, from: LocalDate, through: LocalDate): F[Option[EvaluationPriceSeries]] =
         repository
-          .latestCovering(ticker, "split-and-dividend", from)
+          .latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)
           .map(_.filter(coversCompletedSessions(_, through)).map(toSeries(_, from, through)))
 
       def history(ticker: Ticker, from: LocalDate, through: LocalDate): F[EvaluationPriceSeries] =
@@ -50,13 +50,14 @@ object ProviderEvaluationPriceHistory {
           // completed monthly cutoff can reuse the same unmerged adjustment vintage.
           sharedFrom    = if (from.isBefore(today.minusYears(13))) from else today.minusYears(13)
           sharedThrough = if (through.isAfter(today)) through else today
-          stored <- repository.latestCovering(ticker, "split-and-dividend", from)
+          range         = DateRange(sharedFrom, sharedThrough)
+          stored <- repository.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)
           // Explicit jobs can refresh an incomplete vintage the next day. Other readers use cached(),
           // which preserves complete historical captures without an age limit.
           snapshot <- stored
             .filter(s => coversCompletedSessions(s, through) && !s.fetchedAt.isAfter(now) && s.fetchedAt.isAfter(now.minusSeconds(86400)))
             .fold(
-              client.getDailyPriceHistory(ticker, sharedFrom, sharedThrough, "all").flatTap(repository.save)
+              client.getDailyPriceHistory(ticker, range, PriceAdjustment.SplitsAndDividends).flatTap(repository.save)
             )(_.pure[F])
         yield toSeries(snapshot, from, through)
     }

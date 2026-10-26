@@ -5,7 +5,7 @@ import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, PriceHistorySnapshot, Ticker}
+import stockschecker.domain.{DateRange, PriceAdjustment, PriceAnalytics, PriceAnalyticsFilter, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.{CompanyProfileRepository, LatestPriceRepository, PriceAnalyticsRepository, PriceHistoryRepository}
 import java.time.{Instant, LocalDate, ZoneOffset}
@@ -35,20 +35,20 @@ final private class LivePriceService[F[_]](
       now <- F.realTimeInstant
       through = LocalDate.ofInstant(now, ZoneOffset.UTC)
       // Retain the existing ten-year return horizon while risk measures use a fixed five-year window.
-      totalCached <- history.latestCovering(ticker, "split-and-dividend", through.minusYears(13))
+      totalRange = DateRange(through.minusYears(13), through)
+      quoteRange = DateRange(through.minusDays(14), through)
+      totalCached <- history.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, totalRange.from)
       total       <- totalCached
-        .filter(s => reusable(s, ticker, "split-and-dividend", through.minusYears(13), through, now))
-        .fold(
-          marketDataClient.getDailyPriceHistory(ticker, through.minusYears(13), through, "all").flatTap(history.save)
-        )(F.pure)
-      quotedCached <- history.latest(ticker, "none")
+        .filter(reusable(ticker, PriceAdjustment.SplitsAndDividends, totalRange, now))
+        .map(F.pure)
+        .getOrElse(marketDataClient.getDailyPriceHistory(ticker, totalRange, PriceAdjustment.SplitsAndDividends).flatTap(history.save))
+      quotedCached <- history.latest(ticker, PriceAdjustment.Unadjusted)
       quoted       <- quotedCached
-        .filter(s => reusable(s, ticker, "none", through.minusDays(14), through, now))
-        .fold(
-          marketDataClient.getDailyPriceHistory(ticker, through.minusDays(14), through, "none").flatTap(history.save)
-        )(F.pure)
+        .filter(reusable(ticker, PriceAdjustment.Unadjusted, quoteRange, now))
+        .map(F.pure)
+        .getOrElse(marketDataClient.getDailyPriceHistory(ticker, quoteRange, PriceAdjustment.Unadjusted).flatTap(history.save))
       _ <- F.raiseWhen(
-        !validIdentity(total, ticker, "split-and-dividend") || !validIdentity(quoted, ticker, "none") ||
+        !validIdentity(total, ticker, PriceAdjustment.SplitsAndDividends) || !validIdentity(quoted, ticker, PriceAdjustment.Unadjusted) ||
           !total.currency.equalsIgnoreCase(quoted.currency)
       )(AppError.FailedValidation("Adjusted and quoted price histories must have matching ticker, currency and adjustment metadata"))
       bars        <- F.fromOption(NonEmptyList.fromList(total.candles), AppError.PriceAnalyticsNotFound(ticker))
@@ -73,21 +73,22 @@ final private class LivePriceService[F[_]](
       basis = analytics.basis.map(_.copy(priceObservationId = Some(total.id), quotedPriceObservationId = Some(quoted.id)))
     )
 
-  private def validIdentity(snapshot: PriceHistorySnapshot, ticker: Ticker, adjustment: String): Boolean =
+  private def validIdentity(snapshot: PriceHistorySnapshot, ticker: Ticker, adjustment: PriceAdjustment): Boolean =
     snapshot.ticker == ticker && snapshot.adjustment == adjustment && snapshot.currency.trim.nonEmpty
 
   private def reusable(
-      snapshot: PriceHistorySnapshot,
       ticker: Ticker,
-      adjustment: String,
-      from: LocalDate,
-      through: LocalDate,
+      adjustment: PriceAdjustment,
+      range: DateRange,
       now: Instant
+  )(
+      snapshot: PriceHistorySnapshot
   ): Boolean =
-    validIdentity(snapshot, ticker, adjustment) && !snapshot.fetchedAt.isAfter(now) && snapshot.fetchedAt.isAfter(
-      now.minusSeconds(86400)
-    ) &&
-      !snapshot.requestedFrom.isAfter(from) && !snapshot.requestedThrough.isBefore(through)
+    validIdentity(snapshot, ticker, adjustment) &&
+      !snapshot.fetchedAt.isAfter(now) &&
+      snapshot.fetchedAt.isAfter(now.minusSeconds(86400)) &&
+      !snapshot.requestedFrom.isAfter(range.from) &&
+      !snapshot.requestedThrough.isBefore(range.through)
 
   private def save(analyticsList: List[PriceAnalytics]): F[Unit] =
     repository.save(analyticsList) >>

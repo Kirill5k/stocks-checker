@@ -3,7 +3,7 @@ package stockschecker.services
 import cats.effect.IO
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{PriceAnalytics, PriceCandle, PriceHistorySnapshot, Ticker}
+import stockschecker.domain.{DateRange, PriceAdjustment, PriceAnalytics, PriceCandle, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.{CompanyProfileRepository, LatestPriceRepository, PriceAnalyticsRepository, PriceHistoryRepository}
 import stockschecker.fixtures.*
@@ -19,8 +19,9 @@ class PriceServiceSpec extends IOWordSpec {
   ) {
     def service: IO[PriceService[IO]] = PriceService.make(repo, latest, client, profiles, history)
     def cache(adjusted: PriceHistorySnapshot, quoted: PriceHistorySnapshot): Unit = {
-      when(history.latestCovering(AAPL, "split-and-dividend", adjusted.requestedThrough.minusYears(13))).thenReturnIO(Some(adjusted))
-      when(history.latest(AAPL, "none")).thenReturnIO(Some(quoted))
+      when(history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, adjusted.requestedThrough.minusYears(13)))
+        .thenReturnIO(Some(adjusted))
+      when(history.latest(AAPL, PriceAdjustment.Unadjusted)).thenReturnIO(Some(quoted))
       ()
     }
   }
@@ -38,11 +39,11 @@ class PriceServiceSpec extends IOWordSpec {
     when(d.history.save(any[PriceHistorySnapshot])).thenReturnUnit
     d
   }
-  private def snapshot(now: Instant, adjustment: String, offsets: List[Long] = List(0L)): PriceHistorySnapshot = {
+  private def snapshot(now: Instant, adjustment: PriceAdjustment, offsets: List[Long] = List(0L)): PriceHistorySnapshot = {
     val through = LocalDate.ofInstant(now, ZoneOffset.UTC)
-    val close   = if (adjustment == "none") BigDecimal(100) else BigDecimal(50)
+    val close   = if (adjustment == PriceAdjustment.Unadjusted) BigDecimal(100) else BigDecimal(50)
     PriceHistorySnapshot(
-      adjustment,
+      adjustment.value,
       AAPL,
       offsets.map(offset => PriceCandle(through.minusDays(offset), close, close, close, close, 1L)),
       "TwelveData",
@@ -59,7 +60,7 @@ class PriceServiceSpec extends IOWordSpec {
       val d = mocks
       (for
         now <- IO.realTimeInstant
-        _ = d.cache(snapshot(now, "split-and-dividend"), snapshot(now, "none"))
+        _ = d.cache(snapshot(now, PriceAdjustment.SplitsAndDividends), snapshot(now, PriceAdjustment.Unadjusted))
         service   <- d.service
         analytics <- service.findPriceAnalytics(AAPL, fetch = true)
       yield analytics).asserting { analytics =>
@@ -78,7 +79,10 @@ class PriceServiceSpec extends IOWordSpec {
       val d = mocks
       (for
         now <- IO.realTimeInstant
-        _ = d.cache(snapshot(now, "split-and-dividend", List(1L, 2L)), snapshot(now, "none", List(0L, 1L, 2L)))
+        _ = d.cache(
+          snapshot(now, PriceAdjustment.SplitsAndDividends, List(1L, 2L)),
+          snapshot(now, PriceAdjustment.Unadjusted, List(0L, 1L, 2L))
+        )
         service   <- d.service
         analytics <- service.findPriceAnalytics(AAPL, fetch = true)
       yield (analytics, LocalDate.ofInstant(now, ZoneOffset.UTC))).asserting { case (analytics, today) =>
@@ -93,7 +97,7 @@ class PriceServiceSpec extends IOWordSpec {
       val d = mocks
       (for
         now <- IO.realTimeInstant
-        _ = d.cache(snapshot(now, "split-and-dividend", List(0L)), snapshot(now, "none", List(1L)))
+        _ = d.cache(snapshot(now, PriceAdjustment.SplitsAndDividends, List(0L)), snapshot(now, PriceAdjustment.Unadjusted, List(1L)))
         service <- d.service
         outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
       yield outcome).asserting { outcome =>
@@ -110,7 +114,7 @@ class PriceServiceSpec extends IOWordSpec {
       val d = mocks
       (for
         now <- IO.realTimeInstant
-        _ = d.cache(snapshot(now, "split-and-dividend", List(45L)), snapshot(now, "none", List(45L)))
+        _ = d.cache(snapshot(now, PriceAdjustment.SplitsAndDividends, List(45L)), snapshot(now, PriceAdjustment.Unadjusted, List(45L)))
         service <- d.service
         outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
       yield outcome).asserting { outcome =>
@@ -127,7 +131,7 @@ class PriceServiceSpec extends IOWordSpec {
       val d = mocks
       (for
         now <- IO.realTimeInstant
-        _ = d.cache(snapshot(now, "split-and-dividend"), snapshot(now, "none").copy(currency = "CAD"))
+        _ = d.cache(snapshot(now, PriceAdjustment.SplitsAndDividends), snapshot(now, PriceAdjustment.Unadjusted).copy(currency = "CAD"))
         service <- d.service
         result  <- service.findPriceAnalytics(AAPL, fetch = true).attempt
       yield result).asserting { result =>
@@ -141,14 +145,20 @@ class PriceServiceSpec extends IOWordSpec {
       val d = mocks
       (for
         now <- IO.realTimeInstant
-        full = snapshot(now, "split-and-dividend")
-        _    = d.cache(full.copy(requestedFrom = full.requestedThrough.minusDays(14)), snapshot(now, "none"))
-        _    = when(d.client.getDailyPriceHistory(AAPL, full.requestedFrom, full.requestedThrough, "all")).thenReturnIO(full)
+        full = snapshot(now, PriceAdjustment.SplitsAndDividends)
+        _    = d.cache(full.copy(requestedFrom = full.requestedThrough.minusDays(14)), snapshot(now, PriceAdjustment.Unadjusted))
+        _    = when(
+          d.client.getDailyPriceHistory(AAPL, DateRange(full.requestedFrom, full.requestedThrough), PriceAdjustment.SplitsAndDividends)
+        ).thenReturnIO(full)
         service <- d.service
         _       <- service.findPriceAnalytics(AAPL, fetch = true)
       yield full).asserting { full =>
         verify(d.history).save(full)
-        verify(d.client).getDailyPriceHistory(AAPL, full.requestedFrom, full.requestedThrough, "all")
+        verify(d.client).getDailyPriceHistory(
+          AAPL,
+          DateRange(full.requestedFrom, full.requestedThrough),
+          PriceAdjustment.SplitsAndDividends
+        )
         succeed
       }
     }
@@ -157,12 +167,17 @@ class PriceServiceSpec extends IOWordSpec {
       val d = mocks
       (for
         now <- IO.realTimeInstant
-        full     = snapshot(now, "split-and-dividend")
-        _        = when(d.history.latest(any[Ticker], anyString)).thenReturnIO(None)
-        _        = when(d.history.latestCovering(AAPL, "split-and-dividend", full.requestedFrom)).thenReturnIO(None)
-        _        = when(d.client.getDailyPriceHistory(AAPL, full.requestedFrom, full.requestedThrough, "all")).thenReturnIO(full)
+        full = snapshot(now, PriceAdjustment.SplitsAndDividends)
+        _    = when(d.history.latest(any[Ticker], any[PriceAdjustment])).thenReturnIO(None)
+        _    = when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, full.requestedFrom)).thenReturnIO(None)
+        _    = when(
+          d.client.getDailyPriceHistory(AAPL, DateRange(full.requestedFrom, full.requestedThrough), PriceAdjustment.SplitsAndDividends)
+        ).thenReturnIO(full)
         deferred = AppError.ProviderDeferred("TwelveData", now.plusSeconds(60), "quota")
-        _        = when(d.client.getDailyPriceHistory(AAPL, full.requestedThrough.minusDays(14), full.requestedThrough, "none"))
+        _        = when(
+          d.client
+            .getDailyPriceHistory(AAPL, DateRange(full.requestedThrough.minusDays(14), full.requestedThrough), PriceAdjustment.Unadjusted)
+        )
           .thenRaiseError(deferred)
         service <- d.service
         result  <- service.findPriceAnalytics(AAPL, fetch = true).attempt

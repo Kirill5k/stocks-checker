@@ -1,10 +1,11 @@
 package stockschecker.clients.finnhub
 
 import cats.effect.Async
-import cats.syntax.flatMap.*
+import cats.syntax.all.*
 import fs2.Stream
 import io.circe.{Codec, JsonObject}
 import io.circe.fs2.{byteArrayParser, decoder}
+import stockschecker.clients.ProviderAccess
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, Exchange, FinancialData, FinancialMetrics, Security, SecurityKind, Ticker}
@@ -24,12 +25,22 @@ trait FinnhubClient[F[_]]:
 
 final private class LiveFinnhubClient[F[_]](
     private val config: FinnhubClientConfig,
-    private val backend: WebSocketStreamBackend[F, Fs2Streams[F]]
+    private val backend: WebSocketStreamBackend[F, Fs2Streams[F]],
+    private val access: ProviderAccess[F]
 )(using
     F: Async[F]
 ) extends FinnhubClient[F] {
 
-  override def getFinancialData(ticker: Ticker): F[Option[FinancialData]] = {
+  override def getFinancialData(ticker: Ticker): F[Option[FinancialData]] =
+    access.observed(ticker, "Finnhub", "financials")(access.run("Finnhub", config.limits)(fetchFinancialData(ticker)))(_.nonEmpty)
+
+  override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] =
+    access.observed(ticker, "Finnhub", "profile")(access.run("Finnhub", config.limits)(fetchCompanyProfile(ticker)))(_.nonEmpty)
+
+  override def getListedSecurities(exchange: Exchange): Stream[F, Security] =
+    Stream.eval(access.run("Finnhub", config.limits)(fetchListedSecurities(exchange).compile.toList)).flatMap(Stream.emits)
+
+  private def fetchFinancialData(ticker: Ticker): F[Option[FinancialData]] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v1/stock/metric?token=${config.apiKey}&symbol=$ticker&metric=all")
       .response(asJson[JsonObject])
@@ -62,7 +73,7 @@ final private class LiveFinnhubClient[F[_]](
     }
   }
 
-  override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
+  private def fetchCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v1/stock/profile2?token=${config.apiKey}&symbol=$ticker")
       .response(asJson[JsonObject])
@@ -90,7 +101,7 @@ final private class LiveFinnhubClient[F[_]](
     }
   }
 
-  override def getListedSecurities(exchange: Exchange): Stream[F, Security] = {
+  private def fetchListedSecurities(exchange: Exchange): Stream[F, Security] = {
     val mic     = mapExchangeToFinnhubMic(exchange)
     val code    = mapExchangeToFinnhubCode(exchange)
     val request = emptyRequest
@@ -218,7 +229,8 @@ object FinnhubClient {
 
   def make[F[_]: Async](
       config: FinnhubClientConfig,
-      backend: WebSocketStreamBackend[F, Fs2Streams[F]]
+      backend: WebSocketStreamBackend[F, Fs2Streams[F]],
+      access: ProviderAccess[F]
   ): F[FinnhubClient[F]] =
-    Async[F].pure(LiveFinnhubClient[F](config, backend))
+    access.validateLimits("Finnhub", config.limits).as(LiveFinnhubClient[F](config, backend, access))
 }
