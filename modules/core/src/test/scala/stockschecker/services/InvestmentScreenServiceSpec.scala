@@ -40,6 +40,95 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       def latestHeader: IO[Option[InvestmentRankingRepository.Header]] = latest.flatMap(_.traverse(r => header(r.id)).map(_.flatten))
 
   "InvestmentScreenService" should {
+    "skip the complete research refresh unless both feature flags are enabled" in {
+      val stocks      = mock[StockRepository[IO]]
+      val history     = mock[FinancialHistoryRepository[IO]]
+      val screens     = mock[InvestmentScreenRepository[IO]]
+      val evaluations = mock[InvestmentEvaluationRepository[IO]]
+      val prices      = mock[EvaluationPriceHistory[IO]]
+      val rankings    = mock[InvestmentRankingRepository[IO]]
+      val jobs        = mock[JobRepository[IO]]
+      val result      = List((false, false), (false, true), (true, false)).traverse_ { case (enabled, audited) =>
+        InvestmentScreenService
+          .make(stocks, history, screens, evaluations, prices, investmentConfig(enabled, audited), rankings = rankings, jobs = jobs)
+          .flatMap(_.refreshResearch)
+      }
+      result.asserting { _ =>
+        verifyNoInteractions(stocks, history, screens, evaluations, prices, rankings, jobs)
+        succeed
+      }
+    }
+    "publish the daily ranking before capturing monthly evaluations during a research refresh" in {
+      val stocks      = mock[StockRepository[IO]]
+      val history     = mock[FinancialHistoryRepository[IO]]
+      val screens     = mock[InvestmentScreenRepository[IO]]
+      val evaluations = mock[InvestmentEvaluationRepository[IO]]
+      val prices      = mock[EvaluationPriceHistory[IO]]
+      val rankings    = mock[InvestmentRankingRepository[IO]]
+      val jobs        = mock[JobRepository[IO]]
+      when(rankings.latestHeader).thenReturnNone
+      when(stocks.findAll(StockFilters(), None)).thenReturnIO(List(AAPLStock))
+      when(history.findLatestAll).thenReturnIO(Nil)
+      when(rankings.save(any[InvestmentRankingRun])).thenReturnUnit
+      when(rankings.prune(any[Instant])).thenReturnUnit
+      when(screens.header("monthly:2026-10:quality-fair-value-v1")).thenReturnNone
+      when(screens.ids).thenReturnIO(Nil)
+      when(evaluations.capturePlans).thenReturnIO(Nil)
+      when(evaluations.unsettled).thenReturnIO(Nil)
+      when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[String])
+      val result = for
+        service <- InvestmentScreenService.make(
+          stocks,
+          history,
+          screens,
+          evaluations,
+          prices,
+          investmentConfig(true, true),
+          rankings = rankings,
+          jobs = jobs
+        )
+        _ <- service.refreshResearch
+      yield ()
+      result.asserting { _ =>
+        val ordered = org.mockito.Mockito.inOrder(rankings, screens, evaluations)
+        val ranking = org.mockito.ArgumentCaptor.forClass(classOf[InvestmentRankingRun])
+        ordered.verify(rankings).save(ranking.capture())
+        ordered.verify(screens).ids
+        ordered.verify(evaluations).finishedScreenIds
+        ranking.getValue.inputs.map(_.stock.security.ticker) mustBe List(AAPL)
+        verifyNoInteractions(prices, jobs)
+        succeed
+      }
+    }
+    "propagate ranking failures and skip evaluation capture during a research refresh" in {
+      val stocks      = mock[StockRepository[IO]]
+      val history     = mock[FinancialHistoryRepository[IO]]
+      val screens     = mock[InvestmentScreenRepository[IO]]
+      val evaluations = mock[InvestmentEvaluationRepository[IO]]
+      val prices      = mock[EvaluationPriceHistory[IO]]
+      val rankings    = mock[InvestmentRankingRepository[IO]]
+      val jobs        = mock[JobRepository[IO]]
+      val error       = new IllegalStateException("Ranking storage is unavailable")
+      when(rankings.latestHeader).thenReturn(IO.raiseError(error))
+      val result = for
+        service <- InvestmentScreenService.make(
+          stocks,
+          history,
+          screens,
+          evaluations,
+          prices,
+          investmentConfig(true, true),
+          rankings = rankings,
+          jobs = jobs
+        )
+        outcome <- service.refreshResearch.attempt
+      yield outcome
+      result.asserting { outcome =>
+        outcome mustBe Left(error)
+        verifyNoInteractions(stocks, history, screens, evaluations, prices, jobs)
+        succeed
+      }
+    }
     "remain disabled without both the feature switch and audited coverage" in {
       val stocks      = mock[StockRepository[IO]]
       val history     = mock[FinancialHistoryRepository[IO]]

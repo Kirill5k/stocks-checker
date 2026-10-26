@@ -20,6 +20,7 @@ class ActionSpec extends AnyWordSpec with Matchers {
     Action.UpdateCompanyProfiles(NonEmptyList.one(Ticker("AAPL"))),
     Action.UpdateFinancialMetrics(NonEmptyList.one(Ticker("AAPL"))),
     Action.UpdatePriceAnalytics(NonEmptyList.one(Ticker("AAPL"))),
+    Action.RefreshInvestmentResearch,
     Action.RefreshEvaluationPrices(Ticker("AAPL"), LocalDate.parse("2025-01-01"), LocalDate.parse("2026-01-01")),
     Action.DeactivateSecurity(Ticker("AAPL")),
     Action.DeactivateCompanyProfile(Ticker("MSFT"))
@@ -34,6 +35,7 @@ class ActionSpec extends AnyWordSpec with Matchers {
         Right(Action.FetchCompanyProfiles(SecurityFilter.IsActive(true)))
       decode[Action]("""{"kind":"deactivate-security","ticker":"AAPL","extra":true}""") mustBe
         Right(Action.DeactivateSecurity(Ticker("AAPL")))
+      Action.RefreshInvestmentResearch.asJson.noSpaces mustBe """{"kind":"refresh-investment-research"}"""
     }
 
     "decode retired persisted actions without restoring the old execution paths" in {

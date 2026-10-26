@@ -7,11 +7,13 @@ import org.http4s.implicits.*
 import kirill5k.common.http4s.test.HttpRoutesWordSpec
 import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
-import stockschecker.domain.CreateCommand
+import stockschecker.domain.{CreateCommand, Schedule}
 import stockschecker.services.CommandService
-import stockschecker.actions.ActionDispatcher
+import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.repositories.{CommandRepository, JobRepository}
 import stockschecker.fixtures.*
+
+import scala.concurrent.duration.*
 
 class CommandControllerSpec extends HttpRoutesWordSpec {
 
@@ -86,6 +88,22 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
     }
 
     "POST /commands" should {
+      "accept an hourly investment research command" in {
+        val svc   = mocks
+        val input = CreateCommand(Action.RefreshInvestmentResearch, Schedule.Periodic(1.hour), None)
+        when(svc.create(input)).thenReturnIO(FetchLatestSecuritiesCommand.copy(action = input.action, schedule = input.schedule))
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          body = """{"action":{"kind":"refresh-investment-research"},"schedule":{"kind":"periodic","period":"1hour"}}"""
+          req  = Request[IO](uri = uri"/commands", method = Method.POST).withHeaders(apiKeyHeader).withBody(body)
+          response <- controller.routes.orNotFound.run(req)
+          _        <- IO(verify(svc).create(input))
+        yield response
+
+        res mustHaveStatus (Status.Created, Some(s"""{"id":"${FetchLatestSecuritiesCommand.id.value}"}"""))
+      }
+
       "reject a retired action before writing a command" in {
         given Clock[IO] = Clock.mock(ts)
         val commands    = mock[CommandRepository[IO]]

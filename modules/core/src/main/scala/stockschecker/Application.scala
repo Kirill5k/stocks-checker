@@ -11,7 +11,7 @@ import stockschecker.clients.{Clients, ProviderAccess}
 import stockschecker.common.config.AppConfig
 import stockschecker.controllers.Controllers
 import stockschecker.repositories.Repositories
-import stockschecker.services.{InvestmentResearchRunner, Services}
+import stockschecker.services.Services
 
 import scala.concurrent.duration.*
 
@@ -42,8 +42,7 @@ object Application extends IOApp.Simple {
             _                <- Stream(
               Server.serveEmber(config.server, controllers.routes),
               actionExecutor.run,
-              CommandScheduler.run(repositories.command, repositories.jobs),
-              InvestmentResearchRunner.run(services.investmentScreens, config.investment)
+              CommandScheduler.run(repositories.command, repositories.jobs)
             ).parJoinUnbounded.compile.drain
           yield ()
     yield ()

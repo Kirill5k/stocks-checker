@@ -21,6 +21,7 @@ enum Action:
   case UpdateCompanyProfiles(tickers: NonEmptyList[Ticker])
   case UpdateFinancialMetrics(tickers: NonEmptyList[Ticker])
   case UpdatePriceAnalytics(tickers: NonEmptyList[Ticker])
+  case RefreshInvestmentResearch
   case RefreshEvaluationPrices(ticker: Ticker, from: LocalDate, through: LocalDate)
   // Deactivate operations
   case DeactivateSecurity(ticker: Ticker)

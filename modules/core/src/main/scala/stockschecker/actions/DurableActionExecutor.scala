@@ -127,6 +127,7 @@ final private[actions] class DurableActionExecutor[F[_]](
     case Action.UpdateCompanyProfiles(tickers)  => expand(job, tickers.toList.map(t => Action.UpdateCompanyProfiles(NonEmptyList.one(t))))
     case Action.UpdatePriceAnalytics(tickers)   => expand(job, tickers.toList.map(t => Action.UpdatePriceAnalytics(NonEmptyList.one(t))))
     case Action.UpdateFinancialMetrics(tickers) => expand(job, tickers.toList.map(t => Action.UpdateFinancialMetrics(NonEmptyList.one(t))))
+    case Action.RefreshInvestmentResearch       => done(job)(services.investmentScreens.refreshResearch)
     case Action.RefreshEvaluationPrices(ticker, from, through) =>
       done(job)(services.investmentScreens.refreshHistory(ticker, from, through))
     case Action.DeactivateSecurity(ticker)       => done(job)(services.security.deactivate(ticker))

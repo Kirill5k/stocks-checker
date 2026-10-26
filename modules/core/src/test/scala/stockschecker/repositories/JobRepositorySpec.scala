@@ -13,7 +13,7 @@ import stockschecker.common.config.ActionExecutorConfig
 import stockschecker.domain.{CreateCommand, EvaluationCapturePlan, Job, JobCommand, JobPlan, Schedule, Ticker, UpdateCommand}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
-import stockschecker.services.{CommandService, CompanyProfileService, SecurityService, Services}
+import stockschecker.services.{CommandService, CompanyProfileService, InvestmentScreenService, SecurityService, Services}
 
 import java.time.{Instant, LocalDate}
 import java.time.temporal.ChronoUnit
@@ -303,6 +303,65 @@ class JobRepositorySpec extends RepositorySpec {
       } yield {
         ready.state mustBe Job.Succeeded
         timers.count(Job.Pending) mustBe 16
+      }
+    }
+
+    "execute scheduled investment research and release its completed occurrence" in withEmbeddedMongoDatabase { db =>
+      val services = mock(classOf[Services[IO]])
+      val screens  = mock(classOf[InvestmentScreenService[IO]])
+      when(services.investmentScreens).thenReturn(screens)
+      for {
+        runs <- Ref.of[IO, Int](0)
+        _ = when(screens.refreshResearch).thenReturn(runs.update(_ + 1))
+        jobs           <- JobRepository.make[IO](db)
+        commands       <- CommandRepository.make[IO](db)
+        dispatcher     <- ActionDispatcher.durable(jobs)
+        commandService <- CommandService.make(commands, dispatcher, jobs)
+        _ = when(services.command).thenReturn(commandService)
+        command <- commandService.create(CreateCommand(Action.RefreshInvestmentResearch, Schedule.Periodic(1.hour), Some(1)))
+        _       <- CommandScheduler.tick(commands, jobs)
+        queued  <- commands.find(command.id)
+        runId = queued.activeRunId.get
+        executor  <- ActionExecutor.make(jobs, services, ActionExecutorConfig(1))
+        _         <- executor.run.take(1).compile.drain.timeout(3.seconds)
+        result    <- jobs.find(runId).map(_.get)
+        count     <- runs.get
+        _         <- CommandScheduler.tick(commands, jobs)
+        completed <- commands.find(command.id)
+      } yield {
+        count mustBe 1
+        result.action mustBe Action.RefreshInvestmentResearch
+        result.state mustBe Job.Succeeded
+        result.command.map(_.commandId) mustBe Some(command.id)
+        completed.executionCount mustBe 1
+        completed.activeRunId mustBe None
+        completed.outbox mustBe None
+        completed.canBeExecuted mustBe false
+      }
+    }
+
+    "persist investment research failures and bound their transient retries" in withEmbeddedMongoDatabase { db =>
+      val services = mock(classOf[Services[IO]])
+      val screens  = mock(classOf[InvestmentScreenService[IO]])
+      val now      = Instant.now().truncatedTo(ChronoUnit.MILLIS)
+      when(services.investmentScreens).thenReturn(screens)
+      when(screens.refreshResearch).thenReturn(IO.raiseError(new java.io.IOException("research storage unavailable")))
+      for {
+        jobs      <- JobRepository.make[IO](db)
+        _         <- jobs.enqueue(Job("research-exhausted", Action.RefreshInvestmentResearch, now, now, retries = 3))
+        _         <- jobs.enqueue(Job("research-retry", Action.RefreshInvestmentResearch, now, now, retries = 2))
+        executor  <- ActionExecutor.make(jobs, services, ActionExecutorConfig(1))
+        _         <- executor.run.take(2).compile.drain.timeout(3.seconds)
+        exhausted <- jobs.find("research-exhausted").map(_.get)
+        retry     <- jobs.find("research-retry").map(_.get)
+      } yield {
+        exhausted.state mustBe Job.Failed
+        exhausted.retries mustBe 3
+        exhausted.error mustBe Some("IOException")
+        retry.state mustBe Job.Pending
+        retry.retries mustBe 3
+        retry.error mustBe Some("IOException")
+        retry.availableAt.isAfter(now) mustBe true
       }
     }
 
