@@ -15,7 +15,7 @@ object ProviderEvaluationPriceHistory {
   ): EvaluationPriceHistory[F] =
     new EvaluationPriceHistory[F] {
       private def coversCompletedSessions(snapshot: PriceHistorySnapshot, through: LocalDate): Boolean =
-        !snapshot.requestedThrough.isBefore(through) &&
+        !snapshot.requestedRange.through.isBefore(through) &&
           !snapshot.fetchedAt.isBefore(through.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant)
       private def toSeries(snapshot: PriceHistorySnapshot, from: LocalDate, through: LocalDate): EvaluationPriceSeries = {
         val issues = List(
@@ -30,8 +30,8 @@ object ProviderEvaluationPriceHistory {
           snapshot.fetchedAt,
           audited && issues.isEmpty,
           snapshot.adjustment.value,
-          snapshot.requestedFrom,
-          snapshot.requestedThrough,
+          snapshot.requestedRange.from,
+          snapshot.requestedRange.through,
           issues,
           snapshotIds = List(snapshot.id)
         )

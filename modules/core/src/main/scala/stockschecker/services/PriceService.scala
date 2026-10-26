@@ -87,8 +87,8 @@ final private class LivePriceService[F[_]](
     validIdentity(snapshot, ticker, adjustment) &&
       !snapshot.fetchedAt.isAfter(now) &&
       snapshot.fetchedAt.isAfter(now.minusSeconds(86400)) &&
-      !snapshot.requestedFrom.isAfter(range.from) &&
-      !snapshot.requestedThrough.isBefore(range.through)
+      !snapshot.requestedRange.from.isAfter(range.from) &&
+      !snapshot.requestedRange.through.isBefore(range.through)
 
   private def save(analyticsList: List[PriceAnalytics]): F[Unit] =
     repository.save(analyticsList) >>

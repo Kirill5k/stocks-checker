@@ -12,10 +12,10 @@ import stockschecker.repositories.{DataQualityRepository, ProviderBudgetReposito
 import java.time.{Instant, LocalDate}
 
 class MarketDataClientSpec extends IOWordSpec {
-  private val limits  = ProviderLimits(60000, 0, 1)
-  private val from    = LocalDate.parse("2025-01-01")
-  private val through = LocalDate.parse("2025-12-01")
-  private val range = DateRange(from, through)
+  private val limits   = ProviderLimits(60000, 0, 1)
+  private val from     = LocalDate.parse("2025-01-01")
+  private val through  = LocalDate.parse("2025-12-01")
+  private val range    = DateRange(from, through)
   private val snapshot = PriceHistorySnapshot(
     "prices",
     AAPL,
@@ -24,8 +24,7 @@ class MarketDataClientSpec extends IOWordSpec {
     "USD",
     PriceAdjustment.Splits,
     ts,
-    from,
-    through
+    range
   )
   private val financials = FinancialData(
     AAPLFinancialMetrics,

@@ -1,7 +1,7 @@
 package stockschecker.domain
 
 import io.circe.Codec
-import java.time.{Instant, LocalDate}
+import java.time.Instant
 
 /** A provider vintage kept in a bounded cache; its ID can remain as provenance after raw candles have been pruned. */
 final case class PriceHistorySnapshot(
@@ -12,6 +12,5 @@ final case class PriceHistorySnapshot(
     currency: String,
     adjustment: PriceAdjustment,
     fetchedAt: Instant,
-    requestedFrom: LocalDate,
-    requestedThrough: LocalDate
+    requestedRange: DateRange
 ) derives Codec.AsObject

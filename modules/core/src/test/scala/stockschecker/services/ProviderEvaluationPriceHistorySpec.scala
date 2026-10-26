@@ -21,8 +21,7 @@ class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
     "USD",
     PriceAdjustment.SplitsAndDividends,
     Instant.parse("2025-02-02T12:00:00Z"),
-    from,
-    through
+    DateRange(from, through)
   )
 
   "Evaluation price history" should {
@@ -48,8 +47,8 @@ class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
         now <- IO.realTimeInstant
         today      = LocalDate.ofInstant(now, ZoneOffset.UTC)
         sharedFrom = today.minusYears(13)
-        refreshed  = snapshot.copy(id = "refreshed", fetchedAt = now, requestedFrom = sharedFrom, requestedThrough = today)
-        _ = when(client.getDailyPriceHistory(ticker, DateRange(sharedFrom, today), PriceAdjustment.SplitsAndDividends)).thenReturnIO(
+        refreshed  = snapshot.copy(id = "refreshed", fetchedAt = now, requestedRange = DateRange(sharedFrom, today))
+        _          = when(client.getDailyPriceHistory(ticker, refreshed.requestedRange, PriceAdjustment.SplitsAndDividends)).thenReturnIO(
           refreshed
         )
         history = ProviderEvaluationPriceHistory.make(client, repo, audited = true)
@@ -60,7 +59,7 @@ class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
         verify(repo).save(refreshed)
         verify(client).getDailyPriceHistory(
           ticker,
-          DateRange(refreshed.requestedFrom, refreshed.requestedThrough),
+          refreshed.requestedRange,
           PriceAdjustment.SplitsAndDividends
         )
         succeed
@@ -73,7 +72,7 @@ class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
       (for
         now <- IO.realTimeInstant
         today   = LocalDate.ofInstant(now, ZoneOffset.UTC)
-        shared  = snapshot.copy(fetchedAt = now, requestedFrom = today.minusYears(13), requestedThrough = today)
+        shared  = snapshot.copy(fetchedAt = now, requestedRange = DateRange(today.minusYears(13), today))
         _       = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(shared))
         _       = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from.plusDays(10))).thenReturnIO(Some(shared))
         history = ProviderEvaluationPriceHistory.make(client, repo, audited = true)

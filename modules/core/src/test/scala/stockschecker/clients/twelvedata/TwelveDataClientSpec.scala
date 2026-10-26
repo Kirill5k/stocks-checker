@@ -123,8 +123,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
             result.currency mustBe "EUR"
             result.provider mustBe "TwelveData"
             result.adjustment mustBe adjustment
-            result.requestedFrom mustBe from
-            result.requestedThrough mustBe through
+            result.requestedRange mustBe DateRange(from, through)
             result.candles.map(_.date) mustBe List(from, through)
             result.candles.map(_.close) mustBe List(BigDecimal(100), BigDecimal(102))
           }
@@ -142,8 +141,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           .flatMap(_.getDailyPriceHistory(Ticker("AAPL"), day, PriceAdjustment.Unadjusted))
           .asserting { result =>
             result.candles.map(_.date) mustBe List(from)
-            result.requestedFrom mustBe from
-            result.requestedThrough mustBe from
+            result.requestedRange mustBe day
             result.adjustment mustBe PriceAdjustment.Unadjusted
           }
       }

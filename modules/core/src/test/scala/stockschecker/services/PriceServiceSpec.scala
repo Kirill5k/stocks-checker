@@ -19,7 +19,7 @@ class PriceServiceSpec extends IOWordSpec {
   ) {
     def service: IO[PriceService[IO]] = PriceService.make(repo, latest, client, profiles, history)
     def cache(adjusted: PriceHistorySnapshot, quoted: PriceHistorySnapshot): Unit = {
-      when(history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, adjusted.requestedThrough.minusYears(13)))
+      when(history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, adjusted.requestedRange.through.minusYears(13)))
         .thenReturnIO(Some(adjusted))
       when(history.latest(AAPL, PriceAdjustment.Unadjusted)).thenReturnIO(Some(quoted))
       ()
@@ -50,8 +50,7 @@ class PriceServiceSpec extends IOWordSpec {
       "USD",
       adjustment,
       now,
-      through.minusYears(13),
-      through
+      DateRange(through.minusYears(13), through)
     )
   }
 
@@ -146,9 +145,12 @@ class PriceServiceSpec extends IOWordSpec {
       (for
         now <- IO.realTimeInstant
         full = snapshot(now, PriceAdjustment.SplitsAndDividends)
-        _    = d.cache(full.copy(requestedFrom = full.requestedThrough.minusDays(14)), snapshot(now, PriceAdjustment.Unadjusted))
-        _    = when(
-          d.client.getDailyPriceHistory(AAPL, DateRange(full.requestedFrom, full.requestedThrough), PriceAdjustment.SplitsAndDividends)
+        _    = d.cache(
+          full.copy(requestedRange = full.requestedRange.copy(from = full.requestedRange.through.minusDays(14))),
+          snapshot(now, PriceAdjustment.Unadjusted)
+        )
+        _ = when(
+          d.client.getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
         ).thenReturnIO(full)
         service <- d.service
         _       <- service.findPriceAnalytics(AAPL, fetch = true)
@@ -156,7 +158,7 @@ class PriceServiceSpec extends IOWordSpec {
         verify(d.history).save(full)
         verify(d.client).getDailyPriceHistory(
           AAPL,
-          DateRange(full.requestedFrom, full.requestedThrough),
+          full.requestedRange,
           PriceAdjustment.SplitsAndDividends
         )
         succeed
@@ -169,14 +171,18 @@ class PriceServiceSpec extends IOWordSpec {
         now <- IO.realTimeInstant
         full = snapshot(now, PriceAdjustment.SplitsAndDividends)
         _    = when(d.history.latest(any[Ticker], any[PriceAdjustment])).thenReturnIO(None)
-        _    = when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, full.requestedFrom)).thenReturnIO(None)
+        _    = when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, full.requestedRange.from)).thenReturnIO(None)
         _    = when(
-          d.client.getDailyPriceHistory(AAPL, DateRange(full.requestedFrom, full.requestedThrough), PriceAdjustment.SplitsAndDividends)
+          d.client.getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
         ).thenReturnIO(full)
         deferred = AppError.ProviderDeferred("TwelveData", now.plusSeconds(60), "quota")
         _        = when(
           d.client
-            .getDailyPriceHistory(AAPL, DateRange(full.requestedThrough.minusDays(14), full.requestedThrough), PriceAdjustment.Unadjusted)
+            .getDailyPriceHistory(
+              AAPL,
+              DateRange(full.requestedRange.through.minusDays(14), full.requestedRange.through),
+              PriceAdjustment.Unadjusted
+            )
         )
           .thenRaiseError(deferred)
         service <- d.service

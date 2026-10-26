@@ -1,7 +1,7 @@
 package stockschecker.clients
 
 import cats.effect.{IO, Ref}
-import stockschecker.domain.{PriceAdjustment, PriceHistorySnapshot, Ticker}
+import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.{DataQualityRepository, ProviderBudgetRepository, RepositorySpec, SecurityRepository}
@@ -21,8 +21,7 @@ class ProviderAvailabilitySpec extends RepositorySpec {
     "USD",
     PriceAdjustment.SplitsAndDividends,
     Instant.parse("2025-12-01T12:00:00Z"),
-    from,
-    through
+    DateRange(from, through)
   )
   private val limits = ProviderLimits(60000, 0, 1)
 
@@ -92,7 +91,7 @@ class ProviderAvailabilitySpec extends RepositorySpec {
           _       <- quality.record(AAPL, "TwelveData", "daily-prices-all", "available", now, None)
           _       <- quality.record(MSFT, "TwelveData", "daily-prices-all", "failed", now, Some("HTTP 503"))
           before  <- quality.all
-          first <- observed(access, AAPL)(
+          first   <- observed(access, AAPL)(
             IO.raiseError(AppError.ProviderDeferred("TwelveData", now.plusSeconds(300), "Retry-After"))
           ).attempt
           second <- observed(access, MSFT)(IO.raiseError(new AssertionError("Deferred request ran"))).attempt

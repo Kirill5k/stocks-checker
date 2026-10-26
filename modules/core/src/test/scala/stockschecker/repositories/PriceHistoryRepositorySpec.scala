@@ -22,8 +22,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
     "USD",
     PriceAdjustment.SplitsAndDividends,
     Instant.parse("2025-02-02T12:00:00Z"),
-    from,
-    through
+    DateRange(from, through)
   )
 
   "Price history repository" should {
@@ -44,7 +43,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
       }
     "bound retained vintages without evicting broader history needed by other screens" in
       withEmbeddedMongoDatabase { db =>
-        val broad   = original.copy(id = "broad", requestedFrom = from.minusYears(13))
+        val broad   = original.copy(id = "broad", requestedRange = DateRange(from.minusYears(13), through))
         val updates = (1 to 6).toList.map(i => original.copy(id = s"short-$i", fetchedAt = original.fetchedAt.plusSeconds(i.toLong)))
         val raw     = original.copy(id = "raw", adjustment = PriceAdjustment.Unadjusted)
         val split   = original.copy(id = "split", adjustment = PriceAdjustment.Splits)
@@ -72,7 +71,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
           covered mustBe Some(broad)
       }
 
-    "read legacy adjustment strings and preserve their BSON labels and date fields when saving enum snapshots" in
+    "round-trip adjustment labels and nested requested ranges in BSON" in
       withEmbeddedMongoDatabase { db =>
         val adjustments = List(
           PriceAdjustment.Unadjusted         -> "none",
@@ -82,7 +81,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
         for
           collection <- db.getCollection("price-observations")
           _          <- collection.insertMany(adjustments.map { case (_, label) =>
-            val id = s"legacy-$label"
+            val id = s"seeded-$label"
             Document(
               "_id"        := id,
               "ticker"     := ticker.value,
@@ -100,19 +99,18 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
                     "volume" := 1L
                   )
                 ),
-                "provider"         := "TwelveData",
-                "currency"         := "USD",
-                "adjustment"       := label,
-                "fetchedAt"        := original.fetchedAt.toString,
-                "requestedFrom"    := from.toString,
-                "requestedThrough" := through.toString
+                "provider"       := "TwelveData",
+                "currency"       := "USD",
+                "adjustment"     := label,
+                "fetchedAt"      := original.fetchedAt.toString,
+                "requestedRange" := Document("from" := from.toString, "through" := through.toString)
               )
             )
           })
           repo    <- PriceHistoryRepository.make[IO](db)
           results <- adjustments.traverse { case (adjustment, label) =>
-            val legacy = original.copy(id = s"legacy-$label", adjustment = adjustment)
-            val saved  = legacy.copy(id = s"enum-$label", fetchedAt = original.fetchedAt.plusSeconds(1))
+            val seeded = original.copy(id = s"seeded-$label", adjustment = adjustment)
+            val saved  = seeded.copy(id = s"enum-$label", fetchedAt = original.fetchedAt.plusSeconds(1))
             for
               existing <- repo.latest(ticker, adjustment)
               covering <- repo.latestCovering(ticker, adjustment, from)
@@ -121,17 +119,17 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
               raw      <- collection
                 .find(
                   Filter.idEq(saved.id) && Filter.eq("adjustment", label) && Filter.eq("data.adjustment", label) &&
-                    Filter.eq("data.requestedFrom", from.toString) && Filter.eq("data.requestedThrough", through.toString)
+                    Filter.eq("data.requestedRange.from", from.toString) && Filter.eq("data.requestedRange.through", through.toString)
                 )
                 .first
-            yield (legacy, saved, existing, covering, latest, raw.isDefined)
+            yield (seeded, saved, existing, covering, latest, raw.isDefined)
           }
         yield
-          results.foreach { case (legacy, saved, existing, covering, latest, preservedSchema) =>
-            existing mustBe Some(legacy)
-            covering mustBe Some(legacy)
+          results.foreach { case (seeded, saved, existing, covering, latest, matchesSchema) =>
+            existing mustBe Some(seeded)
+            covering mustBe Some(seeded)
             latest mustBe Some(saved)
-            preservedSchema mustBe true
+            matchesSchema mustBe true
           }
           succeed
       }

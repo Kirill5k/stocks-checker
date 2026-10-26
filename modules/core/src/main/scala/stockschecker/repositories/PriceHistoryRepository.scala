@@ -28,7 +28,7 @@ object PriceHistoryRepository extends MongoJsonCodecs {
     for
       collection <- db.getCollectionWithCodec[Record]("price-observations")
       _          <- collection.createIndex(Index.ascending(List("ticker", "adjustment", "data.fetchedAt")))
-      _          <- collection.createIndex(Index.ascending(List("ticker", "adjustment", "data.requestedFrom", "data.fetchedAt")))
+      _          <- collection.createIndex(Index.ascending(List("ticker", "adjustment", "data.requestedRange.from", "data.fetchedAt")))
     yield new LivePriceHistoryRepository[F](
       collection.withAddedCodec[Ticker].withAddedCodec[PriceAdjustment].withAddedCodec[PriceHistorySnapshot].withAddedCodec[SnapshotRef]
     )
@@ -67,7 +67,7 @@ object PriceHistoryRepository extends MongoJsonCodecs {
           .aggregate[SnapshotRef](
             Aggregate
               .matchBy(matching)
-              .sort(Sort.asc("data.requestedFrom").desc("data.fetchedAt"))
+              .sort(Sort.asc("data.requestedRange.from").desc("data.fetchedAt"))
               .limit(1)
               .project(reference)
           )
@@ -88,7 +88,7 @@ object PriceHistoryRepository extends MongoJsonCodecs {
 
     override def latestCovering(ticker: Ticker, adjustment: PriceAdjustment, from: LocalDate): F[Option[PriceHistorySnapshot]] =
       collection
-        .find(Filter.eq("ticker", ticker) && Filter.eq("adjustment", adjustment) && Filter.lte("data.requestedFrom", from.toString))
+        .find(Filter.eq("ticker", ticker) && Filter.eq("adjustment", adjustment) && Filter.lte("data.requestedRange.from", from.toString))
         .sort(Sort.desc("data.fetchedAt"))
         .first
         .map(_.map(_.data))

@@ -15,7 +15,7 @@ import sttp.client4.circe.asJson
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.LocalDate
-import java.util.HexFormat
+import java.util.{HexFormat, UUID}
 import scala.concurrent.duration.*
 
 trait TwelveDataClient[F[_]]:
@@ -103,15 +103,14 @@ final private class LiveTwelveDataClient[F[_]](
         AppError.FailedValidation("Price history identity/interval mismatch")
       )
     yield PriceHistorySnapshot(
-      java.util.UUID.randomUUID().toString,
+      UUID.randomUUID().toString,
       ticker,
       candles,
       "TwelveData",
       meta.currency,
       adjustment,
       now,
-      range.from,
-      range.through
+      range
     )
 
   private def providerAdjustment(adjustment: PriceAdjustment): String = adjustment match
