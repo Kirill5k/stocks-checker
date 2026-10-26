@@ -10,7 +10,17 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.actions.{Action, ActionDispatcher, ActionExecutor, CommandScheduler}
 import stockschecker.common.config.ActionExecutorConfig
-import stockschecker.domain.{CreateCommand, EvaluationCapturePlan, Job, JobCommand, JobPlan, Schedule, Ticker, UpdateCommand}
+import stockschecker.domain.{
+  CreateCommand,
+  EvaluationCapturePlan,
+  InvestmentScreenId,
+  Job,
+  JobCommand,
+  JobPlan,
+  Schedule,
+  Ticker,
+  UpdateCommand
+}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.services.{CommandService, CompanyProfileService, InvestmentScreenService, SecurityService, Services}
@@ -79,8 +89,8 @@ class JobRepositorySpec extends RepositorySpec {
             restartCount = Some(Job.MaxEvaluationRestarts)
           )
         )
-        _            <- evaluations.getOrCreateCapturePlan(EvaluationCapturePlan("screen", "2026-02", evaluationThrough, ts))
-        _            <- jobs.pruneCompleted(ts)
+        _ <- evaluations.getOrCreateCapturePlan(EvaluationCapturePlan(InvestmentScreenId("screen"), "2026-02", evaluationThrough, ts))
+        _ <- jobs.pruneCompleted(ts)
         protectedJob <- jobs.find("needed")
         plans        <- db.getCollection(InvestmentEvaluationRepository.PlanCollectionName)
         _            <- plans.deleteMany(Filter.empty)

@@ -8,7 +8,7 @@ import stockschecker.domain.errors.AppError
 import stockschecker.repositories.PriceHistoryRepository
 import java.time.{Instant, LocalDate, ZoneOffset}
 
-class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
+class EvaluationPriceHistorySpec extends IOWordSpec {
   private val ticker   = Ticker("AAA")
   private val from     = LocalDate.parse("2025-01-01")
   private val through  = LocalDate.parse("2025-02-01")
@@ -29,7 +29,7 @@ class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
       val repo   = mock[PriceHistoryRepository[IO]]
       val client = mock[MarketDataClient[IO]]
       when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(snapshot))
-      val history = ProviderEvaluationPriceHistory.make(client, repo, audited = true)
+      val history = EvaluationPriceHistory.make(client, repo, audited = true)
       history.cached(ticker, from, through).asserting { result =>
         result.get.snapshotIds mustBe List(snapshot.id)
         result.get.fetchedAt mustBe snapshot.fetchedAt
@@ -51,7 +51,7 @@ class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
         _          = when(client.getDailyPriceHistory(ticker, refreshed.requestedRange, PriceAdjustment.SplitsAndDividends)).thenReturnIO(
           refreshed
         )
-        history = ProviderEvaluationPriceHistory.make(client, repo, audited = true)
+        history = EvaluationPriceHistory.make(client, repo, audited = true)
         result <- history.history(ticker, from, through)
       yield (result, refreshed)).asserting { case (result, refreshed) =>
         result.snapshotIds mustBe List("refreshed")
@@ -75,7 +75,7 @@ class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
         shared  = snapshot.copy(fetchedAt = now, requestedRange = DateRange(today.minusYears(13), today))
         _       = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(shared))
         _       = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from.plusDays(10))).thenReturnIO(Some(shared))
-        history = ProviderEvaluationPriceHistory.make(client, repo, audited = true)
+        history = EvaluationPriceHistory.make(client, repo, audited = true)
         first  <- history.history(ticker, from, through)
         second <- history.history(ticker, from.plusDays(10), through)
       yield (first, second)).asserting { case (first, second) =>
@@ -92,7 +92,7 @@ class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
       val later   = through.plusMonths(1)
       val failure = AppError.HttpClient("TwelveData", 404, "unavailable")
       when(client.getDailyPriceHistory(any[Ticker], any[DateRange], any[PriceAdjustment])).thenRaiseError(failure)
-      val history = ProviderEvaluationPriceHistory.make(client, repo, audited = true)
+      val history = EvaluationPriceHistory.make(client, repo, audited = true)
       (for
         cache   <- history.cached(ticker, from, later)
         refresh <- history.history(ticker, from, later).attempt
@@ -108,7 +108,7 @@ class ProviderEvaluationPriceHistorySpec extends IOWordSpec {
       val repo   = mock[PriceHistoryRepository[IO]]
       val client = mock[MarketDataClient[IO]]
       when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(snapshot))
-      ProviderEvaluationPriceHistory.make(client, repo, audited = false).cached(ticker, from, through).asserting { result =>
+      EvaluationPriceHistory.make(client, repo, audited = false).cached(ticker, from, through).asserting { result =>
         result.get.audited mustBe false
         result.get.issues must contain("total-return provider contract has not been audited")
       }

@@ -22,7 +22,7 @@ final case class EvaluationPriceSeries(
 ) derives Codec.AsObject
 
 final case class EvaluationCapturePlan(
-    screenId: String,
+    screenId: InvestmentScreenId,
     month: String,
     through: LocalDate,
     createdAt: Instant
@@ -73,7 +73,7 @@ final case class HorizonEvaluation(
     issues: List[String]
 ) derives Codec.AsObject
 final case class InvestmentEvaluation(
-    screenId: String,
+    screenId: InvestmentScreenId,
     evaluatedAt: Instant,
     methodologyVersion: String,
     methodology: String,
@@ -100,7 +100,7 @@ object InvestmentEvaluator:
     else round(BigDecimal(math.pow(growth.toDouble, 1.0 / years) - 1) * 100)
 
   def evaluate(
-      screenId: String,
+      screenId: InvestmentScreenId,
       formedAt: Instant,
       evaluatedAt: Instant,
       cohorts: List[InvestmentCohort],

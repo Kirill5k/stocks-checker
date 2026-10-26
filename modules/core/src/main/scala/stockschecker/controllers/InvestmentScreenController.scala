@@ -33,10 +33,10 @@ object InvestmentScreenController extends TapirJsonCirce with SchemaDerivation:
   private val base                              = "investment-screens"
   private val createEndpoint                    =
     Controller.secureEndpoint.post.in(base).in(jsonBody[InvestmentScreenRequest]).out(jsonBody[InvestmentScreenResult])
-  private val getEndpoint  = Controller.secureEndpoint.get.in(base / path[String]("id")).out(jsonBody[InvestmentScreenResult])
+  private val getEndpoint  = Controller.secureEndpoint.get.in(base / path[InvestmentScreenId]("id")).out(jsonBody[InvestmentScreenResult])
   private val listEndpoint =
     Controller.secureEndpoint.get.in(base).in(query[Option[Int]]("limit")).out(jsonBody[List[InvestmentScreenSummary]])
   private val evaluationEndpoint =
-    Controller.secureEndpoint.get.in(base / path[String]("id") / "evaluation").out(jsonBody[InvestmentEvaluation])
+    Controller.secureEndpoint.get.in(base / path[InvestmentScreenId]("id") / "evaluation").out(jsonBody[InvestmentEvaluation])
   def make[F[_]: Async](service: InvestmentScreenService[F], config: ApiConfig): F[Controller[F]] =
     Async[F].pure(new InvestmentScreenController(service, config))

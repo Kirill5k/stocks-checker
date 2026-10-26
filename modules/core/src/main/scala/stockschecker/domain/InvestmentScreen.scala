@@ -33,7 +33,7 @@ final case class InvestmentRankingRun(
   * diagnostics; scorecards preserve the observations actually used by the recipe.
   */
 final case class InvestmentScreenRun(
-    id: String,
+    id: InvestmentScreenId,
     createdAt: Instant,
     recipe: InvestmentRecipe,
     request: InvestmentScreenRequest,
@@ -44,7 +44,7 @@ final case class InvestmentScreenRun(
 ) derives Codec.AsObject
 
 final case class InvestmentScreenSummary(
-    id: String,
+    id: InvestmentScreenId,
     createdAt: Instant,
     modelVersion: String,
     universeCount: Int,

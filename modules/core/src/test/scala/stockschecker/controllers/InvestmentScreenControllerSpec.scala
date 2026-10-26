@@ -28,8 +28,9 @@ class InvestmentScreenControllerSpec extends HttpRoutesWordSpec:
     "route evaluation requests to the saved cohort evaluation" in {
       val service    = mock[InvestmentScreenService[IO]]
       val now        = Instant.parse("2026-10-19T00:00:00Z")
-      val evaluation = InvestmentEvaluator.evaluate("screen-1", now, now, Nil, Map.empty)
-      when(service.evaluate("screen-1")).thenReturnIO(evaluation)
+      val id         = InvestmentScreenId("screen-1")
+      val evaluation = InvestmentEvaluator.evaluate(id, now, now, Nil, Map.empty)
+      when(service.evaluate(id)).thenReturnIO(evaluation)
       val result = for
         controller <- InvestmentScreenController.make(service, config)
         response   <- controller.routes.orNotFound.run(
@@ -37,7 +38,20 @@ class InvestmentScreenControllerSpec extends HttpRoutesWordSpec:
         )
       yield response
       result.mustHaveStatus(Status.Ok, Some(evaluation.asJson.noSpaces))
-      verify(service).evaluate("screen-1")
+      verify(service).evaluate(id)
+    }
+    "preserve monthly screen IDs in paths and JSON responses" in {
+      val service = mock[InvestmentScreenService[IO]]
+      val id      = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
+      val summary = InvestmentScreenSummary(id, Instant.parse("2026-10-19T00:00:00Z"), "v1", 0, 0, 0, Map.empty)
+      val screen  = InvestmentScreenResult(summary, InvestmentScreenRequest(), Nil, Nil, Nil, Nil, "ranking-1")
+      when(service.get(id)).thenReturnIO(screen)
+      val result = for
+        controller <- InvestmentScreenController.make(service, config)
+        response   <- controller.routes.orNotFound.run(Request[IO](uri = uri"/investment-screens" / id.value).withHeaders(authHeader))
+      yield response
+      result.mustHaveStatus(Status.Ok, Some(screen.asJson.noSpaces))
+      verify(service).get(id)
     }
     "apply a bounded default listing size through the service" in {
       val service = mock[InvestmentScreenService[IO]]

@@ -21,9 +21,9 @@ import java.util.UUID
 
 trait InvestmentScreenService[F[_]]:
   def create(request: InvestmentScreenRequest): F[InvestmentScreenResult]
-  def get(id: String): F[InvestmentScreenResult]
+  def get(id: InvestmentScreenId): F[InvestmentScreenResult]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
-  def evaluate(id: String): F[InvestmentEvaluation]
+  def evaluate(id: InvestmentScreenId): F[InvestmentEvaluation]
   def refreshResearch: F[Unit]
   def generateScheduledScreen: F[Option[InvestmentScreenSummary]]
   def captureMonthlyEvaluations: F[Int]
@@ -55,13 +55,17 @@ final private class LiveInvestmentScreenService[F[_]](
       Sync[F].raiseWhen(request.recipeVersion.exists(_ != recipe.version))(
         AppError.FailedValidation(s"Unknown recipeVersion; supported version: ${recipe.version}")
       )
-  private def load(id: String): F[InvestmentScreenRun] =
-    screens.find(id).flatMap(Sync[F].fromOption(_, AppError.EntityDoesNotExist("Investment screen", id)))
+  private def load(id: InvestmentScreenId): F[InvestmentScreenRun] =
+    screens.find(id).flatMap(Sync[F].fromOption(_, AppError.EntityDoesNotExist("Investment screen", id.value)))
 
-  private def loadHeader(id: String): F[InvestmentScreenRepository.Header] =
-    screens.header(id).flatMap(Sync[F].fromOption(_, AppError.EntityDoesNotExist("Investment screen", id)))
+  private def loadHeader(id: InvestmentScreenId): F[InvestmentScreenRepository.Header] =
+    screens.header(id).flatMap(Sync[F].fromOption(_, AppError.EntityDoesNotExist("Investment screen", id.value)))
 
-  private def saveScreen(id: String, request: InvestmentScreenRequest, ranking: InvestmentRankingRun): F[InvestmentScreenResult] =
+  private def saveScreen(
+      id: InvestmentScreenId,
+      request: InvestmentScreenRequest,
+      ranking: InvestmentRankingRun
+  ): F[InvestmentScreenResult] =
     for
       now <- Clock[F].now
       run = InvestmentScreenRun(
@@ -90,12 +94,12 @@ final private class LiveInvestmentScreenService[F[_]](
       _   <- Sync[F].raiseWhen(ranking.createdAt.isBefore(now.minusSeconds(2 * 86400)))(
         AppError.FailedValidation("The latest completed ranking is stale")
       )
-      id    <- Sync[F].delay(UUID.randomUUID().toString)
+      id    <- Sync[F].delay(InvestmentScreenId(UUID.randomUUID().toString))
       saved <- saveScreen(id, request, ranking)
     yield saved
 
-  override def get(id: String): F[InvestmentScreenResult]         = load(id).map(result)
-  override def list(limit: Int): F[List[InvestmentScreenSummary]] =
+  override def get(id: InvestmentScreenId): F[InvestmentScreenResult] = load(id).map(result)
+  override def list(limit: Int): F[List[InvestmentScreenSummary]]     =
     Sync[F].raiseWhen(limit < 1 || limit > 100)(AppError.FailedValidation("limit must be between 1 and 100")) >> screens.list(limit)
 
   override def refreshHistory(ticker: Ticker, from: LocalDate, through: LocalDate): F[Unit] =
@@ -177,7 +181,7 @@ final private class LiveInvestmentScreenService[F[_]](
         else evaluations.findCapturePlan(run._id, month).map(_.getOrElse(proposed))
       plan.flatMap(p => materializePlan(run, now, p, capture))
 
-  override def evaluate(id: String): F[InvestmentEvaluation] =
+  override def evaluate(id: InvestmentScreenId): F[InvestmentEvaluation] =
     for
       run      <- loadHeader(id)
       now      <- Clock[F].now
@@ -218,7 +222,7 @@ final private class LiveInvestmentScreenService[F[_]](
               _ <- rankings.save(run)
               _ <- rankings.prune(capturedAt.minusSeconds(30L * 86400))
             yield InvestmentRankingRepository.Header(id, capturedAt, recipe, InvestmentRankingRepository.summary(run))
-        monthlyId = s"monthly:${date.toString.take(7)}:${recipe.version}"
+        monthlyId = InvestmentScreenId(s"monthly:${date.toString.take(7)}:${recipe.version}")
         existing <- screens.header(monthlyId)
         created  <- existing match
           case Some(_)                                   => none[InvestmentScreenSummary].pure[F]

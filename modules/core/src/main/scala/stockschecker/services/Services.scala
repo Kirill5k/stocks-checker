@@ -40,7 +40,7 @@ object Services:
         repos.financialHistory,
         repos.investmentScreens,
         repos.investmentEvaluations,
-        ProviderEvaluationPriceHistory.make(clients.marketData, repos.priceHistory, investmentConfig.totalReturnAudited),
+        EvaluationPriceHistory.make(clients.marketData, repos.priceHistory, investmentConfig.totalReturnAudited),
         investmentConfig,
         InvestmentRecipe(
           maxSnapshotAgeDays = investmentConfig.snapshotFreshnessDays,

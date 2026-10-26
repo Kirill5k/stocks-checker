@@ -23,7 +23,7 @@ class InvestmentEvaluationSpec extends AnyWordSpec with Matchers:
   private val vti = series(InvestmentEvaluator.Benchmark, List(1, 100, 110, 120, 130))
   private def evaluate(cohort: List[Ticker], histories: Map[Ticker, EvaluationPriceSeries]): InvestmentEvaluation =
     InvestmentEvaluator.evaluate(
-      "run",
+      InvestmentScreenId("run"),
       formed,
       now,
       List(InvestmentCohort("investment", cohort)),
@@ -58,7 +58,8 @@ class InvestmentEvaluationSpec extends AnyWordSpec with Matchers:
       result.constituents mustBe List(tickerA, b)
     }
     "keep future horizons pending without inventing historical returns" in {
-      val report = InvestmentEvaluator.evaluate("new", now, now, List(InvestmentCohort("investment", List(tickerA))), Map.empty)
+      val report =
+        InvestmentEvaluator.evaluate(InvestmentScreenId("new"), now, now, List(InvestmentCohort("investment", List(tickerA))), Map.empty)
       report.horizons.map(_.status) mustBe List("pending", "pending")
       report.horizons.flatMap(_.cohorts).forall(_.totalReturnPercent.isEmpty) mustBe true
       report.horizons.head.cohorts.find(_.name == "investment").get.constituents mustBe List(tickerA)

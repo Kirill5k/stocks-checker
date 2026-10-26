@@ -19,15 +19,15 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
 
   private def memoryScreens(state: Ref[IO, List[InvestmentScreenRun]]): InvestmentScreenRepository[IO] =
     new InvestmentScreenRepository[IO]:
-      def save(run: InvestmentScreenRun): IO[Unit]                          = state.update(_ :+ run)
-      def find(id: String): IO[Option[InvestmentScreenRun]]                 = state.get.map(_.find(_.id == id))
-      def header(id: String): IO[Option[InvestmentScreenRepository.Header]] = find(id).map(
+      def save(run: InvestmentScreenRun): IO[Unit]                                      = state.update(_ :+ run)
+      def find(id: InvestmentScreenId): IO[Option[InvestmentScreenRun]]                 = state.get.map(_.find(_.id == id))
+      def header(id: InvestmentScreenId): IO[Option[InvestmentScreenRepository.Header]] = find(id).map(
         _.map(r =>
           InvestmentScreenRepository.Header(r.id, r.createdAt, r.rankingId, r.request, r.cohorts, InvestmentScreenRepository.summary(r))
         )
       )
       def list(limit: Int): IO[List[InvestmentScreenSummary]] = state.get.map(_.reverse.take(limit).map(InvestmentScreenRepository.summary))
-      def ids: IO[List[String]]                               = state.get.map(_.map(_.id))
+      def ids: IO[List[InvestmentScreenId]]                   = state.get.map(_.map(_.id))
 
   private def memoryRankings(state: Ref[IO, List[InvestmentRankingRun]]): InvestmentRankingRepository[IO] =
     new InvestmentRankingRepository[IO]:
@@ -71,11 +71,11 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       when(history.findLatestAll).thenReturnIO(Nil)
       when(rankings.save(any[InvestmentRankingRun])).thenReturnUnit
       when(rankings.prune(any[Instant])).thenReturnUnit
-      when(screens.header("monthly:2026-10:quality-fair-value-v1")).thenReturnNone
+      when(screens.header(InvestmentScreenId("monthly:2026-10:quality-fair-value-v1"))).thenReturnNone
       when(screens.ids).thenReturnIO(Nil)
       when(evaluations.capturePlans).thenReturnIO(Nil)
       when(evaluations.unsettled).thenReturnIO(Nil)
-      when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[String])
+      when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[InvestmentScreenId])
       val result = for
         service <- InvestmentScreenService.make(
           stocks,
@@ -192,9 +192,9 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
     "return pending evaluation for a new saved cohort without fetching nonexistent future returns" in {
       val prices      = mock[EvaluationPriceHistory[IO]]
       val evaluations = mock[InvestmentEvaluationRepository[IO]]
-      when(evaluations.findMonthly("today", "2026-10")).thenReturnNone
+      when(evaluations.findMonthly(InvestmentScreenId("today"), "2026-10")).thenReturnNone
       val run = InvestmentScreenRun(
-        "today",
+        InvestmentScreenId("today"),
         now,
         InvestmentRecipe(),
         InvestmentScreenRequest(),
@@ -228,7 +228,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         InvestmentScorecard(MSFT, true, Some(60), Map.empty, Map.empty, Nil, Nil, Some("peer"), 20, None, "v1")
       )
       val run = InvestmentScreenRun(
-        "saved",
+        InvestmentScreenId("saved"),
         now,
         InvestmentRecipe(),
         InvestmentScreenRequest(minScore = Some(70)),
@@ -306,7 +306,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         concentration.maxPositionWeightPercent mustBe BigDecimal(5)
         concentration.positionHerfindahl mustBe BigDecimal("0.05")
         concentration.industryWeightsPercent.values.sum mustBe BigDecimal(100)
-        first.map(_.id) mustBe Some("monthly:2026-10:quality-fair-value-v1")
+        first.map(_.id) mustBe Some(InvestmentScreenId("monthly:2026-10:quality-fair-value-v1"))
         second mustBe None
         saved.size mustBe 2
         saved.forall(_.rankingId == rank.id) mustBe true
@@ -338,7 +338,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       )
       val inputs = cards.map(c => InvestmentCandidate(AAPLStock.copy(security = AAPLStock.security.copy(ticker = c.ticker)), None))
       val run    = InvestmentScreenRun(
-        "criteria",
+        InvestmentScreenId("criteria"),
         now,
         InvestmentRecipe(),
         InvestmentScreenRequest(minScore = Some(70), minQuality = Some(70)),
@@ -403,7 +403,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val from      = LocalDate.parse("2026-09-01")
       val through   = LocalDate.parse("2026-09-30")
       val run       = InvestmentScreenRun(
-        "retryable",
+        InvestmentScreenId("retryable"),
         createdAt,
         InvestmentRecipe(),
         InvestmentScreenRequest(),
@@ -417,7 +417,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val plan        = EvaluationCapturePlan(run.id, "2026-10", through, now)
       when(evaluations.capturePlans).thenReturnIO(List(plan))
       when(evaluations.unsettled).thenReturnIO(Nil)
-      when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[String])
+      when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[InvestmentScreenId])
       when(evaluations.getOrCreateCapturePlan(any[EvaluationCapturePlan])).thenReturnIO(plan)
       when(evaluations.findCapturePlan(run.id, "2026-10")).thenReturnSome(plan)
       when(evaluations.findMonthly(run.id, "2026-10")).thenReturnNone
@@ -456,7 +456,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val from      = LocalDate.parse("2026-08-01")
       val through   = LocalDate.parse("2026-09-01")
       val run       = InvestmentScreenRun(
-        "recover",
+        InvestmentScreenId("recover"),
         createdAt,
         InvestmentRecipe(),
         InvestmentScreenRequest(),
@@ -487,7 +487,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       when(evaluations.capturePlans).thenReturnIO(Nil)
       when(evaluations.getOrCreateCapturePlan(any[EvaluationCapturePlan])).thenReturnIO(oldPlan)
       when(evaluations.unsettled).thenReturnIO(List(incomplete))
-      when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[String])
+      when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[InvestmentScreenId])
       when(evaluations.findMonthly(run.id, "2026-09")).thenReturnSome(incomplete)
       when(evaluations.saveMonthly(any[InvestmentEvaluation])).thenReturnUnit
       when(prices.cached(AAPL, from, through)).thenReturnSome(series)
@@ -516,7 +516,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         captor.getValue.dataThrough mustBe Some(through)
         InvestmentEvaluationRepository.complete(captor.getValue) mustBe true
         saved mustBe 1
-        verify(screens, never).find(any[String])
+        verify(screens, never).find(any[InvestmentScreenId])
         verifyNoInteractions(jobs)
         succeed
       }
@@ -525,7 +525,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val through = LocalDate.parse("2026-09-30")
       val screens = List("2026-08-01", "2026-09-01").zipWithIndex.map { case (day, i) =>
         InvestmentScreenRun(
-          s"screen-$i",
+          InvestmentScreenId(s"screen-$i"),
           Instant.parse(s"${day}T00:00:00Z"),
           InvestmentRecipe(),
           InvestmentScreenRequest(),
@@ -537,10 +537,10 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val evaluations = mock[InvestmentEvaluationRepository[IO]]
       val prices      = mock[EvaluationPriceHistory[IO]]
       val jobs        = mock[JobRepository[IO]]
-      when(evaluations.findMonthly(any[String], any[String])).thenReturnNone
+      when(evaluations.findMonthly(any[InvestmentScreenId], any[String])).thenReturnNone
       when(evaluations.capturePlans).thenReturnIO(Nil)
       when(evaluations.unsettled).thenReturnIO(Nil)
-      when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[String])
+      when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[InvestmentScreenId])
       when(evaluations.getOrCreateCapturePlan(any[EvaluationCapturePlan])).thenAnswer(invocation =>
         IO.pure(invocation.getArgument[EvaluationCapturePlan](0))
       )
@@ -576,7 +576,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
     "read evaluations without creating plans, jobs or reports" in {
       val createdAt = Instant.parse("2026-09-01T00:00:00Z")
       val run       = InvestmentScreenRun(
-        "read-only",
+        InvestmentScreenId("read-only"),
         createdAt,
         InvestmentRecipe(),
         InvestmentScreenRequest(),
@@ -622,7 +622,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         val from      = LocalDate.parse("2026-09-01")
         val through   = LocalDate.parse("2026-09-30")
         val run       = InvestmentScreenRun(
-          s"settled-$exhausted",
+          InvestmentScreenId(s"settled-$exhausted"),
           createdAt,
           InvestmentRecipe(),
           InvestmentScreenRequest(),
@@ -636,7 +636,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         val jobs        = mock[JobRepository[IO]]
         when(evaluations.capturePlans).thenReturnIO(Nil)
         when(evaluations.unsettled).thenReturnIO(Nil)
-        when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[String])
+        when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[InvestmentScreenId])
         when(evaluations.getOrCreateCapturePlan(any[EvaluationCapturePlan])).thenReturnIO(plan)
         if exhausted then {
           when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenReturnNone
@@ -697,7 +697,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val createdAt = Instant.parse("2020-01-01T00:00:00Z")
       val through   = LocalDate.parse("2025-01-15")
       val run       = InvestmentScreenRun(
-        "finished",
+        InvestmentScreenId("finished"),
         createdAt,
         InvestmentRecipe(),
         InvestmentScreenRequest(),
@@ -744,7 +744,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val ranking  = InvestmentRankingRepository.Header("published", now, InvestmentRecipe(), InvestmentRankingSummary(100, 25, Map.empty))
       val rankings = mock[InvestmentRankingRepository[IO]]
       val screens  = mock[InvestmentScreenRepository[IO]]
-      val id       = "monthly:2026-10:quality-fair-value-v1"
+      val id       = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
       val header   = InvestmentScreenRepository.Header(
         id,
         now,
@@ -772,7 +772,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         created mustBe None
         verify(rankings, never).latest
         verify(rankings, never).find(any[String])
-        verify(screens, never).find(any[String])
+        verify(screens, never).find(any[InvestmentScreenId])
         succeed
       }
     }
@@ -812,7 +812,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         evidence = Some(evidence)
       )
       val run = InvestmentScreenRun(
-        "intrinsic",
+        InvestmentScreenId("intrinsic"),
         now,
         InvestmentRecipe(),
         InvestmentScreenRequest(),

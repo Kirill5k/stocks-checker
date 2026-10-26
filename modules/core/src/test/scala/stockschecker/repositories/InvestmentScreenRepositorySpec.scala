@@ -1,6 +1,9 @@
 package stockschecker.repositories
 
 import cats.effect.IO
+import cats.syntax.all.*
+import mongo4cats.bson.Document
+import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.*
@@ -24,7 +27,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
     "fundamental-v1"
   )
   private val run = InvestmentScreenRun(
-    "immutable-run",
+    InvestmentScreenId("immutable-run"),
     now,
     InvestmentRecipe(),
     InvestmentScreenRequest(),
@@ -45,16 +48,53 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           overwrite <- repo.save(run.copy(scorecards = List(card.copy(score = Some(BigDecimal(99)))))).attempt
           saved     <- repo.find(run.id)
           listed    <- repo.list(20)
+          raw       <- db.getCollection(InvestmentScreenRepository.CollectionName)
+          stored    <- raw.find(Filter.idEq(run.id.value) && Filter.eq("summary.id", run.id.value)).first
         yield
           overwrite.isLeft mustBe true
           saved mustBe Some(run)
           listed.map(_.id) mustBe List(run.id)
+          stored must not be empty
+      }
+    "read existing UUID and monthly screen IDs stored as BSON strings" in
+      withEmbeddedMongoDatabase { db =>
+        val ids = List("e7ce580d-1cdf-4219-9d34-1a25437f05b1", "monthly:2026-10:quality-fair-value-v1").map(InvestmentScreenId(_))
+        for
+          repo  <- InvestmentScreenRepository.make[IO](db)
+          ranks <- InvestmentRankingRepository.make[IO](db)
+          _     <- ranks.save(InvestmentRankingRun(run.rankingId, now, run.recipe, run.inputs, run.scorecards))
+          raw   <- db.getCollection(InvestmentScreenRepository.CollectionName)
+          _     <- raw.insertMany(ids.map { id =>
+            Document(
+              "_id"       := id.value,
+              "createdAt" := now,
+              "rankingId" := run.rankingId,
+              "request"   := Document(),
+              "cohorts"   := List(Document("name" := "investment", "tickers" := List(AAPL.value))),
+              "summary"   := Document(
+                "id"               := id.value,
+                "createdAt"        := now.toString,
+                "modelVersion"     := run.recipe.version,
+                "universeCount"    := 1,
+                "eligibleCount"    := 1,
+                "selectedCount"    := 1,
+                "excludedByReason" := Document()
+              )
+            )
+          })
+          saved  <- ids.traverse(repo.find)
+          allIds <- repo.ids
+          listed <- repo.list(20)
+        yield
+          saved mustBe ids.map(id => Some(run.copy(id = id)))
+          allIds.toSet mustBe ids.toSet
+          listed.map(_.id).toSet mustBe ids.toSet
       }
     "not expose an input batch without its completed screen header" in
       withEmbeddedMongoDatabase { db =>
         for
           repo   <- InvestmentScreenRepository.make[IO](db)
-          saved  <- repo.find("unfinished")
+          saved  <- repo.find(InvestmentScreenId("unfinished"))
           listed <- repo.list(20)
         yield
           saved mustBe None
@@ -89,10 +129,18 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           overwrite <- repo.saveMonthly(evaluation.copy(methodology = "changed")).attempt
           saved     <- repo.findMonthly(run.id, "2026-10")
           plan      <- repo.findCapturePlan(run.id, "2026-10")
+          raw       <- db.getCollection(InvestmentEvaluationRepository.CollectionName)
+          stored    <- raw
+            .find(
+              Filter.idEq(s"${run.id.value}:2026-10") && Filter.eq("screenId", run.id.value) &&
+                Filter.eq("evaluation.screenId", run.id.value)
+            )
+            .first
         yield
           overwrite.isRight mustBe true
           saved mustBe Some(evaluation)
           plan mustBe None
+          stored must not be empty
       }
     "mark completed legacy captures so subsequent retries exclude them and retire their plans" in
       withEmbeddedMongoDatabase { db =>
@@ -117,13 +165,13 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           Some(through)
         )
         for
-          repo      <- InvestmentEvaluationRepository.make[IO](db)
-          _         <- repo.saveMonthly(evaluation)
-          entries   <- db.getCollectionWithCodec[InvestmentEvaluationRepository.Entry](InvestmentEvaluationRepository.CollectionName)
-          _         <- entries.updateOne(Filter.idEq(s"${run.id}:2026-10"), Update.unset("complete").unset("settled").unset("finished"))
-          _         <- repo.getOrCreateCapturePlan(EvaluationCapturePlan(run.id, "2026-10", through, now))
-          pending   <- repo.unsettled
-          migrated  <- entries.find(Filter.idEq(s"${run.id}:2026-10")).first
+          repo    <- InvestmentEvaluationRepository.make[IO](db)
+          _       <- repo.saveMonthly(evaluation)
+          entries <- db.getCollectionWithCodec[InvestmentEvaluationRepository.Entry](InvestmentEvaluationRepository.CollectionName)
+          _       <- entries.updateOne(Filter.idEq(s"${run.id.value}:2026-10"), Update.unset("complete").unset("settled").unset("finished"))
+          _       <- repo.getOrCreateCapturePlan(EvaluationCapturePlan(run.id, "2026-10", through, now))
+          pending <- repo.unsettled
+          migrated  <- entries.find(Filter.idEq(s"${run.id.value}:2026-10")).first
           remaining <- entries.find(Filter.ne("settled", true)).all
           plan      <- repo.findCapturePlan(run.id, "2026-10")
         yield
@@ -320,9 +368,12 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           first  <- repo.getOrCreateCapturePlan(original)
           later  <- repo.getOrCreateCapturePlan(original.copy(through = LocalDate.parse("2026-10-25")))
           stored <- repo.findCapturePlan(run.id, "2026-10")
+          raw    <- db.getCollection(InvestmentEvaluationRepository.PlanCollectionName)
+          plan   <- raw.find(Filter.idEq(s"${run.id.value}:2026-10") && Filter.eq("plan.screenId", run.id.value)).first
         yield
           first mustBe original
           later mustBe original
           stored mustBe Some(original)
+          plan must not be empty
       }
   }

@@ -14,15 +14,15 @@ import java.time.Instant
 
 trait InvestmentScreenRepository[F[_]]:
   def save(run: InvestmentScreenRun): F[Unit]
-  def find(id: String): F[Option[InvestmentScreenRun]]
-  def header(id: String): F[Option[InvestmentScreenRepository.Header]]
+  def find(id: InvestmentScreenId): F[Option[InvestmentScreenRun]]
+  def header(id: InvestmentScreenId): F[Option[InvestmentScreenRepository.Header]]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
-  def ids: F[List[String]]
+  def ids: F[List[InvestmentScreenId]]
 
 object InvestmentScreenRepository extends MongoJsonCodecs:
   val CollectionName = "investment-screens"
   final case class Header(
-      _id: String,
+      _id: InvestmentScreenId,
       createdAt: Instant,
       rankingId: String,
       request: InvestmentScreenRequest,
@@ -52,8 +52,8 @@ object InvestmentScreenRepository extends MongoJsonCodecs:
           MonadThrow[F].raiseWhen(ranking.isEmpty)(new IllegalArgumentException("Completed immutable ranking is required")) >>
             headers.insertOne(Header(run.id, run.createdAt, run.rankingId, run.request, run.cohorts, summary(run))).void
         }
-      def header(id: String): F[Option[Header]]            = headers.find(Filter.idEq(id)).first
-      def find(id: String): F[Option[InvestmentScreenRun]] =
+      def header(id: InvestmentScreenId): F[Option[Header]]            = headers.find(Filter.idEq(id.value)).first
+      def find(id: InvestmentScreenId): F[Option[InvestmentScreenRun]] =
         header(id).flatMap {
           case None    => none[InvestmentScreenRun].pure[F]
           case Some(h) =>
@@ -63,7 +63,7 @@ object InvestmentScreenRepository extends MongoJsonCodecs:
         }
       def list(limit: Int): F[List[InvestmentScreenSummary]] =
         headers.find.sort(Sort.desc("createdAt")).limit(limit).all.map(_.map(_.summary).toList)
-      def ids: F[List[String]] = headers.find.sort(Sort.asc("createdAt")).all.map(_.map(_._id).toList)
+      def ids: F[List[InvestmentScreenId]] = headers.find.sort(Sort.asc("createdAt")).all.map(_.map(_._id).toList)
 
 trait InvestmentRankingRepository[F[_]]:
   def save(run: InvestmentRankingRun): F[Unit]
@@ -200,28 +200,28 @@ object InvestmentRankingRepository extends MongoJsonCodecs:
 
 trait InvestmentEvaluationRepository[F[_]]:
   def saveMonthly(evaluation: InvestmentEvaluation): F[Unit]
-  def findMonthly(screenId: String, month: String): F[Option[InvestmentEvaluation]]
-  def findCapturePlan(screenId: String, month: String): F[Option[EvaluationCapturePlan]]
+  def findMonthly(screenId: InvestmentScreenId, month: String): F[Option[InvestmentEvaluation]]
+  def findCapturePlan(screenId: InvestmentScreenId, month: String): F[Option[EvaluationCapturePlan]]
   def getOrCreateCapturePlan(plan: EvaluationCapturePlan): F[EvaluationCapturePlan]
-  def retireCapturePlan(screenId: String, month: String): F[Unit]
+  def retireCapturePlan(screenId: InvestmentScreenId, month: String): F[Unit]
   def capturePlans: F[List[EvaluationCapturePlan]]
   def unsettled: F[List[InvestmentEvaluation]]
-  def finishedScreenIds: F[Set[String]]
-  def findFinished(screenId: String): F[Option[InvestmentEvaluation]]
+  def finishedScreenIds: F[Set[InvestmentScreenId]]
+  def findFinished(screenId: InvestmentScreenId): F[Option[InvestmentEvaluation]]
 
 object InvestmentEvaluationRepository extends MongoJsonCodecs:
   val CollectionName     = "investment-evaluations"
   val PlanCollectionName = "investment-evaluation-plans"
   final case class Entry(
       _id: String,
-      screenId: String,
+      screenId: InvestmentScreenId,
       month: String,
       evaluation: InvestmentEvaluation,
       complete: Option[Boolean] = None,
       settled: Option[Boolean] = None,
       finished: Option[Boolean] = None
   ) derives Codec.AsObject
-  final private case class ScreenReference(screenId: String) derives Codec.AsObject
+  final private case class ScreenReference(screenId: InvestmentScreenId) derives Codec.AsObject
   final case class PlanEntry(_id: String, plan: EvaluationCapturePlan) derives Codec.AsObject
   def complete(evaluation: InvestmentEvaluation): Boolean =
     evaluation.pendingDataJobs.isEmpty && evaluation.dataThrough.nonEmpty && evaluation.horizons.nonEmpty &&
@@ -251,7 +251,7 @@ object InvestmentEvaluationRepository extends MongoJsonCodecs:
     yield new InvestmentEvaluationRepository[F]:
       def saveMonthly(evaluation: InvestmentEvaluation): F[Unit] =
         val month   = evaluation.captureMonth.getOrElse(evaluation.evaluatedAt.toString.take(7))
-        val id      = s"${evaluation.screenId}:$month"
+        val id      = s"${evaluation.screenId.value}:$month"
         val persist = collection.find(Filter.idEq(id)).first.flatMap {
           case Some(entry) if settled(entry.evaluation) => ().pure[F]
           case _                                        =>
@@ -260,7 +260,7 @@ object InvestmentEvaluationRepository extends MongoJsonCodecs:
               .updateOne(
                 Filter.idEq(id) && Filter.ne("settled", true),
                 Update
-                  .set("screenId", evaluation.screenId)
+                  .set("screenId", evaluation.screenId.value)
                   .set("month", month)
                   .set("evaluation", evaluation)
                   .set("complete", complete(evaluation))
@@ -279,23 +279,23 @@ object InvestmentEvaluationRepository extends MongoJsonCodecs:
               }
         }
         persist >> (if settled(evaluation) then retireCapturePlan(evaluation.screenId, month) else ().pure[F])
-      def findMonthly(screenId: String, month: String): F[Option[InvestmentEvaluation]] =
-        collection.find(Filter.idEq(s"$screenId:$month")).first.map(_.map(_.evaluation))
-      def retireCapturePlan(screenId: String, month: String): F[Unit] =
-        plans.deleteOne(Filter.idEq(s"$screenId:$month")).void
-      def finishedScreenIds: F[Set[String]] =
+      def findMonthly(screenId: InvestmentScreenId, month: String): F[Option[InvestmentEvaluation]] =
+        collection.find(Filter.idEq(s"${screenId.value}:$month")).first.map(_.map(_.evaluation))
+      def retireCapturePlan(screenId: InvestmentScreenId, month: String): F[Unit] =
+        plans.deleteOne(Filter.idEq(s"${screenId.value}:$month")).void
+      def finishedScreenIds: F[Set[InvestmentScreenId]] =
         collection
           .aggregate[ScreenReference](Aggregate.matchBy(Filter.eq("finished", true)).project(Projection.include("screenId")))
           .all
           .map(_.map(_.screenId).toSet)
-      def findFinished(screenId: String): F[Option[InvestmentEvaluation]] =
+      def findFinished(screenId: InvestmentScreenId): F[Option[InvestmentEvaluation]] =
         collection
-          .find(Filter.eq("screenId", screenId) && Filter.eq("finished", true))
+          .find(Filter.eq("screenId", screenId.value) && Filter.eq("finished", true))
           .sort(Sort.desc("month"))
           .first
           .map(_.map(_.evaluation))
-      def findCapturePlan(screenId: String, month: String): F[Option[EvaluationCapturePlan]] =
-        plans.find(Filter.idEq(s"$screenId:$month")).first.map(_.map(_.plan))
+      def findCapturePlan(screenId: InvestmentScreenId, month: String): F[Option[EvaluationCapturePlan]] =
+        plans.find(Filter.idEq(s"${screenId.value}:$month")).first.map(_.map(_.plan))
       def capturePlans: F[List[EvaluationCapturePlan]] = plans.find.all.map(_.toList.map(_.plan))
       def unsettled: F[List[InvestmentEvaluation]]     =
         collection.find(Filter.ne("settled", true)).all.flatMap { entries =>
@@ -316,7 +316,7 @@ object InvestmentEvaluationRepository extends MongoJsonCodecs:
         plans
           .withAddedCodec[EvaluationCapturePlan]
           .findOneAndUpdate(
-            Filter.idEq(s"${plan.screenId}:${plan.month}"),
+            Filter.idEq(s"${plan.screenId.value}:${plan.month}"),
             Update.setOnInsert("plan", plan),
             FindOneAndUpdateOptions(upsert = true, returnDocument = ReturnDocument.AFTER)
           )
