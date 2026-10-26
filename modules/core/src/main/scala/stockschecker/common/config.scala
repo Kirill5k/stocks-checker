@@ -59,9 +59,6 @@ object config {
   ) derives ConfigReader
 
   final case class InvestmentConfig(
-      enabled: Boolean,
-      coverageAudited: Boolean,
-      totalReturnAudited: Boolean,
       priceFreshnessDays: Int,
       snapshotFreshnessDays: Int,
       quarterlyFreshnessDays: Int,

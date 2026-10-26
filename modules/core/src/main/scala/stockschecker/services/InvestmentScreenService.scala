@@ -4,19 +4,9 @@ import cats.effect.Sync
 import cats.syntax.all.*
 import kirill5k.common.cats.Clock
 import stockschecker.domain.*
-import stockschecker.common.config.InvestmentConfig
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{
-  FinancialHistoryRepository,
-  InvestmentEvaluationRepository,
-  InvestmentRankingRepository,
-  InvestmentScreenRepository,
-  JobRepository,
-  StockRepository
-}
-import java.time.{Instant, LocalDate, ZoneOffset}
-import java.nio.charset.StandardCharsets
-import stockschecker.actions.Action
+import stockschecker.repositories.InvestmentScreenRepository
+import java.time.{LocalDate, ZoneOffset}
 import java.util.UUID
 
 trait InvestmentScreenService[F[_]]:
@@ -30,23 +20,14 @@ trait InvestmentScreenService[F[_]]:
   def refreshHistory(ticker: Ticker, from: LocalDate, through: LocalDate): F[Unit]
 
 final private class LiveInvestmentScreenService[F[_]](
-    private val stockRepository: StockRepository[F],
-    private val financialHistory: FinancialHistoryRepository[F],
     private val screens: InvestmentScreenRepository[F],
-    private val evaluations: InvestmentEvaluationRepository[F],
-    private val priceHistory: EvaluationPriceHistory[F],
-    private val settings: InvestmentConfig,
-    private val recipe: InvestmentRecipe,
-    private val rankings: InvestmentRankingRepository[F],
-    private val jobs: JobRepository[F]
+    private val rankings: InvestmentRankingService[F],
+    private val evaluations: InvestmentEvaluationService[F],
+    private val recipe: InvestmentRecipe
 )(using
     F: Sync[F],
     C: Clock[F]
 ) extends InvestmentScreenService[F] {
-  private val enabled                 = settings.enabled && settings.coverageAudited
-  private def requireEnabled: F[Unit] = Sync[F].raiseUnless(enabled)(
-    AppError.FailedValidation("Investment ranking is disabled until the feature is enabled and provider coverage is audited")
-  )
   private def validate(request: InvestmentScreenRequest): F[Unit] =
     val thresholds = List(request.minScore, request.minQuality, request.minValue, request.minGrowth, request.minResilience).flatten
     Sync[F].raiseWhen(request.limit.exists(n => n < 1 || n > 100) || thresholds.exists(n => n < 0 || n > 100))(
@@ -57,9 +38,6 @@ final private class LiveInvestmentScreenService[F[_]](
       )
   private def load(id: InvestmentScreenId): F[InvestmentScreenRun] =
     screens.find(id).flatMap(Sync[F].fromOption(_, AppError.EntityDoesNotExist("Investment screen", id.value)))
-
-  private def loadHeader(id: InvestmentScreenId): F[InvestmentScreenRepository.Header] =
-    screens.header(id).flatMap(Sync[F].fromOption(_, AppError.EntityDoesNotExist("Investment screen", id.value)))
 
   private def saveScreen(
       id: InvestmentScreenId,
@@ -83,196 +61,41 @@ final private class LiveInvestmentScreenService[F[_]](
 
   override def create(request: InvestmentScreenRequest): F[InvestmentScreenResult] =
     for
-      _         <- requireEnabled
-      _         <- validate(request)
-      published <- rankings.latest
-      ranking   <- Sync[F].fromOption(
-        published.filter(_.recipe.version == recipe.version),
-        AppError.FailedValidation("No completed ranking for this recipe is available; wait for the scheduled ranking run")
-      )
-      now <- Clock[F].now
-      _   <- Sync[F].raiseWhen(ranking.createdAt.isBefore(now.minusSeconds(2 * 86400)))(
-        AppError.FailedValidation("The latest completed ranking is stale")
-      )
-      id    <- Sync[F].delay(InvestmentScreenId(UUID.randomUUID().toString))
-      saved <- saveScreen(id, request, ranking)
+      _       <- validate(request)
+      ranking <- rankings.latest
+      id      <- Sync[F].delay(InvestmentScreenId(UUID.randomUUID().toString))
+      saved   <- saveScreen(id, request, ranking)
     yield saved
 
   override def get(id: InvestmentScreenId): F[InvestmentScreenResult] = load(id).map(result)
   override def list(limit: Int): F[List[InvestmentScreenSummary]]     =
     Sync[F].raiseWhen(limit < 1 || limit > 100)(AppError.FailedValidation("limit must be between 1 and 100")) >> screens.list(limit)
 
+  override def evaluate(id: InvestmentScreenId): F[InvestmentEvaluation] = evaluations.evaluate(id)
+
   override def refreshHistory(ticker: Ticker, from: LocalDate, through: LocalDate): F[Unit] =
-    priceHistory.history(ticker, from, through).void
+    evaluations.refreshHistory(ticker, from, through)
 
-  private def priceJobId(ticker: Ticker, through: LocalDate): String =
-    val key = s"evaluation:${ticker.value}:${through.minusYears(13)}:$through"
-    UUID.nameUUIDFromBytes(key.getBytes(StandardCharsets.UTF_8)).toString
-
-  private def pendingPriceJob(ticker: Ticker, through: LocalDate): F[Option[String]] =
-    val id = priceJobId(ticker, through)
-    jobs.find(id).map(_.filterNot(_.isTerminal).map(_ => id))
-
-  private def ensurePriceJob(ticker: Ticker, through: LocalDate, now: Instant): F[Option[String]] =
-    // All screens share a ticker/cutoff job and its bounded repair budget.
-    val id = priceJobId(ticker, through)
-    jobs.find(id).flatMap {
-      case Some(job) if job.isTerminal =>
-        jobs.retryTerminal(id, now).flatMap {
-          case true  => Some(id).pure[F]
-          case false => pendingPriceJob(ticker, through)
-        }
-      case Some(_) => Some(id).pure[F]
-      case None    => jobs.enqueue(Job(id, Action.RefreshEvaluationPrices(ticker, through.minusYears(13), through), now, now)).as(Some(id))
-    }
-
-  private def materializePlan(
-      run: InvestmentScreenRepository.Header,
-      now: Instant,
-      plan: EvaluationCapturePlan,
-      capture: Boolean
-  ): F[InvestmentEvaluation] =
-    val from    = run.createdAt.atZone(ZoneOffset.UTC).toLocalDate
-    val tickers = (InvestmentEvaluator.Benchmark :: run.cohorts.flatMap(_.tickers)).distinct
-    for
-      gathered <- tickers.traverse(ticker => priceHistory.cached(ticker, from, plan.through).map(ticker -> _))
-      histories = gathered.collect { case (ticker, Some(series)) => ticker -> series }.toMap
-      report    = InvestmentEvaluator.evaluate(run._id, run.createdAt, now, run.cohorts, histories, Some(plan.through))
-      absent    = gathered.collect { case (ticker, None) => ticker }
-      // Retry gaps in an otherwise audited vintage too: a successful request can still omit a session.
-      missing         = report.horizons.flatMap(_.cohorts.flatMap(_.missing)).filter(ticker => histories.get(ticker).exists(_.audited))
-      missingCalendar = Option
-        .when(
-          report.horizons.exists(h => h.entryDate.isEmpty || (h.status == "incomplete" && h.exitDate.isEmpty)) &&
-            histories.get(InvestmentEvaluator.Benchmark).exists(_.audited)
-        )(InvestmentEvaluator.Benchmark)
-        .toList
-      needed = (absent ++ missing ++ missingCalendar).distinct
-      attempts <- needed.traverse { ticker =>
-        (if capture then ensurePriceJob(ticker, plan.through, now) else pendingPriceJob(ticker, plan.through)).map(ticker -> _)
-      }
-      pending   = attempts.flatMap(_._2)
-      exhausted = if capture then attempts.collect { case (ticker, None) => ticker.value } else Nil
-      issues    = Option.when(exhausted.nonEmpty)(s"Price-history repair attempts exhausted for: ${exhausted.mkString(", ")}").toList
-    yield report.copy(
-      pendingDataJobs = pending,
-      captureMonth = Some(plan.month),
-      settled = Some(capture && pending.isEmpty),
-      horizons = report.horizons.map(h => h.copy(issues = h.issues ++ issues))
-    )
-
-  private def cachedEvaluation(
-      run: InvestmentScreenRepository.Header,
-      now: Instant,
-      saved: Option[InvestmentEvaluation],
-      capture: Boolean
-  ): F[InvestmentEvaluation] =
-    val from = run.createdAt.atZone(ZoneOffset.UTC).toLocalDate
-    // Capture completed calendar months so different screen dates share the same provider requests.
-    val monthEnd = now.atZone(ZoneOffset.UTC).toLocalDate.withDayOfMonth(1).minusDays(1)
-    val through  = saved.flatMap(_.dataThrough).getOrElse(List(monthEnd, InvestmentEvaluator.finalCaptureThrough(from)).min)
-    val month    = saved.flatMap(_.captureMonth).getOrElse(now.toString.take(7))
-    if !through.isAfter(from) then
-      InvestmentEvaluator.evaluate(run._id, run.createdAt, now, run.cohorts, Map.empty).copy(settled = Some(false)).pure[F]
-    else
-      val proposed = EvaluationCapturePlan(run._id, month, through, now)
-      val plan     =
-        if capture then evaluations.getOrCreateCapturePlan(proposed)
-        else evaluations.findCapturePlan(run._id, month).map(_.getOrElse(proposed))
-      plan.flatMap(p => materializePlan(run, now, p, capture))
-
-  override def evaluate(id: InvestmentScreenId): F[InvestmentEvaluation] =
-    for
-      run      <- loadHeader(id)
-      now      <- Clock[F].now
-      monthly  <- evaluations.findMonthly(id, now.toString.take(7))
-      finished <-
-        if monthly.isEmpty && InvestmentEvaluator
-            .finalCaptureThrough(run.createdAt.atZone(ZoneOffset.UTC).toLocalDate)
-            .isBefore(now.atZone(ZoneOffset.UTC).toLocalDate)
-        then evaluations.findFinished(id)
-        else none[InvestmentEvaluation].pure[F]
-      saved = monthly.orElse(finished)
-      report <- saved.filter(InvestmentEvaluationRepository.settled).fold(cachedEvaluation(run, now, saved, capture = false))(_.pure[F])
-    yield report
+  override def captureMonthlyEvaluations: F[Int] = evaluations.captureMonthlyEvaluations
 
   override def refreshResearch: F[Unit] =
-    if enabled then (generateScheduledScreen >> captureMonthlyEvaluations).void else Sync[F].unit
+    (generateScheduledScreen >> captureMonthlyEvaluations).void
 
   override def generateScheduledScreen: F[Option[InvestmentScreenSummary]] =
-    if !enabled then none[InvestmentScreenSummary].pure[F]
-    else
-      for
-        now <- Clock[F].now
-        date = now.atZone(ZoneOffset.UTC).toLocalDate
-        recent <- rankings.latestHeader
-        sameDay = recent.filter(r => r.recipe.version == recipe.version && r.createdAt.atZone(ZoneOffset.UTC).toLocalDate == date)
-        header <- sameDay match
-          case Some(value) => value.pure[F]
-          case None        =>
-            for
-              stocks     <- stockRepository.findAll(StockFilters(), None)
-              snapshots  <- financialHistory.findLatestAll
-              capturedAt <- Clock[F].now
-              id         <- Sync[F].delay(UUID.randomUUID().toString)
-              byTicker   = snapshots.map(s => s.ticker -> s).toMap
-              inputs     = stocks.sortBy(_.security.ticker.value).map(s => InvestmentCandidate(s, byTicker.get(s.security.ticker)))
-              scorecards = InvestmentScorer.rank(inputs, capturedAt, recipe)
-              run        = InvestmentRankingRun(id, capturedAt, recipe, inputs, scorecards)
-              _ <- rankings.save(run)
-              _ <- rankings.prune(capturedAt.minusSeconds(30L * 86400))
-            yield InvestmentRankingRepository.Header(id, capturedAt, recipe, InvestmentRankingRepository.summary(run))
-        monthlyId = InvestmentScreenId(s"monthly:${date.toString.take(7)}:${recipe.version}")
-        existing <- screens.header(monthlyId)
-        created  <- existing match
-          case Some(_)                                   => none[InvestmentScreenSummary].pure[F]
-          case None if header.summary.eligibleCount < 20 => none[InvestmentScreenSummary].pure[F]
-          case None                                      =>
-            rankings.find(header._id).flatMap {
-              case Some(ranking) =>
-                saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking).map(r => Some(r.summary))
-              case None => Sync[F].raiseError(new IllegalStateException("Published investment ranking disappeared"))
-            }
-      yield created
-
-  override def captureMonthlyEvaluations: F[Int] =
     for
-      now        <- Clock[F].now
-      ids        <- screens.ids
-      priorPlans <- evaluations.capturePlans
-      incomplete <- evaluations.unsettled
-      finished   <- evaluations.finishedScreenIds
-      currentMonth = now.toString.take(7)
-      recovered    = incomplete.flatMap(e =>
-        for
-          month   <- e.captureMonth
-          through <- e.dataThrough
-        yield EvaluationCapturePlan(e.screenId, month, through, e.evaluatedAt)
-      )
-      recoveredPlans <- recovered
-        .filterNot(p => priorPlans.exists(existing => existing.screenId == p.screenId && existing.month == p.month))
-        .traverse(evaluations.getOrCreateCapturePlan)
-      plans = (priorPlans ++ recoveredPlans).groupBy(p => (p.screenId, p.month)).values.map(_.head).toList
-      tasks = (ids.filterNot(finished).map(id => (id, currentMonth)) ++ plans.map(p => (p.screenId, p.month))).distinct
-      saved <- tasks.traverse { case (id, month) =>
-        evaluations.findMonthly(id, month).flatMap {
-          case Some(report) if InvestmentEvaluationRepository.settled(report) =>
-            if plans.exists(p => p.screenId == id && p.month == month) then evaluations.retireCapturePlan(id, month).as(false)
-            else false.pure[F]
-          case existing =>
-            loadHeader(id)
-              .flatMap { run =>
-                plans
-                  .find(p => p.screenId == id && p.month == month)
-                  .fold(cachedEvaluation(run, now, existing, capture = true))(materializePlan(run, now, _, capture = true))
-              }
-              .flatMap { evaluation =>
-                if !evaluation.settled.contains(true) then false.pure[F]
-                else evaluations.saveMonthly(evaluation).as(true)
-              }
-        }
-      }
-    yield saved.count(identity)
+      now <- Clock[F].now
+      date = now.atZone(ZoneOffset.UTC).toLocalDate
+      header <- rankings.refresh(date)
+      monthlyId = InvestmentScreenId(s"monthly:${date.toString.take(7)}:${recipe.version}")
+      existing <- screens.header(monthlyId)
+      created  <- existing match
+        case Some(_)                                   => none[InvestmentScreenSummary].pure[F]
+        case None if header.summary.eligibleCount < 20 => none[InvestmentScreenSummary].pure[F]
+        case None                                      =>
+          rankings.get(header._id).flatMap { ranking =>
+            saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking).map(r => Some(r.summary))
+          }
+    yield created
 
   private def inScope(input: InvestmentCandidate, request: InvestmentScreenRequest): Boolean =
     request.exchange.forall(_ == input.stock.security.exchange) &&
@@ -379,16 +202,9 @@ final private class LiveInvestmentScreenService[F[_]](
 
 object InvestmentScreenService:
   def make[F[_]: {Sync, Clock}](
-      stockRepository: StockRepository[F],
-      financialHistory: FinancialHistoryRepository[F],
       screens: InvestmentScreenRepository[F],
-      evaluations: InvestmentEvaluationRepository[F],
-      priceHistory: EvaluationPriceHistory[F],
-      settings: InvestmentConfig,
-      recipe: InvestmentRecipe = InvestmentRecipe(),
-      rankings: InvestmentRankingRepository[F],
-      jobs: JobRepository[F]
+      rankings: InvestmentRankingService[F],
+      evaluations: InvestmentEvaluationService[F],
+      recipe: InvestmentRecipe = InvestmentRecipe()
   ): F[InvestmentScreenService[F]] =
-    Sync[F].pure(
-      LiveInvestmentScreenService(stockRepository, financialHistory, screens, evaluations, priceHistory, settings, recipe, rankings, jobs)
-    )
+    Sync[F].pure(LiveInvestmentScreenService(screens, rankings, evaluations, recipe))

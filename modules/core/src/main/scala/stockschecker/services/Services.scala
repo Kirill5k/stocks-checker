@@ -29,29 +29,32 @@ object Services:
       investmentConfig: InvestmentConfig
   ): F[Services[F]] =
     for
-      s          <- SecurityService.make(repos.security, clients.marketData)
-      cp         <- CompanyProfileService.make(repos.companyProfile, clients.marketData, repos.security)
-      p          <- PriceService.make(repos.priceAnalytics, repos.latestPrice, clients.marketData, repos.companyProfile, repos.priceHistory)
-      c          <- CommandService.make(repos.command, ad, repos.jobs)
-      st         <- StockService.make(repos.stock, ad, repos.security, repos.companyProfile)
-      fm         <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, repos.companyProfile, repos.financialHistory)
-      investment <- InvestmentScreenService.make(
-        repos.stock,
-        repos.financialHistory,
+      s  <- SecurityService.make(repos.security, clients.marketData)
+      cp <- CompanyProfileService.make(repos.companyProfile, clients.marketData, repos.security)
+      p  <- PriceService.make(repos.priceAnalytics, repos.latestPrice, clients.marketData, repos.companyProfile, repos.priceHistory)
+      c  <- CommandService.make(repos.command, ad, repos.jobs)
+      st <- StockService.make(repos.stock, ad, repos.security, repos.companyProfile)
+      fm <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, repos.companyProfile, repos.financialHistory)
+      recipe = InvestmentRecipe(
+        maxSnapshotAgeDays = investmentConfig.snapshotFreshnessDays,
+        maxAnnualAgeDays = investmentConfig.annualFreshnessDays,
+        maxPriceAgeDays = investmentConfig.priceFreshnessDays,
+        maxQuarterlyAgeDays = investmentConfig.quarterlyFreshnessDays
+      )
+      rankings    <- InvestmentRankingService.make(repos.stock, repos.financialHistory, repos.investmentRankings, recipe)
+      evaluations <- InvestmentEvaluationService.make(
         repos.investmentScreens,
         repos.investmentEvaluations,
-        EvaluationPriceHistory.make(clients.marketData, repos.priceHistory, investmentConfig.totalReturnAudited),
-        investmentConfig,
-        InvestmentRecipe(
-          maxSnapshotAgeDays = investmentConfig.snapshotFreshnessDays,
-          maxAnnualAgeDays = investmentConfig.annualFreshnessDays,
-          maxPriceAgeDays = investmentConfig.priceFreshnessDays,
-          maxQuarterlyAgeDays = investmentConfig.quarterlyFreshnessDays
-        ),
-        repos.investmentRankings,
+        EvaluationPriceHistory.make(clients.marketData, repos.priceHistory),
         repos.jobs
       )
-      quality <- DataQualityService.make(repos, investmentConfig)
+      investment <- InvestmentScreenService.make(
+        repos.investmentScreens,
+        rankings,
+        evaluations,
+        recipe
+      )
+      quality <- DataQualityService.make(repos)
     yield new Services[F]:
       override def security: SecurityService[F]                  = s
       override def companyProfile: CompanyProfileService[F]      = cp

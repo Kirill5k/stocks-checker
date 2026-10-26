@@ -7,15 +7,14 @@ import stockschecker.domain.{DateRange, EvaluationClose, EvaluationPriceSeries, 
 import stockschecker.repositories.PriceHistoryRepository
 import java.time.{LocalDate, ZoneOffset}
 
-/** A daily, total-return history. Providers must disclose incomplete or unaudited coverage. */
+/** A daily, total-return history with source provenance and validation issues. */
 trait EvaluationPriceHistory[F[_]]:
   def history(ticker: Ticker, from: LocalDate, through: LocalDate): F[EvaluationPriceSeries]
   def cached(ticker: Ticker, from: LocalDate, through: LocalDate): F[Option[EvaluationPriceSeries]]
 
 final private class LiveEvaluationPriceHistory[F[_]](
     private val client: MarketDataClient[F],
-    private val repository: PriceHistoryRepository[F],
-    private val audited: Boolean
+    private val repository: PriceHistoryRepository[F]
 )(using
     F: Temporal[F]
 ) extends EvaluationPriceHistory[F] {
@@ -24,8 +23,8 @@ final private class LiveEvaluationPriceHistory[F[_]](
       !snapshot.fetchedAt.isBefore(through.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant)
   private def toSeries(snapshot: PriceHistorySnapshot, from: LocalDate, through: LocalDate): EvaluationPriceSeries = {
     val issues = List(
-      Option.when(!audited)("total-return provider contract has not been audited"),
       Option.when(snapshot.currency != "USD")("unsupported evaluation currency"),
+      Option.when(snapshot.adjustment != PriceAdjustment.SplitsAndDividends)("total-return adjustments unavailable"),
       Option.when(snapshot.candles.size >= 5000)("provider response may be truncated")
     ).flatten
     EvaluationPriceSeries(
@@ -33,7 +32,7 @@ final private class LiveEvaluationPriceHistory[F[_]](
       snapshot.candles.filter(c => !c.date.isBefore(from) && !c.date.isAfter(through)).map(c => EvaluationClose(c.date, c.close)),
       snapshot.provider,
       snapshot.fetchedAt,
-      audited && issues.isEmpty,
+      issues.isEmpty,
       snapshot.adjustment.value,
       snapshot.requestedRange,
       issues,
@@ -68,7 +67,6 @@ final private class LiveEvaluationPriceHistory[F[_]](
 object EvaluationPriceHistory:
   def make[F[_]: Temporal](
       client: MarketDataClient[F],
-      repository: PriceHistoryRepository[F],
-      audited: Boolean
+      repository: PriceHistoryRepository[F]
   ): EvaluationPriceHistory[F] =
-    LiveEvaluationPriceHistory(client, repository, audited)
+    LiveEvaluationPriceHistory(client, repository)

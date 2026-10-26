@@ -28,7 +28,7 @@ class DataQualityControllerSpec extends HttpRoutesWordSpec {
 
     "return the data quality report after authentication" in {
       val service = mock[DataQualityService[IO]]
-      val report  = DataQualityReport(Instant.parse("2026-10-26T12:00:00Z"), Nil, Nil, Map.empty, Map.empty, true, false)
+      val report  = DataQualityReport(Instant.parse("2026-10-26T12:00:00Z"), Nil, Nil, Map.empty, Map.empty)
       when(service.report).thenReturnIO(report)
       val response = for
         controller <- DataQualityController.make(service, config)

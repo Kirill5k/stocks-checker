@@ -3,7 +3,6 @@ package stockschecker.services
 import cats.effect.Async
 import cats.syntax.all.*
 import kirill5k.common.cats.Clock
-import stockschecker.common.config.InvestmentConfig
 import stockschecker.domain.*
 import stockschecker.repositories.Repositories
 
@@ -11,8 +10,7 @@ trait DataQualityService[F[_]]:
   def report: F[DataQualityReport]
 
 final private class LiveDataQualityService[F[_]](
-    private val repos: Repositories[F],
-    private val config: InvestmentConfig
+    private val repos: Repositories[F]
 )(using
     F: Async[F],
     C: Clock[F]
@@ -35,12 +33,10 @@ final private class LiveDataQualityService[F[_]](
       exclusions,
       datasets.groupMapReduce(_.status)(_ => 1)(_ + _),
       coverage,
-      config.enabled,
-      config.coverageAudited,
       ranking.map(_.createdAt)
     )
 }
 
 object DataQualityService:
-  def make[F[_]: {Async, Clock}](repos: Repositories[F], config: InvestmentConfig): F[DataQualityService[F]] =
-    Async[F].pure(LiveDataQualityService[F](repos, config))
+  def make[F[_]: {Async, Clock}](repos: Repositories[F]): F[DataQualityService[F]] =
+    Async[F].pure(LiveDataQualityService[F](repos))

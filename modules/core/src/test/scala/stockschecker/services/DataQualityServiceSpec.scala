@@ -4,7 +4,6 @@ import cats.effect.IO
 import fs2.Stream
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
-import stockschecker.common.config.InvestmentConfig
 import stockschecker.domain.*
 import stockschecker.fixtures.*
 import stockschecker.repositories.*
@@ -12,9 +11,8 @@ import stockschecker.repositories.*
 import java.time.Instant
 
 class DataQualityServiceSpec extends IOWordSpec {
-  private val now    = Instant.parse("2026-10-26T12:00:00Z")
-  private val config = InvestmentConfig(true, true, false, 7, 14, 180, 550)
-  given Clock[IO]    = Clock.mock(now)
+  private val now = Instant.parse("2026-10-26T12:00:00Z")
+  given Clock[IO] = Clock.mock(now)
 
   "DataQualityService" should {
     "read stored ranking coverage from the header without rescoring or loading financial histories" in {
@@ -39,15 +37,13 @@ class DataQualityServiceSpec extends IOWordSpec {
       when(quality.all).thenReturnIO(datasets)
       when(securities.streamAll).thenReturn(Stream.emits(List(AAPLSecurity.copy(exclusionReason = Some("user-excluded")), MSFTSecurity)))
       when(rankings.latestHeader).thenReturnIO(Some(header))
-      DataQualityService.make(repos, config).flatMap(_.report).asserting { report =>
+      DataQualityService.make(repos).flatMap(_.report).asserting { report =>
         report.generatedAt mustBe now
         report.rankingAsOf mustBe Some(observed)
         report.datasets.map(_.ticker) mustBe List(AAPL, MSFT)
         report.countsByStatus mustBe Map("available" -> 1, "failed" -> 1)
         report.exclusions mustBe List(ExcludedSecurity(AAPL, "user-excluded", "listed"))
         report.rankingCoverage mustBe Map("eligible" -> 80, "universe" -> 100, "missing-financials" -> 20)
-        report.rankingEnabled mustBe true
-        report.coverageAudited mustBe true
         verify(repos, never).stock
         verify(repos, never).financialHistory
         verify(rankings, never).latest
@@ -66,7 +62,7 @@ class DataQualityServiceSpec extends IOWordSpec {
       when(quality.all).thenReturnIO(Nil)
       when(securities.streamAll).thenReturn(Stream.empty)
       when(rankings.latestHeader).thenReturnIO(None)
-      DataQualityService.make(repos, config).flatMap(_.report).asserting { report =>
+      DataQualityService.make(repos).flatMap(_.report).asserting { report =>
         report.rankingAsOf mustBe None
         report.rankingCoverage mustBe Map.empty
         verify(rankings, never).latest

@@ -1,6 +1,7 @@
 package stockschecker.services
 
 import cats.effect.IO
+import cats.syntax.all.*
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.*
@@ -29,10 +30,12 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
       val repo   = mock[PriceHistoryRepository[IO]]
       val client = mock[MarketDataClient[IO]]
       when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(snapshot))
-      val history = EvaluationPriceHistory.make(client, repo, audited = true)
+      val history = EvaluationPriceHistory.make(client, repo)
       history.cached(ticker, from, through).asserting { result =>
         result.get.snapshotIds mustBe List(snapshot.id)
         result.get.fetchedAt mustBe snapshot.fetchedAt
+        result.get.audited mustBe true
+        result.get.issues mustBe Nil
         verifyNoInteractions(client)
         succeed
       }
@@ -51,7 +54,7 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
         _          = when(client.getDailyPriceHistory(ticker, refreshed.requestedRange, PriceAdjustment.SplitsAndDividends)).thenReturnIO(
           refreshed
         )
-        history = EvaluationPriceHistory.make(client, repo, audited = true)
+        history = EvaluationPriceHistory.make(client, repo)
         result <- history.history(ticker, from, through)
       yield (result, refreshed)).asserting { case (result, refreshed) =>
         result.snapshotIds mustBe List("refreshed")
@@ -75,7 +78,7 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
         shared  = snapshot.copy(fetchedAt = now, requestedRange = DateRange(today.minusYears(13), today))
         _       = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(shared))
         _       = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from.plusDays(10))).thenReturnIO(Some(shared))
-        history = EvaluationPriceHistory.make(client, repo, audited = true)
+        history = EvaluationPriceHistory.make(client, repo)
         first  <- history.history(ticker, from, through)
         second <- history.history(ticker, from.plusDays(10), through)
       yield (first, second)).asserting { case (first, second) =>
@@ -92,7 +95,7 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
       val later   = through.plusMonths(1)
       val failure = AppError.HttpClient("TwelveData", 404, "unavailable")
       when(client.getDailyPriceHistory(any[Ticker], any[DateRange], any[PriceAdjustment])).thenRaiseError(failure)
-      val history = EvaluationPriceHistory.make(client, repo, audited = true)
+      val history = EvaluationPriceHistory.make(client, repo)
       (for
         cache   <- history.cached(ticker, from, later)
         refresh <- history.history(ticker, from, later).attempt
@@ -104,14 +107,40 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
       }
     }
 
-    "disclose unaudited total return instead of claiming valid investment outcomes" in {
-      val repo   = mock[PriceHistoryRepository[IO]]
-      val client = mock[MarketDataClient[IO]]
-      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(snapshot))
-      EvaluationPriceHistory.make(client, repo, audited = false).cached(ticker, from, through).asserting { result =>
-        result.get.audited mustBe false
-        result.get.issues must contain("total-return provider contract has not been audited")
-      }
+    "exclude unsupported currencies, missing total-return adjustments and possibly truncated vintages from investment returns" in {
+      val truncated = snapshot.copy(
+        candles = (0 until 5000).toList.map(n => bar.copy(date = through.minusDays(n.toLong))),
+        requestedRange = DateRange(through.minusDays(4999), through)
+      )
+      List(
+        snapshot.copy(currency = "EUR")                    -> "unsupported evaluation currency",
+        snapshot.copy(adjustment = PriceAdjustment.Splits) -> "total-return adjustments unavailable",
+        truncated                                          -> "provider response may be truncated"
+      ).traverse_ { case (invalid, issue) =>
+        val repo   = mock[PriceHistoryRepository[IO]]
+        val client = mock[MarketDataClient[IO]]
+        when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(invalid))
+        EvaluationPriceHistory.make(client, repo).cached(ticker, from, through).map { result =>
+          val series = result.get
+          series.audited mustBe false
+          series.issues must contain(issue)
+          val report = InvestmentEvaluator.evaluate(
+            InvestmentScreenId("invalid-prices"),
+            from.atStartOfDay(ZoneOffset.UTC).toInstant,
+            snapshot.fetchedAt,
+            List(InvestmentCohort("investment", List(ticker))),
+            Map(ticker -> series, InvestmentEvaluator.Benchmark -> series.copy(ticker = InvestmentEvaluator.Benchmark)),
+            Some(through)
+          )
+          report.horizons.flatMap(_.cohorts).foreach { cohort =>
+            cohort.status mustBe "incomplete"
+            cohort.totalReturnPercent mustBe None
+            cohort.observedReturnPercent mustBe None
+            cohort.issues.mkString must include(issue)
+          }
+          verifyNoInteractions(client)
+        }
+      }.asserting(_ => succeed)
     }
   }
 }

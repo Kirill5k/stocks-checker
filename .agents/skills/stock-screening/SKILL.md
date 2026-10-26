@@ -1,6 +1,6 @@
 ---
 name: stock-screening
-description: Research long-term stock candidates through Stocks Checker's audited investment-screen workflow, explain eligibility and rankings, and use the legacy stock filters when explicitly requested.
+description: Research long-term stock candidates through Stocks Checker's investment-screen workflow, explain eligibility and rankings, and use the legacy stock filters when explicitly requested.
 ---
 
 # Long-term stock research
@@ -11,12 +11,12 @@ and all requests need the configured `X-API-Key` header. Do not reveal API keys.
 
 ## Default workflow
 
-1. Read `GET /api/data-quality`. Inspect `rankingEnabled`, `coverageAudited`,
-   `rankingCoverage`, provider failures, and security exclusions.
-2. If ranking or coverage audit is disabled, explain that the app has not been
-   cleared to publish investment rankings. Do not enable the switches merely to
-   obtain results or describe the old price score as an investment-quality score.
-3. When enabled, create a saved screen from the latest completed ranking:
+1. Read `GET /api/data-quality`. Inspect `rankingCoverage`, `rankingAsOf`,
+   provider failures, and security exclusions.
+2. Check that a current completed ranking is available. If it is missing or stale,
+   explain that the scheduled research refresh must complete before creating a
+   screen. Do not describe the old price score as an investment-quality score.
+3. Create a saved screen from the latest completed ranking:
 
    ```sh
    curl -X POST -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
