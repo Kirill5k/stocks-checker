@@ -72,8 +72,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           now,
           true,
           "split-and-dividend",
-          from,
-          through
+          DateRange(from, through)
         )
         val evaluation = InvestmentEvaluator.evaluate(
           run.id,
@@ -107,8 +106,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           now,
           true,
           "split-and-dividend",
-          from,
-          through
+          DateRange(from, through)
         )
         val evaluation = InvestmentEvaluator.evaluate(
           run.id,
@@ -147,8 +145,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           now,
           true,
           "split-and-dividend",
-          from,
-          through
+          DateRange(from, through)
         )
         val missingExit = InvestmentEvaluator
           .evaluate(run.id, formedAt, now, run.cohorts, Map(InvestmentEvaluator.Benchmark -> series), Some(through))
@@ -203,8 +200,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           now,
           true,
           "split-and-dividend",
-          from,
-          through
+          DateRange(from, through)
         )
         val complete = InvestmentEvaluator.evaluate(
           run.id,

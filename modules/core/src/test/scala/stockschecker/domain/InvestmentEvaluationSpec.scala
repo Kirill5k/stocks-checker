@@ -18,8 +18,7 @@ class InvestmentEvaluationSpec extends AnyWordSpec with Matchers:
       now,
       true,
       "split-and-dividend",
-      dates.head,
-      dates.last
+      DateRange(dates.head, dates.last)
     )
   private val vti = series(InvestmentEvaluator.Benchmark, List(1, 100, 110, 120, 130))
   private def evaluate(cohort: List[Ticker], histories: Map[Ticker, EvaluationPriceSeries]): InvestmentEvaluation =

@@ -30,8 +30,7 @@ object ProviderEvaluationPriceHistory {
           snapshot.fetchedAt,
           audited && issues.isEmpty,
           snapshot.adjustment.value,
-          snapshot.requestedRange.from,
-          snapshot.requestedRange.through,
+          snapshot.requestedRange,
           issues,
           snapshotIds = List(snapshot.id)
         )

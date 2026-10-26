@@ -391,8 +391,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         now,
         true,
         "split-and-dividend",
-        from,
-        through
+        DateRange(from, through)
       )
       when(screens.ids).thenReturnIO(Nil)
       when(screens.header(run.id)).thenReturnSome(header)
@@ -563,8 +562,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
             now,
             false,
             "split-and-dividend",
-            from,
-            through
+            DateRange(from, through)
           )
           when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenAnswer(invocation =>
             IO.pure(Some(series.copy(ticker = invocation.getArgument[Ticker](0))))

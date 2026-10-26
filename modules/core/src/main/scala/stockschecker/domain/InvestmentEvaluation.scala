@@ -16,13 +16,18 @@ final case class EvaluationPriceSeries(
     fetchedAt: Instant,
     audited: Boolean,
     adjustment: String,
-    completeFrom: LocalDate,
-    completeThrough: LocalDate,
+    completeRange: DateRange,
     issues: List[String] = Nil,
     snapshotIds: List[String] = Nil
 ) derives Codec.AsObject
 
-final case class EvaluationCapturePlan(screenId: String, month: String, through: LocalDate, createdAt: Instant) derives Codec.AsObject
+final case class EvaluationCapturePlan(
+    screenId: String,
+    month: String,
+    through: LocalDate,
+    createdAt: Instant
+) derives Codec.AsObject
+
 final case class EvaluationPriceEvidence(
     ticker: Ticker,
     source: String,
@@ -87,7 +92,8 @@ object InvestmentEvaluator:
   val Version           = "forward-total-return-v1"
   val Benchmark: Ticker = Ticker("VTI")
   // Shift the next-day fallback before adding years; fourteen extra days also cover leap-day crossings.
-  def finalCaptureThrough(formedDate: LocalDate): LocalDate          = formedDate.plusDays(1).plusYears(5).plusDays(14)
+  def finalCaptureThrough(formedDate: LocalDate): LocalDate = formedDate.plusDays(1).plusYears(5).plusDays(14)
+
   private def round(n: BigDecimal): BigDecimal                       = n.setScale(4, RoundingMode.HALF_UP)
   private def annualized(growth: BigDecimal, years: Int): BigDecimal =
     if growth <= 0 then BigDecimal(-100)
@@ -195,7 +201,7 @@ object InvestmentEvaluator:
         val errors         = h.issues ++ List(
           Option.when(!h.audited)("price history unaudited"),
           Option.when(h.adjustment != "split-and-dividend")("total-return adjustments unavailable"),
-          Option.when(h.completeFrom.isAfter(start) || h.completeThrough.isBefore(end))("incomplete history coverage"),
+          Option.when(!h.completeRange.contains(start) || !h.completeRange.contains(end))("incomplete history coverage"),
           Option.when(duplicateDates)("duplicate price dates"),
           Option.when(h.ticker != ticker)("ticker mismatch")
         ).flatten
