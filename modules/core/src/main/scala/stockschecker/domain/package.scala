@@ -49,7 +49,9 @@ package object domain {
       name: String,
       kind: SecurityKind,
       isActive: Boolean = true,
-      companyProfileLastUpdatedAt: Option[Instant] = None
+      companyProfileLastUpdatedAt: Option[Instant] = None,
+      listingStatus: String = "listed",
+      exclusionReason: Option[String] = None
   ) derives CirceCodec.AsObject
 
   final case class CompanyProfile(

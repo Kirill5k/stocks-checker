@@ -2,12 +2,13 @@ package stockschecker.clients.finnhub
 
 import cats.effect.Async
 import cats.syntax.flatMap.*
+import cats.syntax.functor.*
 import fs2.Stream
 import io.circe.{Codec, JsonObject}
 import io.circe.fs2.{byteArrayParser, decoder}
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{CompanyProfile, Exchange, FinancialMetrics, Security, SecurityKind, Ticker}
+import stockschecker.domain.{CompanyProfile, Exchange, FinancialData, FinancialMetrics, Security, SecurityKind, Ticker}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 import sttp.client4.circe.asJson
@@ -21,6 +22,7 @@ trait FinnhubClient[F[_]]:
   def getListedSecurities(exchange: Exchange): Stream[F, Security]
   def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]]
   def getFinancialMetrics(ticker: Ticker): F[Option[FinancialMetrics]]
+  def getFinancialData(ticker: Ticker): F[Option[FinancialData]]
 
 final private class LiveFinnhubClient[F[_]](
     private val config: FinnhubClientConfig,
@@ -29,29 +31,39 @@ final private class LiveFinnhubClient[F[_]](
     F: Async[F]
 ) extends FinnhubClient[F] {
 
-  override def getFinancialMetrics(ticker: Ticker): F[Option[FinancialMetrics]] = {
+  override def getFinancialMetrics(ticker: Ticker): F[Option[FinancialMetrics]] =
+    getFinancialData(ticker).map(_.map(_.metrics))
+
+  override def getFinancialData(ticker: Ticker): F[Option[FinancialData]] = {
     val request = emptyRequest
       .get(uri"${config.baseUri}/api/v1/stock/metric?token=${config.apiKey}&symbol=$ticker&metric=all")
-      .response(asJson[FinnhubClient.BasicFinancialsResponse])
+      .response(asJson[JsonObject])
       .readTimeout(30.seconds)
 
     backend.send(request).flatMap { response =>
       response.body match
-        case Right(body) if body.metric.isEmpty => F.pure(None) // Empty object returned - no metrics found
-        case Right(body)                        =>
-          body.metric.toJson.as[FinnhubClient.FinancialMetricsResponse] match
-            case Right(metrics) =>
-              F.pure(Some(metrics.toDomain(ticker)))
-            case Left(err) =>
-              F.raiseError(AppError.JsonParsingFailure(body.metric.toString, s"Error decoding financial metrics for $ticker: ${err.getMessage}"))
+        case Right(body) =>
+          F.realTimeInstant.flatMap { now =>
+            F.fromEither(
+              FinnhubFinancialMapping
+                .decode(body, ticker, now)
+                .left
+                .map(err => AppError.JsonParsingFailure(body.toString, s"Error decoding financial metrics for $ticker: ${err.getMessage}"))
+            )
+          }
         case Left(ResponseException.DeserializationException(_, error, _)) =>
           F.raiseError(AppError.JsonParsingFailure(response.body.toString, s"Error decoding financials for $ticker: ${error.getMessage}"))
         case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.NotFound =>
           F.pure(None)
         case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.TooManyRequests =>
-          F.sleep(2.second) >> getFinancialMetrics(ticker)
+          deferred(response.header("Retry-After"))
+        case Left(ResponseException.UnexpectedStatusCode(_, meta))
+            if meta.code == StatusCode.Unauthorized || meta.code == StatusCode.Forbidden =>
+          F.raiseError(AppError.ProviderConfiguration("Finnhub", s"HTTP ${meta.code.code}: financial metrics access denied"))
         case Left(err) =>
-          F.raiseError(AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving basic financials for $ticker: ${err.getMessage}"))
+          F.raiseError(
+            AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving basic financials for $ticker: ${err.getMessage}")
+          )
     }
   }
 
@@ -71,10 +83,15 @@ final private class LiveFinnhubClient[F[_]](
               F.pure(Some(profile.toDomain))
             case Left(err) =>
               F.raiseError(AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile for $ticker: ${err.getMessage}"))
-        case Left(ResponseException.UnexpectedStatusCode(body, meta)) if meta.code == StatusCode.TooManyRequests =>
-          F.sleep(2.second) >> getCompanyProfile(ticker)
+        case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.TooManyRequests =>
+          deferred(response.header("Retry-After"))
+        case Left(ResponseException.UnexpectedStatusCode(_, meta))
+            if meta.code == StatusCode.Unauthorized || meta.code == StatusCode.Forbidden =>
+          F.raiseError(AppError.ProviderConfiguration("Finnhub", s"HTTP ${meta.code.code}: company profile access denied"))
         case Left(err) =>
-          F.raiseError(AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving company profile for $ticker: ${err.getMessage}"))
+          F.raiseError(
+            AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving company profile for $ticker: ${err.getMessage}")
+          )
     }
   }
 
@@ -94,10 +111,17 @@ final private class LiveFinnhubClient[F[_]](
             .through(byteArrayParser[F])
             .through(decoder[F, FinnhubClient.StockSymbol])
             .map(_.toDomain(exchange))
-        case Left(err) =>
-          Stream.raiseError(AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving traded stocks: $err"))
+        case Left(_) if response.code == StatusCode.TooManyRequests => Stream.eval(deferred(response.header("Retry-After")))
+        case Left(_) if response.code == StatusCode.Unauthorized || response.code == StatusCode.Forbidden =>
+          Stream.raiseError(AppError.ProviderConfiguration("Finnhub", s"HTTP ${response.code.code}: security listing access denied"))
+        case Left(err) => Stream.raiseError(AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving traded stocks: $err"))
     yield data
   }
+
+  private def deferred[A](retryAfter: Option[String]): F[A] =
+    F.realTimeInstant.flatMap { now =>
+      F.raiseError(AppError.ProviderDeferred("Finnhub", stockschecker.clients.RetryAfter.deadline(retryAfter, now), "rate-limited"))
+    }
 
   private def mapExchangeToFinnhubCode(exchange: Exchange): String = exchange match
     case Exchange.NASDAQ => "US"
@@ -135,7 +159,7 @@ object FinnhubClient {
         dividendYieldAnnual = dividendYieldIndicatedAnnual,
         debtToEquityAnnual = `totalDebt/totalEquityAnnual`,
         profitMarginTtm = netProfitMarginTTM,
-        freeCashFlowPerShareTtm = cashFlowPerShareTTM,
+        freeCashFlowPerShareTtm = None,
         revenueGrowth5Y = revenueGrowth5Y,
         epsGrowth5Y = epsGrowth5Y,
         priceHigh52Week = `52WeekHigh`,

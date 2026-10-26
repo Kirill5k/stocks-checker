@@ -44,6 +44,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                               |    "tenYearChange" : null,
                               |    "maxChange" : 4.82
                               |  },
+                              |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                               |  "metrics" : {
                               |    "cagr3Year" : null,
                               |    "cagr5Year" : null,
@@ -89,6 +90,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                               |    "tenYearChange" : null,
                               |    "maxChange" : 4.82
                               |  },
+                              |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                               |  "metrics" : {
                               |    "cagr3Year" : null,
                               |    "cagr5Year" : null,
@@ -207,6 +209,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "tenYearChange" : null,
                              |    "maxChange" : 4.82
                              |  },
+                             |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                              |  "metrics" : {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
@@ -237,6 +240,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "tenYearChange" : null,
                              |    "maxChange" : 4.82
                              |  },
+                             |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                              |  "metrics" : {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
@@ -282,6 +286,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "tenYearChange" : null,
                              |    "maxChange" : 4.82
                              |  },
+                             |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                              |  "metrics" : {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
@@ -328,6 +333,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "tenYearChange" : null,
                              |    "maxChange" : 4.82
                              |  },
+                             |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                              |  "metrics" : {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
@@ -374,6 +380,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "tenYearChange" : null,
                              |    "maxChange" : 4.82
                              |  },
+                             |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                              |  "metrics" : {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
@@ -424,6 +431,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "tenYearChange" : null,
                              |    "maxChange" : 4.82
                              |  },
+                             |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                              |  "metrics" : {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
@@ -477,6 +485,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "tenYearChange" : null,
                              |    "maxChange" : 4.82
                              |  },
+                             |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                              |  "metrics" : {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,
@@ -523,6 +532,7 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                              |    "tenYearChange" : null,
                              |    "maxChange" : 4.82
                              |  },
+                             |  "basis" : {"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
                              |  "metrics" : {
                              |    "cagr3Year" : null,
                              |    "cagr5Year" : null,

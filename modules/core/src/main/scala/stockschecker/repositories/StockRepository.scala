@@ -110,7 +110,7 @@ final private class LiveStockRepository[F[_]](
         Filter.lte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Metrics.Root}.maxDrawdown", max)
       ),
       sf.minConsistencyScore.map(min =>
-        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Metrics.Root}.consistencyScore", min)
+        Filter.gte(s"${StockRepository.Field.PriceAnalytics}.0.${PriceAnalyticsRepository.Field.Scores.Root}.consistencyScore", min)
       )
     ).flatten.foldLeft(Filter.empty)(_ && _)
 

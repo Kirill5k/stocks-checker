@@ -15,6 +15,7 @@ import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Filter, Index, Sort, Update}
 import stockschecker.domain.{
   PriceAnalytics,
+  PriceAnalyticsBasis,
   PriceAnalyticsFilter,
   PricePerformanceSummary,
   StockAnalysisMetrics,
@@ -50,6 +51,7 @@ final private class LivePriceAnalyticsRepository[F[_]](
         .set(Field.PerformanceSummary.Root, analytics.performanceSummary)
         .set(Field.Metrics.Root, analytics.metrics)
         .set(Field.Scores.Root, analytics.scores)
+        .set("basis", analytics.basis)
 
   override def save(analytics: PriceAnalytics): F[Unit] =
     clock.now.flatMap { now =>
@@ -142,4 +144,5 @@ object PriceAnalyticsRepository extends MongoJsonCodecs:
         .withAddedCodec[PricePerformanceSummary]
         .withAddedCodec[StockAnalysisMetrics]
         .withAddedCodec[StockAnalysisScores]
+        .withAddedCodec[PriceAnalyticsBasis]
     yield LivePriceAnalyticsRepository[F](collWithCodecs)

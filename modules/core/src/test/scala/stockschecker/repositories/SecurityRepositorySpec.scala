@@ -35,6 +35,74 @@ class SecurityRepositorySpec extends RepositorySpec {
         }
     }
 
+    "reconcile" should {
+      "preserve manual exclusions when the provider still lists the security" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo     <- SecurityRepository.make(db)
+            _        <- repo.save(List(AAPLSecurity, MSFTSecurity))
+            _        <- repo.deactivate(AAPL)
+            _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
+            excluded <- repo.find(AAPL)
+            listed   <- repo.find(MSFT)
+          yield
+            excluded.map(_.isActive) mustBe Some(false)
+            excluded.flatMap(_.exclusionReason) mustBe Some("user-excluded")
+            excluded.map(_.listingStatus) mustBe Some("listed")
+            listed.map(_.isActive) mustBe Some(true)
+        }
+
+      "migrate legacy inactive records conservatively until explicitly restored" in {
+        val seed = Map(SecurityRepository.CollectionName -> List(toDoc(AAPLSecurity.copy(isActive = false))))
+        withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo       <- SecurityRepository.make(db)
+            migrated   <- repo.find(AAPL)
+            _          <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity))
+            reconciled <- repo.find(AAPL)
+            _          <- repo.activate(AAPL)
+            restored   <- repo.find(AAPL)
+          yield
+            migrated.flatMap(_.exclusionReason) mustBe Some("legacy-excluded")
+            reconciled.map(_.isActive) mustBe Some(false)
+            reconciled.flatMap(_.exclusionReason) mustBe Some("legacy-excluded")
+            restored.map(_.isActive) mustBe Some(true)
+            restored.flatMap(_.exclusionReason) mustBe None
+        }
+      }
+
+      "keep delisted securities inactive after restore until a successful listing reconciliation" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo     <- SecurityRepository.make(db)
+            _        <- repo.save(List(AAPLSecurity, MSFTSecurity))
+            _        <- repo.deactivate(AAPL)
+            _        <- repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))
+            delisted <- repo.find(AAPL)
+            _        <- repo.activate(AAPL)
+            restored <- repo.find(AAPL)
+            _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
+            relisted <- repo.find(AAPL)
+          yield
+            delisted.map(_.listingStatus) mustBe Some("delisted")
+            restored.map(_.isActive) mustBe Some(false)
+            restored.map(_.listingStatus) mustBe Some("delisted")
+            restored.flatMap(_.exclusionReason) mustBe None
+            relisted.map(_.isActive) mustBe Some(true)
+            relisted.map(_.listingStatus) mustBe Some("listed")
+        }
+
+      "leave existing listing state unchanged for an empty reconciliation" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo   <- SecurityRepository.make(db)
+            _      <- repo.save(AAPLSecurity)
+            _      <- repo.reconcile(Exchange.NASDAQ, Nil)
+            result <- repo.find(AAPL)
+          yield result mustBe Some(AAPLSecurity)
+        }
+    }
+
     "findByTicker" should {
       "find security by ticker" in
         withEmbeddedMongoDatabase { db =>

@@ -58,6 +58,7 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
       "performanceSummary" := analytics.performanceSummary,
       "metrics"            := analytics.metrics,
       "scores"             := analytics.scores,
+      "basis"              := analytics.basis,
       "createdAt"          := now,
       "updatedAt"          := now
     )

@@ -113,6 +113,10 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
       .mkString(", ")
 
   def mapError(error: Throwable): (StatusCode, ErrorResponse) = error match
+    case err: AppError.ProviderDeferred =>
+      (StatusCode.TooManyRequests, ErrorResponse(err.getMessage))
+    case err: AppError.ProviderConfiguration =>
+      (StatusCode.ServiceUnavailable, ErrorResponse(err.getMessage))
     case err: AppError.Conflict =>
       (StatusCode.Conflict, ErrorResponse(err.getMessage))
     case err: AppError.BadReq =>

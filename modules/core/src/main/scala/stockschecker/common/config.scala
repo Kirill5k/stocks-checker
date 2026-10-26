@@ -5,6 +5,7 @@ import pureconfig.*
 import kirill5k.common.http4s.*
 
 import scala.concurrent.duration.FiniteDuration
+import stockschecker.clients.ProviderLimits
 
 object config {
   final case class ApiConfig(
@@ -22,7 +23,8 @@ object config {
 
   final case class FinnhubClientConfig(
       baseUri: String,
-      apiKey: String
+      apiKey: String,
+      limits: ProviderLimits = ProviderLimits()
   ) derives ConfigReader
 
   final case class AlphaVantageClientConfig(
@@ -32,7 +34,8 @@ object config {
 
   final case class TwelveDataConfig(
       baseUri: String,
-      apiKey: String
+      apiKey: String,
+      limits: ProviderLimits = ProviderLimits(8, 800, 1)
   ) derives ConfigReader
 
   final case class ClientsConfig(
@@ -55,12 +58,23 @@ object config {
       concurrency: Int
   ) derives ConfigReader
 
+  final case class InvestmentConfig(
+      enabled: Boolean = false,
+      coverageAudited: Boolean = false,
+      totalReturnAudited: Boolean = false,
+      priceFreshnessDays: Int = 7,
+      snapshotFreshnessDays: Int = 14,
+      quarterlyFreshnessDays: Int = 180,
+      annualFreshnessDays: Int = 550
+  ) derives ConfigReader
+
   final case class AppConfig(
       api: ApiConfig,
       server: ServerConfig,
       clients: ClientsConfig,
       mongo: MongoConfig,
-      actionExecutor: ActionExecutorConfig
+      actionExecutor: ActionExecutorConfig,
+      investment: InvestmentConfig = InvestmentConfig()
   ) derives ConfigReader
 
   object AppConfig:

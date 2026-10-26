@@ -1,107 +1,85 @@
 ---
 name: stock-screening
-description: Screen stocks for long-term investment by querying the Stocks Checker /stocks endpoint. Use when the user wants to find, filter, rank, or screen stocks by fundamentals (P/E, ROE, debt, margins, growth), performance scores (overall, CAGR, volatility), market cap, price, or exchange — or to build a screening curl request against the running service.
+description: Research long-term stock candidates through Stocks Checker's audited investment-screen workflow, explain eligibility and rankings, and use the legacy stock filters when explicitly requested.
 ---
 
-# Stock Screening for Long-Term Investment
+# Long-term stock research
 
-Screen stocks by querying the `GET /stocks` endpoint of the running Stocks Checker service. The endpoint accepts a set of optional query parameters that map directly to `StockFilters`; results are returned as a JSON array of stocks.
+Use the experimental investment workflow for 3–10 year stock research. The service
+defaults to `http://localhost:7070`, **all data endpoints have the `/api` prefix**,
+and all requests need the configured `X-API-Key` header. Do not reveal API keys.
 
-## How to run a screen
+## Default workflow
 
-1. The endpoint is secured — every request needs the `X-API-Key` header set to the service's configured API key (env var `API_KEY`).
-2. Base URL defaults to `http://localhost:7070` (host/port configurable via `HOST`/`PORT`).
-3. Combine any subset of the filter parameters below. All are optional and AND-combined.
-4. Use `sortBy` + `limit` to rank and cap the result set.
+1. Read `GET /api/data-quality`. Inspect `rankingEnabled`, `coverageAudited`,
+   `rankingCoverage`, provider failures, and security exclusions.
+2. If ranking or coverage audit is disabled, explain that the app has not been
+   cleared to publish investment rankings. Do not enable the switches merely to
+   obtain results or describe the old price score as an investment-quality score.
+3. When enabled, create a saved screen from the latest completed ranking:
 
-```bash
-# Long-term investment screening: top 20 stocks for long-term growth
+   ```sh
+   curl -X POST -H "X-API-Key: $API_KEY" -H 'Content-Type: application/json' \
+     http://localhost:7070/api/investment-screens \
+     -d '{"recipeVersion":"quality-fair-value-v1","limit":20}'
+   ```
+
+4. Explain the returned score components, evidence units, peer cohort, exclusions,
+   and warnings. An empty result is not evidence that no good businesses exist;
+   inspect missing/stale/unsupported inputs and requested thresholds.
+5. Use `GET /api/investment-screens/{id}` for the saved result and
+   `GET /api/investment-screens/{id}/evaluation` for forward outcomes. Preserve the
+   distinction between pending horizons, incomplete data, observed returns so far,
+   and completed three/five-year returns.
+
+`GET /api/investment-screens?limit=20` lists saved summaries. A POST saves a new
+immutable view; it does not recompute peer ranks from the selected subset.
+
+## Request contract
+
+All POST fields are optional. Omitted recipe selects `quality-fair-value-v1`;
+unknown versions are rejected. `limit` defaults to 20 and is bounded 1–100.
+`exchange` accepts `nasdaq` or `nyse`; `country` uses the stored country code.
+`minScore`, `minQuality`, `minValue`, `minGrowth`, and `minResilience` are 0–100
+thresholds. Use only criteria relevant to the user's objective. Do not present a
+particular threshold or the initial weights as empirically optimal.
+
+The recipe weights quality 35%, valuation 30%, growth 20%, and balance-sheet
+resilience 15%. It uses a fixed peer universe and excludes unsupported specialist
+sectors or incomplete fundamentals. Near misses fail exactly one requested investment threshold or one explicit
+financial eligibility criterion. An intrinsic financial near miss has no score
+and remains in the exclusion counts. Missing, stale, unsupported, or ambiguous
+inputs are separate exclusions; results beyond the display limit are not
+near misses.
+
+The initial model covers ordinary US companies quoted in USD on supported exchanges. It is
+not a model for banks, insurers, REITs, ETFs, or ADRs. No account coverage audit or
+superior-return validation is implied by the existence of the feature. Consult
+`docs/long-term-investment-research.md` for provenance, rollout, and limitations.
+
+## Legacy stock filtering
+
+Use `GET /api/stocks` when the user specifically requests raw filters or historical
+price performance. Every filter is AND-combined. `kind` and `exchange` are lower
+case. `sortBy` accepts `market-cap`, `overall-score`, `cagr-score`, or
+`volatility-score`. The historical `overall-score` is not the new investment score.
+
+The endpoint supports security, market-cap, price, performance, and financial
+filters represented in `StockFilters`. Use `period` with price-change criteria.
+Its wire values are **`one-month`, `three-month`, `six-month`, `one-year`,
+`three-year`, `five-year`, `ten-year`, and `max`**.
+
+`minConsistencyScore` is retained as the deprecated raw R² threshold on a 0–1
+scale. Use `minPriceConsistencyScore` for the actual 0–100 price-consistency score.
+Financial percentage inputs such as growth, ROE, and margins use the endpoint's
+documented percentage units; raw annual provider-series ratios used internally
+for investment ranking are a different representation.
+
+```sh
 curl -H "X-API-Key: $API_KEY" \
-  "http://localhost:7070/stocks?\
-kind=stock&\
-isActive=true&\
-minMarketCap=10000000000&\
-minPE=15&maxPE=35&\
-minROE=15&\
-maxDebtToEquity=1.5&\
-minProfitMargin=10&\
-minFreeCashFlow=0&\
-minRevenueGrowth5Y=8&\
-minEpsGrowth5Y=10&\
-minOverallScore=60&\
-minCagrScore=50&\
-minVolatilityScore=40&\
-sortBy=overall-score&\
-limit=20"
+  'http://localhost:7070/api/stocks?kind=stock&isActive=true&period=one-year&minChange=0&sortBy=overall-score&limit=20'
 ```
 
-## Screening strategy
-
-A layered strategy for long-term investment picks:
-
-**Phase 1 — Basic filtering**
-- Security type: individual stocks only (`kind=stock`; exclude ETFs, REITs)
-- Market cap: large-cap for stability (`minMarketCap=10000000000`, i.e. ≥$10B)
-- Exchange: NYSE or NASDAQ (`exchange=nyse` or `exchange=nasdaq`)
-
-**Phase 2 — Financial health**
-- Valuation: reasonable P/E (`minPE=15`, `maxPE=35`)
-- Profitability: efficient capital use and margins (`minROE=15`, `minProfitMargin=10`)
-- Stability: manageable debt (`maxDebtToEquity=1.5`)
-- Cash generation: positive free cash flow (`minFreeCashFlow=0`)
-
-**Phase 3 — Growth indicators**
-- Revenue growth: 5-year annualized ≥8% (`minRevenueGrowth5Y=8`)
-- EPS growth: 5-year annualized ≥10% (`minEpsGrowth5Y=10`)
-- CAGR score ≥50 (`minCagrScore=50`, indicating ~15%+ CAGR)
-
-**Phase 4 — Risk management**
-- Overall score ≥60 (`minOverallScore=60`)
-- Volatility score ≥40 (`minVolatilityScore=40`, moderate-to-low volatility)
-- Optional price bounds via `minPrice` / `maxPrice`
-
-## Filter parameters
-
-All parameters are optional query-string values on `GET /stocks`.
-
-**Basic**
-- `limit` (Int) — max number of results
-- `exchange` — `nasdaq` or `nyse` (lowercase)
-- `kind` — security type: `stock`, `etf`, `reit`, `adr` (lowercase)
-- `isActive` (Boolean) — filter active/inactive securities
-- `country` (String) — country code, e.g. `US`, `GB`
-- `sortBy` — sort field: `market-cap`, `overall-score`, `cagr-score`, `volatility-score` (kebab-case)
-
-**Market**
-- `minMarketCap`, `maxMarketCap` (Long) — market-cap range
-- `minPrice`, `maxPrice` (BigDecimal) — current price range
-- `minChange`, `maxChange` (BigDecimal) — price change over `period`
-- `period` — time window for change filters: `oneMonth`, `threeMonth`, `sixMonth`, `oneYear`, `threeYear`, `fiveYear`, `tenYear`, `max`
-
-**Performance scores** (0–100)
-- `minOverallScore` — composite of CAGR, volatility, drawdown, consistency
-- `minCagrScore` — CAGR score (100 = 30%+ CAGR)
-- `minVolatilityScore` — volatility score (100 = ≤10% volatility)
-- `maxDrawdown` — cap on drawdown
-- `minConsistencyScore` — minimum consistency score
-
-**Financial metrics**
-- `minPE`, `maxPE` — P/E ratio (trailing 12 months)
-- `minROE` — return on equity (TTM)
-- `maxDebtToEquity` — debt-to-equity (annual)
-- `minProfitMargin`, `maxProfitMargin` — net profit margin (TTM)
-- `minFreeCashFlow` — free cash flow per share (TTM)
-- `minDividendYield`, `maxDividendYield` — dividend yield (annual)
-- `minRevenueGrowth5Y` — 5-year annualized revenue growth (%)
-- `minEpsGrowth5Y` — 5-year annualized EPS growth (%)
-
-> Note: enum-valued params must use their wire form — `kind`/`exchange` are lowercase, and `sortBy` is kebab-case (`overall-score`, not `overallScore`). Passing the wrong casing returns a validation error listing the accepted values.
-
-## Portfolio construction
-
-After screening, manually review results for:
-1. **Sector diversification** — max ~5 stocks per industry
-2. **Geographic mix** — 70–80% US, 20–30% international (ADRs)
-3. **Market-cap balance** — ~70% large cap ($50B+), ~30% mid cap ($10–50B)
-4. **Risk balance** — mix stable (volatility score >70) and growth (40–70) names
-5. **Business moats** — competitive advantages and secular tailwinds
+Do not use this legacy endpoint to claim an evidence-backed long-term recommendation.
+Fundamental review, data coverage, and a saved forward evaluation remain necessary
+parts of the investment research workflow.

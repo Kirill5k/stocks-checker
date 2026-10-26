@@ -11,7 +11,7 @@ import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{FinancialMetrics, Ticker}
-import stockschecker.repositories.FinancialMetricsRepository
+import stockschecker.repositories.{FinancialHistoryRepository, FinancialMetricsRepository}
 
 import scala.concurrent.duration.*
 
@@ -22,7 +22,8 @@ trait FinancialMetricsService[F[_]]:
 final private class LiveFinancialMetricsService[F[_]](
     private val repository: FinancialMetricsRepository[F],
     private val client: MarketDataClient[F],
-    private val dispatcher: ActionDispatcher[F]
+    private val dispatcher: ActionDispatcher[F],
+    private val history: Option[FinancialHistoryRepository[F]]
 )(using
     F: Temporal[F],
     logger: Logger[F]
@@ -34,22 +35,27 @@ final private class LiveFinancialMetricsService[F[_]](
         .emits(tickers.toList)
         .metered(1.second)
         .evalMap { ticker =>
-          client
-            .getFinancialMetrics(ticker)
-            .handleErrorWith { error =>
-              logger.error(error)(s"Error fetching financial metrics for $ticker").as(None)
-            }
-        }
-        .unNone
-        .chunkN(512)
-        .evalMap { chunk =>
-          val metricsList = chunk.toList
-          logger.info(s"Saving batch of ${metricsList.size} financial metrics") >>
-            save(metricsList)
+          fetchAndSave(ticker).attempt
         }
         .compile
-        .drain >>
+        .toList
+        .flatMap { outcomes =>
+          outcomes.collectFirst { case Left(error) => error }.fold(F.unit)(F.raiseError[Unit])
+        } >>
       logger.info(s"Finished fetching financial metrics for ${tickers.size} tickers")
+
+  private def fetchAndSave(ticker: Ticker): F[Option[FinancialMetrics]] =
+    history match
+      case Some(repository) =>
+        client.getFinancialData(ticker).flatMap {
+          case Some(data) => repository.save(data.snapshot) >> save(List(data.metrics)).as(Some(data.metrics))
+          case None       => F.pure(None)
+        }
+      case None =>
+        client.getFinancialMetrics(ticker).flatMap {
+          case Some(metrics) => save(List(metrics)).as(Some(metrics))
+          case None          => F.pure(None)
+        }
 
   private def save(metrics: List[FinancialMetrics]): F[Unit] =
     repository.save(metrics) >>
@@ -57,7 +63,7 @@ final private class LiveFinancialMetricsService[F[_]](
 
   override def find(ticker: Ticker, fetch: Boolean): F[FinancialMetrics] = {
     val mapFromOpt = (metrics: Option[FinancialMetrics]) => F.fromOption(metrics, AppError.FinancialMetricsNotFound(ticker))
-    if (fetch) client.getFinancialMetrics(ticker).flatMap(mapFromOpt).flatTap(metrics => save(List(metrics)))
+    if (fetch) fetchAndSave(ticker).flatMap(mapFromOpt)
     else repository.find(ticker).flatMap(mapFromOpt)
   }
 }
@@ -66,6 +72,7 @@ object FinancialMetricsService:
   def make[F[_]: {Temporal, Logger}](
       repo: FinancialMetricsRepository[F],
       client: MarketDataClient[F],
-      dispatcher: ActionDispatcher[F]
+      dispatcher: ActionDispatcher[F],
+      history: Option[FinancialHistoryRepository[F]] = None
   ): F[FinancialMetricsService[F]] =
-    Temporal[F].pure(LiveFinancialMetricsService[F](repo, client, dispatcher))
+    Temporal[F].pure(LiveFinancialMetricsService[F](repo, client, dispatcher, history))

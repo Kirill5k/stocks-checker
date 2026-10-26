@@ -64,7 +64,9 @@ class AlphaVantageClientSpec extends Sttp4WordSpec {
           candles <- client.getMonthlyPriceCandles(Ticker("AAPL"))
         yield candles
 
-        result.attempt.asserting(_ mustBe Left(AppError.HttpClient("AlphaVantage", 429, "All API keys exhausted due to rate limiting: api-key")))
+        result.attempt.asserting(
+          _ mustBe Left(AppError.HttpClient("AlphaVantage", 429, "All API keys exhausted due to rate limiting: api-key"))
+        )
       }
 
       "retry on 429 errors when one of the keys is exhausted" in {

@@ -13,9 +13,14 @@ object errors {
     sealed trait Forbidden     extends AppError
     sealed trait Unprocessable extends AppError
 
-    final case class FailedValidation(message: String)  extends Unprocessable
-    final case class Critical(message: String)          extends AppError
-    
+    final case class FailedValidation(message: String) extends Unprocessable
+    final case class Critical(message: String)         extends AppError
+
+    final case class ProviderDeferred(provider: String, retryAt: java.time.Instant, reason: String) extends AppError:
+      override def message: String = s"$provider deferred until $retryAt: $reason"
+
+    final case class ProviderConfiguration(provider: String, message: String) extends AppError
+
     final case class HttpClient(name: String, status: Int, error: String) extends AppError:
       override def message: String = s"$name HTTP $status - $error"
 

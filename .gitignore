@@ -12,6 +12,7 @@ project/plugins/project/
 .cache
 .lib/
 .bsp/
+docs/
 
 ### JEnv template
 # JEnv local Java version configuration file

@@ -38,4 +38,21 @@ final case class StockFilters(
     maxDrawdown: Option[BigDecimal] = None,
     minConsistencyScore: Option[BigDecimal] = None,
     sortBy: Option[StockSortField] = None
-)
+) {
+  def validate(limit: Option[Int]): Either[String, Unit] = {
+    val scores = List(minOverallScore, minCagrScore, minVolatilityScore, minConsistencyScore, maxDrawdown).flatten
+    val ranges = List(
+      (minMarketCap.map(BigDecimal(_)), maxMarketCap.map(BigDecimal(_))),
+      (minPrice, maxPrice),
+      (minChange, maxChange),
+      (minPE, maxPE),
+      (minProfitMargin, maxProfitMargin),
+      (minDividendYield, maxDividendYield)
+    )
+    if (limit.exists(_ <= 0)) Left("limit must be positive")
+    else if (scores.exists(s => s < 0 || s > 100)) Left("scores and maxDrawdown must be between 0 and 100")
+    else if (ranges.exists { case (min, max) => min.exists(a => max.exists(_ < a)) }) Left("minimum must not exceed maximum")
+    else if ((minChange.nonEmpty || maxChange.nonEmpty) && period.isEmpty) Left("period is required with change filters")
+    else Right(())
+  }
+}

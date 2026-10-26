@@ -13,8 +13,6 @@ import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.CompanyProfileRepository
 
-import scala.concurrent.duration.*
-
 trait CompanyProfileService[F[_]]:
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
   def getAll(limit: Option[Int]): F[List[CompanyProfile]]
@@ -34,24 +32,16 @@ final private class LiveCompanyProfileService[F[_]](
 ) extends CompanyProfileService[F] {
 
   override def fetchLatest(tickers: NonEmptyList[Ticker]): F[Unit] =
-    logger.info(s"Fetching latest company profiles for ${tickers.size} tickers") >>
-      Stream
-        .emits(tickers.toList)
-        .metered(1.second)
-        .evalMap { ticker =>
-          fetchCompanyProfile(ticker)
-            .handleErrorWith { error =>
-              logger.error(error)(s"Error fetching company profile for $ticker").as(None)
-            }
-        }
-        .unNone
-        .chunkN(512)
-        .evalMap { chunk =>
-          logger.info(s"Saving batch of ${chunk.size} company profiles") >> save(chunk.toList)
-        }
-        .compile
-        .drain >>
-      logger.info(s"Finished fetching company profiles for ${tickers.size} tickers")
+    Stream
+      .emits(tickers.toList)
+      .evalMap(ticker =>
+        get(ticker, true).void.onError { case error => logger.error(error)(s"Profile refresh failed for $ticker") }.attempt
+      )
+      .compile
+      .toList
+      .flatMap { outcomes =>
+        outcomes.collectFirst { case Left(error) => error }.fold(F.unit)(F.raiseError[Unit])
+      }
 
   override def get(ticker: Ticker, fetch: Boolean = false): F[CompanyProfile] = {
     val cpOpt =

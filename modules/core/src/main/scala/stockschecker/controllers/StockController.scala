@@ -1,12 +1,25 @@
 package stockschecker.controllers
 
 import cats.effect.kernel.Async
+import cats.syntax.flatMap.*
 import io.circe.Codec as CirceCodec
 import org.http4s.HttpRoutes
 import stockschecker.common.config.ApiConfig
 import stockschecker.controllers.StockController.{StockQueryParams, StockView}
-import stockschecker.domain.{Exchange, SecurityKind, Stock, StockAnalysisMetrics, StockAnalysisScores, StockFilters, StockSortField, Ticker, TimePeriod}
+import stockschecker.domain.{
+  Exchange,
+  SecurityKind,
+  Stock,
+  StockAnalysisMetrics,
+  StockAnalysisScores,
+  StockFilters,
+  StockSortField,
+  Ticker,
+  TimePeriod
+}
 import stockschecker.services.StockService
+import stockschecker.domain.errors.AppError
+import stockschecker.domain.PriceAnalyticsBasis
 import sttp.model.StatusCode
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
@@ -28,36 +41,37 @@ final private class StockController[F[_]: Async](
   private val getAllStocks = secured(StockController.getAllStocksEndpoint)
     .serverLogic { _ => (params: StockQueryParams) =>
       val filters = StockFilters(
-        exchange            = params.basic.exchange,
-        kind                = params.basic.kind,
-        isActive            = params.basic.isActive,
-        country             = params.basic.country,
-        minMarketCap        = params.market.minMarketCap,
-        maxMarketCap        = params.market.maxMarketCap,
-        minPrice            = params.market.minPrice,
-        maxPrice            = params.market.maxPrice,
-        minChange           = params.market.minChange,
-        maxChange           = params.market.maxChange,
-        period              = params.market.period,
-        minOverallScore     = params.scores.minOverallScore,
-        minCagrScore        = params.scores.minCagrScore,
-        minVolatilityScore  = params.scores.minVolatilityScore,
-        maxDrawdown         = params.scores.maxDrawdown,
+        exchange = params.basic.exchange,
+        kind = params.basic.kind,
+        isActive = params.basic.isActive,
+        country = params.basic.country,
+        minMarketCap = params.market.minMarketCap,
+        maxMarketCap = params.market.maxMarketCap,
+        minPrice = params.market.minPrice,
+        maxPrice = params.market.maxPrice,
+        minChange = params.market.minChange,
+        maxChange = params.market.maxChange,
+        period = params.market.period,
+        minOverallScore = params.scores.minOverallScore,
+        minCagrScore = params.scores.minCagrScore,
+        minVolatilityScore = params.scores.minVolatilityScore,
+        maxDrawdown = params.scores.maxDrawdown,
         minConsistencyScore = params.scores.minConsistencyScore,
-        minPE               = params.financial.minPE,
-        maxPE               = params.financial.maxPE,
-        minROE              = params.financial.minROE,
-        maxDebtToEquity     = params.financial.maxDebtToEquity,
-        minProfitMargin     = params.financial.minProfitMargin,
-        maxProfitMargin     = params.financial.maxProfitMargin,
-        minFreeCashFlow     = params.financial.minFreeCashFlow,
-        minDividendYield    = params.financial.minDividendYield,
-        maxDividendYield    = params.financial.maxDividendYield,
-        minRevenueGrowth5Y  = params.financial.minRevenueGrowth5Y,
-        minEpsGrowth5Y      = params.financial.minEpsGrowth5Y,
-        sortBy              = params.basic.sortBy
+        minPE = params.financial.minPE,
+        maxPE = params.financial.maxPE,
+        minROE = params.financial.minROE,
+        maxDebtToEquity = params.financial.maxDebtToEquity,
+        minProfitMargin = params.financial.minProfitMargin,
+        maxProfitMargin = params.financial.maxProfitMargin,
+        minFreeCashFlow = params.financial.minFreeCashFlow,
+        minDividendYield = params.financial.minDividendYield,
+        maxDividendYield = params.financial.maxDividendYield,
+        minRevenueGrowth5Y = params.financial.minRevenueGrowth5Y,
+        minEpsGrowth5Y = params.financial.minEpsGrowth5Y,
+        sortBy = params.basic.sortBy
       )
-      stockService.findAll(filters, params.basic.limit).mapToResponse(_.map(StockView.from))
+      (Async[F].fromEither(filters.validate(params.basic.limit).left.map(AppError.FailedValidation(_))) >>
+        stockService.findAll(filters, params.basic.limit)).mapToResponse(_.map(StockView.from))
     }
 
   private val deactivateStock = secured(StockController.deactivateStockEndpoint)
@@ -65,8 +79,11 @@ final private class StockController[F[_]: Async](
       stockService.deactivate(ticker).asResponse
     }
 
+  private val activateStock = secured(StockController.activateStockEndpoint)
+    .serverLogic(_ => ticker => stockService.activate(ticker).asResponse)
+
   override val routes: HttpRoutes[F] =
-    Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(getStockByTicker, getAllStocks, deactivateStock))
+    Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(getStockByTicker, getAllStocks, deactivateStock, activateStock))
 }
 
 object StockController extends TapirJsonCirce with SchemaDerivation {
@@ -154,7 +171,9 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       security = StockSecurityView(
         exchange = stock.security.exchange,
         kind = stock.security.kind,
-        isActive = stock.security.isActive
+        isActive = stock.security.isActive,
+        listingStatus = stock.security.listingStatus,
+        exclusionReason = stock.security.exclusionReason
       ),
       profile = stock.profile.map(p =>
         StockCompanyProfileView(
@@ -184,6 +203,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
           ),
           metrics = pa.metrics,
           scores = pa.scores,
+          basis = pa.basis,
           lastUpdatedAt = stock.profile.flatMap(_.priceAnalyticsLastUpdatedAt)
         )
       ),
@@ -208,7 +228,9 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
   final private case class StockSecurityView(
       exchange: Exchange,
       kind: SecurityKind,
-      isActive: Boolean
+      isActive: Boolean,
+      listingStatus: String,
+      exclusionReason: Option[String]
   ) derives CirceCodec.AsObject
 
   final private case class StockCompanyProfileView(
@@ -239,6 +261,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       performanceSummary: StockPricePerformanceSummaryView,
       metrics: StockAnalysisMetrics,
       scores: StockAnalysisScores,
+      basis: Option[PriceAnalyticsBasis],
       lastUpdatedAt: Option[Instant]
   ) derives CirceCodec.AsObject
 
@@ -302,6 +325,11 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
     .in(stockByTickerPath / "deactivate")
     .out(statusCode(StatusCode.NoContent))
     .description("Deactivate a stock by setting isActive to false")
+
+  private val activateStockEndpoint = Controller.secureEndpoint.put
+    .in(stockByTickerPath / "activate")
+    .out(statusCode(StatusCode.NoContent))
+    .description("Clear user or legacy exclusion; listing and provider availability remain independent")
 
   def make[F[_]: Async](stockService: StockService[F], config: ApiConfig): F[Controller[F]] =
     Async[F].pure(StockController[F](stockService, ApiKeyRequirement.Required(config.key)))

@@ -7,8 +7,9 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{FinancialMetrics, Ticker}
-import stockschecker.repositories.FinancialMetricsRepository
+import stockschecker.domain.{FinancialData, FinancialMetrics, FinancialSnapshot, InvestmentScorer, Ticker}
+import stockschecker.domain.errors.AppError
+import stockschecker.repositories.{FinancialHistoryRepository, FinancialMetricsRepository}
 import stockschecker.fixtures.*
 
 class FinancialMetricsServiceSpec extends IOWordSpec {
@@ -16,6 +17,49 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
 
   "A FinancialMetricsService" when {
     "fetchLatest" should {
+      "persist an immutable financial vintage and propagate a later provider deferral" in {
+        val (repo, client, dispatcher) = mocks
+        val history                    = mock[FinancialHistoryRepository[IO]]
+        val snapshot                   =
+          FinancialSnapshot("vintage", AAPL, "Finnhub", ts, Map.empty, Nil, Nil, "{}", "hash", InvestmentScorer.MappingVersion, Nil)
+        val deferred = AppError.ProviderDeferred("Finnhub", ts.plusSeconds(60), "rate-limited")
+        when(client.getFinancialData(AAPL)).thenReturnIO(Some(FinancialData(AAPLFinancialMetrics, snapshot)))
+        when(client.getFinancialData(MSFT)).thenRaiseError(deferred)
+        when(history.save(snapshot)).thenReturnUnit
+        when(repo.save(anyList[FinancialMetrics])).thenReturnUnit
+        when(dispatcher.dispatch(any)).thenReturnUnit
+        val res = for
+          svc <- FinancialMetricsService.make(repo, client, dispatcher, Some(history))
+          _   <- svc.fetchLatest(NonEmptyList.of(AAPL, MSFT))
+        yield ()
+        res.attempt.asserting { result =>
+          result mustBe Left(deferred)
+          verify(history).save(snapshot)
+          verify(repo).save(List(AAPLFinancialMetrics))
+          verify(dispatcher).dispatch(Action.RecordFinancialMetricsUpdate(List(AAPL)))
+          succeed
+        }
+      }
+
+      "not publish latest financial metrics when immutable history cannot be saved" in {
+        val (repo, client, dispatcher) = mocks
+        val history                    = mock[FinancialHistoryRepository[IO]]
+        val snapshot                   =
+          FinancialSnapshot("vintage", AAPL, "Finnhub", ts, Map.empty, Nil, Nil, "{}", "hash", InvestmentScorer.MappingVersion, Nil)
+        val error = new RuntimeException("History unavailable")
+        when(client.getFinancialData(AAPL)).thenReturnIO(Some(FinancialData(AAPLFinancialMetrics, snapshot)))
+        when(history.save(snapshot)).thenRaiseError(error)
+        val res = for
+          svc <- FinancialMetricsService.make(repo, client, dispatcher, Some(history))
+          _   <- svc.fetchLatest(NonEmptyList.of(AAPL))
+        yield ()
+        res.attempt.asserting { result =>
+          result mustBe Left(error)
+          verifyNoInteractions(repo, dispatcher)
+          succeed
+        }
+      }
+
       "fetch financial metrics, save them and dispatch Action.RecordFinancialMetricsUpdate" in {
         val (repo, client, dispatcher) = mocks
         when(client.getFinancialMetrics(any[Ticker])).thenReturnIO(Some(AAPLFinancialMetrics))
@@ -35,7 +79,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
         }
       }
 
-      "ignore errors when fetching financial metrics fails" in {
+      "report errors when fetching financial metrics fails" in {
         val (repo, client, dispatcher) = mocks
         val error                      = new RuntimeException("API error")
         when(client.getFinancialMetrics(any[Ticker])).thenRaiseError(error)
@@ -45,14 +89,14 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
           _   <- svc.fetchLatest(NonEmptyList.of(AAPL))
         yield ()
 
-        res.asserting { result =>
+        res.attempt.asserting { result =>
           verify(client).getFinancialMetrics(AAPL)
           verifyNoInteractions(repo, dispatcher)
-          result mustBe ()
+          result mustBe Left(error)
         }
       }
 
-      "handle multiple tickers and batch save" in {
+      "persist each ticker before fetching the next" in {
         val (repo, client, dispatcher) = mocks
         val msftMetrics                = AAPLFinancialMetrics.copy(ticker = MSFT)
         when(client.getFinancialMetrics(AAPL)).thenReturnIO(Some(AAPLFinancialMetrics))
@@ -68,8 +112,10 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
         res.asserting { _ =>
           verify(client).getFinancialMetrics(AAPL)
           verify(client).getFinancialMetrics(MSFT)
-          verify(repo).save(anyList[FinancialMetrics])
-          verify(dispatcher).dispatch(Action.RecordFinancialMetricsUpdate(List(AAPL, MSFT)))
+          verify(repo).save(List(AAPLFinancialMetrics))
+          verify(repo).save(List(msftMetrics))
+          verify(dispatcher).dispatch(Action.RecordFinancialMetricsUpdate(List(AAPL)))
+          verify(dispatcher).dispatch(Action.RecordFinancialMetricsUpdate(List(MSFT)))
           succeed
         }
       }

@@ -1,7 +1,7 @@
 package stockschecker.actions
 
 import cats.data.NonEmptyList
-import cats.effect.Temporal
+import cats.effect.{Async, Temporal}
 import cats.implicits.toFoldableOps
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
@@ -34,20 +34,21 @@ final private class LiveActionExecutor[F[_]](
 
   private def executeAction(action: Action): F[Unit] =
     action match
-      case Action.Retried(original, attempt)            => C.sleep(BaseDelay * (1L << (attempt - 1))) >> executeAction(original)
-      case Action.Sequence(actions)                     => actions.toList.traverse_(handleAction)
-      case Action.RescheduleAll                         => services.command.rescheduleAll
-      case Action.Schedule(cid, waiting)                => C.sleep(waiting) >> services.command.execute(cid)
-      case Action.FetchSecurities(exchanges)            => services.security.fetchLatest(exchanges)
-      case Action.UpdateCompanyProfiles(tickers)        => services.companyProfile.fetchLatest(tickers)
-      case Action.UpdatePriceAnalytics(tickers)         => services.price.fetchLatestPriceAnalytics(tickers)
-      case Action.UpdateFinancialMetrics(tickers)       => services.financialMetrics.fetchLatest(tickers)
-      case Action.RecordPriceAnalyticsUpdate(tickers)   => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
-      case Action.RecordFinancialMetricsUpdate(tickers) => services.companyProfile.recordFinancialMetricsUpdate(tickers)
-      case Action.RecordCompanyProfileUpdate(tickers)   => services.security.recordCompanyProfileUpdate(tickers)
-      case Action.DeactivateSecurity(ticker)            => services.security.deactivate(ticker)
-      case Action.DeactivateCompanyProfile(ticker)      => services.companyProfile.deactivate(ticker)
-      case Action.FetchCompanyProfiles(filter, limit)   =>
+      case Action.Retried(original, attempt)                     => C.sleep(BaseDelay * (1L << (attempt - 1))) >> executeAction(original)
+      case Action.Sequence(actions)                              => actions.toList.traverse_(handleAction)
+      case Action.RescheduleAll                                  => services.command.rescheduleAll
+      case Action.Schedule(cid, waiting)                         => C.sleep(waiting) >> services.command.execute(cid)
+      case Action.FetchSecurities(exchanges)                     => services.security.fetchLatest(exchanges)
+      case Action.UpdateCompanyProfiles(tickers)                 => services.companyProfile.fetchLatest(tickers)
+      case Action.UpdatePriceAnalytics(tickers)                  => services.price.fetchLatestPriceAnalytics(tickers)
+      case Action.UpdateFinancialMetrics(tickers)                => services.financialMetrics.fetchLatest(tickers)
+      case Action.RefreshEvaluationPrices(ticker, from, through) => services.investmentScreens.refreshHistory(ticker, from, through)
+      case Action.RecordPriceAnalyticsUpdate(tickers)            => services.companyProfile.recordPriceAnalyticsUpdate(tickers)
+      case Action.RecordFinancialMetricsUpdate(tickers)          => services.companyProfile.recordFinancialMetricsUpdate(tickers)
+      case Action.RecordCompanyProfileUpdate(tickers)            => services.security.recordCompanyProfileUpdate(tickers)
+      case Action.DeactivateSecurity(ticker)                     => services.security.deactivate(ticker)
+      case Action.DeactivateCompanyProfile(ticker)               => services.companyProfile.deactivate(ticker)
+      case Action.FetchCompanyProfiles(filter, limit)            =>
         services.security
           .findTickersBy(filter, limit)
           .map(NonEmptyList.fromList)
@@ -90,9 +91,13 @@ final private class LiveActionExecutor[F[_]](
 }
 
 object ActionExecutor:
-  def make[F[_]: {Temporal, Logger, Clock}](
+  def make[F[_]: {Async, Logger, Clock}](
       dispatcher: ActionDispatcher[F],
       services: Services[F],
       config: ActionExecutorConfig
   ): F[ActionExecutor[F]] =
-    Temporal[F].pure(LiveActionExecutor(dispatcher, services, config))
+    Async[F].pure(
+      Option(dispatcher.jobRepository).flatten.fold[ActionExecutor[F]](
+        LiveActionExecutor(dispatcher, services, config)
+      )(jobs => new DurableActionExecutor(jobs, services, config))
+    )

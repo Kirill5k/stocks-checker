@@ -10,8 +10,6 @@ import stockschecker.domain.{Exchange, Security, SecurityFilter, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.SecurityRepository
 
-import scala.concurrent.duration.*
-
 trait SecurityService[F[_]]:
   def find(ticker: Ticker): F[Security]
   def findByExchange(exchange: Exchange): F[List[Security]]
@@ -46,16 +44,15 @@ final private class LiveSecurityService[F[_]](
     logger.info(s"Fetching latest securities for ${exchanges}") >>
       Stream
         .emits(exchanges.toList)
-        .metered(1.second)
-        .flatMap(exchange => marketDataClient.getTradedSecurities(exchange))
-        .chunkN(512)
-        .evalMap { chunk =>
-          logger.info(s"Saving batch of ${chunk.size} securities") >>
-            repository.save(chunk.toList)
+        .evalMap { exchange =>
+          // Reconcile only after the provider stream has completed successfully.
+          marketDataClient.getTradedSecurities(exchange).compile.toList.flatMap { securities =>
+            if (securities.isEmpty) F.raiseError(AppError.Critical(s"Empty listing response for $exchange; reconciliation skipped"))
+            else repository.reconcile(exchange, securities)
+          }
         }
         .compile
-        .drain >>
-      logger.info(s"Finished fetching securities for ${exchanges}")
+        .drain
 
   override def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
@@ -65,7 +62,7 @@ final private class LiveSecurityService[F[_]](
 
   override def deactivate(ticker: Ticker): F[Unit] =
     repository.deactivate(ticker)
-      
+
 }
 
 object SecurityService:

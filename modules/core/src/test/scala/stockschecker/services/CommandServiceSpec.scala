@@ -52,7 +52,8 @@ class CommandServiceSpec extends IOWordSpec {
         yield ()
 
         res.asserting { r =>
-          verifyNoInteractions(ad)
+          verify(ad).jobRepository
+          verifyNoMoreInteractions(ad)
           verify(repo).streamActive
           r mustBe ()
         }

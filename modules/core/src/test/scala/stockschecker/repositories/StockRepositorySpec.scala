@@ -285,10 +285,10 @@ class StockRepositorySpec extends RepositorySpec {
       }
 
       "filter by multiple criteria" in {
-        val nyseStock       = MSFTSecurity.copy(ticker = Ticker("NYSE1"), exchange = Exchange.NYSE)
-        val etfStock        = MSFTSecurity.copy(ticker = Ticker("SPY"), kind = SecurityKind.ETF)
+        val nyseStock        = MSFTSecurity.copy(ticker = Ticker("NYSE1"), exchange = Exchange.NYSE)
+        val etfStock         = MSFTSecurity.copy(ticker = Ticker("SPY"), kind = SecurityKind.ETF)
         val inactiveSecurity = AAPLSecurity.copy(ticker = Ticker("INACTIVE"), isActive = false)
-        val seedData        = Map(
+        val seedData         = Map(
           "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock), toDoc(etfStock), toDoc(inactiveSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
@@ -618,9 +618,7 @@ class StockRepositorySpec extends RepositorySpec {
           yield
             res.size mustBe 1
             res.head.security.ticker mustBe Ticker("MIDPE")
-            res.head.financialMetrics.exists(m =>
-              m.peRatioTtm.exists(pe => pe >= BigDecimal(15.00) && pe <= BigDecimal(35.00))
-            ) mustBe true
+            res.head.financialMetrics.exists(m => m.peRatioTtm.exists(pe => pe >= BigDecimal(15.00) && pe <= BigDecimal(35.00))) mustBe true
         }
       }
 
@@ -863,7 +861,7 @@ class StockRepositorySpec extends RepositorySpec {
           scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("30.00"))
         )
         val seedData = Map(
-          "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HSCORE"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LSCORE")))),
+          "securities" -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HSCORE"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LSCORE")))),
           "price-analytics" -> List(toDoc(highScoreAnalytics), toDoc(lowScoreAnalytics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -952,11 +950,13 @@ class StockRepositorySpec extends RepositorySpec {
       "filter by minimum consistency score" in {
         val highConsistencyAnalytics = AAPLPriceAnalytics.copy(
           ticker = Ticker("HCONS"),
-          metrics = AAPLPriceAnalytics.metrics.copy(consistencyScore = Some(BigDecimal("0.90")))
+          metrics = AAPLPriceAnalytics.metrics.copy(consistencyScore = Some(BigDecimal("0.90"))),
+          scores = AAPLPriceAnalytics.scores.copy(consistencyScore = BigDecimal(90))
         )
         val lowConsistencyAnalytics = AAPLPriceAnalytics.copy(
           ticker = Ticker("LCONS"),
-          metrics = AAPLPriceAnalytics.metrics.copy(consistencyScore = Some(BigDecimal("0.40")))
+          metrics = AAPLPriceAnalytics.metrics.copy(consistencyScore = Some(BigDecimal("0.40"))),
+          scores = AAPLPriceAnalytics.scores.copy(consistencyScore = BigDecimal(40))
         )
         val seedData = Map(
           "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HCONS"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LCONS")))),
@@ -965,11 +965,11 @@ class StockRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minConsistencyScore = Some(BigDecimal("0.70"))), None)
+            res       <- stockRepo.findAll(StockFilters(minConsistencyScore = Some(BigDecimal(70))), None)
           yield
             res.size mustBe 1
             res.head.security.ticker mustBe Ticker("HCONS")
-            res.head.priceAnalytics.exists(_.metrics.consistencyScore.exists(_ >= BigDecimal("0.70"))) mustBe true
+            res.head.priceAnalytics.exists(_.scores.consistencyScore >= BigDecimal(70)) mustBe true
         }
       }
 
@@ -1007,7 +1007,7 @@ class StockRepositorySpec extends RepositorySpec {
           dividendYieldAnnual = Some(BigDecimal("0.75"))
         )
         val seedData = Map(
-          "securities"        -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HDIV2"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LDIV2")))),
+          "securities" -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HDIV2"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LDIV2")))),
           "financial-metrics" -> List(toDoc(highDivMetrics), toDoc(lowDivMetrics))
         )
         withEmbeddedMongoDatabase(seedData) { db =>
@@ -1036,22 +1036,24 @@ class StockRepositorySpec extends RepositorySpec {
         )
 
         // Fails security filter (wrong exchange)
-        val badExchangeSecurity = MSFTSecurity.copy(ticker = Ticker("BEXCH"), exchange = Exchange.NYSE)
-        val badExchangeProfile  = MSFTCompanyProfile.copy(ticker = Ticker("BEXCH"), country = "US", marketCap = 5000000000000L)
+        val badExchangeSecurity  = MSFTSecurity.copy(ticker = Ticker("BEXCH"), exchange = Exchange.NYSE)
+        val badExchangeProfile   = MSFTCompanyProfile.copy(ticker = Ticker("BEXCH"), country = "US", marketCap = 5000000000000L)
         val badExchangeAnalytics = AAPLPriceAnalytics.copy(
           ticker = Ticker("BEXCH"),
           scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("70.00"))
         )
-        val badExchangeMetrics = AAPLFinancialMetrics.copy(ticker = Ticker("BEXCH"), peRatioTtm = Some(BigDecimal("25.00")), roeTtm = Some(BigDecimal("50.00")))
+        val badExchangeMetrics =
+          AAPLFinancialMetrics.copy(ticker = Ticker("BEXCH"), peRatioTtm = Some(BigDecimal("25.00")), roeTtm = Some(BigDecimal("50.00")))
 
         // Fails profile filter (wrong country)
-        val badCountrySecurity = AAPLSecurity.copy(ticker = Ticker("BCNTRY"))
-        val badCountryProfile  = AAPLCompanyProfile.copy(ticker = Ticker("BCNTRY"), country = "GB", marketCap = 5000000000000L)
+        val badCountrySecurity  = AAPLSecurity.copy(ticker = Ticker("BCNTRY"))
+        val badCountryProfile   = AAPLCompanyProfile.copy(ticker = Ticker("BCNTRY"), country = "GB", marketCap = 5000000000000L)
         val badCountryAnalytics = AAPLPriceAnalytics.copy(
           ticker = Ticker("BCNTRY"),
           scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("70.00"))
         )
-        val badCountryMetrics = AAPLFinancialMetrics.copy(ticker = Ticker("BCNTRY"), peRatioTtm = Some(BigDecimal("25.00")), roeTtm = Some(BigDecimal("50.00")))
+        val badCountryMetrics =
+          AAPLFinancialMetrics.copy(ticker = Ticker("BCNTRY"), peRatioTtm = Some(BigDecimal("25.00")), roeTtm = Some(BigDecimal("50.00")))
 
         // Fails price analytics filter (low overall score)
         val badScoreSecurity  = AAPLSecurity.copy(ticker = Ticker("BSCORE"))
@@ -1060,7 +1062,8 @@ class StockRepositorySpec extends RepositorySpec {
           ticker = Ticker("BSCORE"),
           scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("20.00"))
         )
-        val badScoreMetrics = AAPLFinancialMetrics.copy(ticker = Ticker("BSCORE"), peRatioTtm = Some(BigDecimal("25.00")), roeTtm = Some(BigDecimal("50.00")))
+        val badScoreMetrics =
+          AAPLFinancialMetrics.copy(ticker = Ticker("BSCORE"), peRatioTtm = Some(BigDecimal("25.00")), roeTtm = Some(BigDecimal("50.00")))
 
         // Fails financial metrics filter (PE too high)
         val badPESecurity  = AAPLSecurity.copy(ticker = Ticker("BFIN"))
@@ -1069,26 +1072,51 @@ class StockRepositorySpec extends RepositorySpec {
           ticker = Ticker("BFIN"),
           scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("70.00"))
         )
-        val badPEMetrics = AAPLFinancialMetrics.copy(ticker = Ticker("BFIN"), peRatioTtm = Some(BigDecimal("80.00")), roeTtm = Some(BigDecimal("50.00")))
+        val badPEMetrics =
+          AAPLFinancialMetrics.copy(ticker = Ticker("BFIN"), peRatioTtm = Some(BigDecimal("80.00")), roeTtm = Some(BigDecimal("50.00")))
 
         val seedData = Map(
-          "securities"        -> List(toDoc(goodSecurity), toDoc(badExchangeSecurity), toDoc(badCountrySecurity), toDoc(badScoreSecurity), toDoc(badPESecurity)),
-          "company-profiles"  -> List(toDoc(goodProfile), toDoc(badExchangeProfile), toDoc(badCountryProfile), toDoc(badScoreProfile), toDoc(badPEProfile)),
-          "price-analytics"   -> List(toDoc(goodAnalytics), toDoc(badExchangeAnalytics), toDoc(badCountryAnalytics), toDoc(badScoreAnalytics), toDoc(badPEAnalytics)),
-          "financial-metrics" -> List(toDoc(goodMetrics), toDoc(badExchangeMetrics), toDoc(badCountryMetrics), toDoc(badScoreMetrics), toDoc(badPEMetrics))
+          "securities" -> List(
+            toDoc(goodSecurity),
+            toDoc(badExchangeSecurity),
+            toDoc(badCountrySecurity),
+            toDoc(badScoreSecurity),
+            toDoc(badPESecurity)
+          ),
+          "company-profiles" -> List(
+            toDoc(goodProfile),
+            toDoc(badExchangeProfile),
+            toDoc(badCountryProfile),
+            toDoc(badScoreProfile),
+            toDoc(badPEProfile)
+          ),
+          "price-analytics" -> List(
+            toDoc(goodAnalytics),
+            toDoc(badExchangeAnalytics),
+            toDoc(badCountryAnalytics),
+            toDoc(badScoreAnalytics),
+            toDoc(badPEAnalytics)
+          ),
+          "financial-metrics" -> List(
+            toDoc(goodMetrics),
+            toDoc(badExchangeMetrics),
+            toDoc(badCountryMetrics),
+            toDoc(badScoreMetrics),
+            toDoc(badPEMetrics)
+          )
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
-            res <- stockRepo.findAll(
+            res       <- stockRepo.findAll(
               StockFilters(
-                exchange        = Some(Exchange.NASDAQ),
-                isActive        = Some(true),
-                country         = Some("US"),
-                minMarketCap    = Some(4000000000000L),
+                exchange = Some(Exchange.NASDAQ),
+                isActive = Some(true),
+                country = Some("US"),
+                minMarketCap = Some(4000000000000L),
                 minOverallScore = Some(BigDecimal("50.00")),
-                maxPE           = Some(BigDecimal("35.00")),
-                minROE          = Some(BigDecimal("30.00"))
+                maxPE = Some(BigDecimal("35.00")),
+                minROE = Some(BigDecimal("30.00"))
               ),
               None
             )

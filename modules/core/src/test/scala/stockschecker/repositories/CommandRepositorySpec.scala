@@ -119,7 +119,7 @@ class CommandRepositorySpec extends RepositorySpec {
             _         <- repo.setActive(cmd.id, false)
             activeCmd <- repo.create(newCmd)
             cmds      <- repo.all
-          yield cmds mustBe List(cmd.copy(isActive = false), activeCmd)
+          yield cmds mustBe List(cmd.copy(isActive = false, version = Some(cmd.revision + 1L)), activeCmd)
         }
     }
   }

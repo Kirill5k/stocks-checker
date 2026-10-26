@@ -26,6 +26,7 @@ trait CompanyProfileRepository[F[_]]:
   def updatePriceAnalyticsLastUpdated(tickers: List[Ticker]): F[Unit]
   def updateFinancialMetricsLastUpdated(tickers: List[Ticker]): F[Unit]
   def deactivate(ticker: Ticker): F[Unit]
+  def activate(ticker: Ticker): F[Unit]
 
 final private class LiveCompanyProfileRepository[F[_]](
     private val collection: MongoCollection[F, CompanyProfileEntity]
@@ -120,6 +121,9 @@ final private class LiveCompanyProfileRepository[F[_]](
         Update.set(Field.IsActive, false).currentDate(Field.UpdatedAt)
       )
       .void
+
+  override def activate(ticker: Ticker): F[Unit] =
+    collection.updateOne(Filter.idEq(ticker.value), Update.set(Field.IsActive, true).currentDate(Field.UpdatedAt)).void
 
   extension (f: CompanyProfileFilter)
     private def toFilter: F[Filter] = f match

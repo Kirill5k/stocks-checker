@@ -21,7 +21,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
       |{
       |"ticker":"AAPL",
       |"name":"Apple Inc.",
-      |"security":{"exchange":"nasdaq","kind":"stock","isActive":true},
+      |"security":{"exchange":"nasdaq","kind":"stock","isActive":true,"listingStatus":"listed","exclusionReason":null},
       |"profile":{
       | "country":"US",
       |  "industry":"Consumer Electronics",
@@ -61,6 +61,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
       |   "drawdownScore":100,
       |   "consistencyScore":49.96
       | },
+      | "basis":{"purpose":"historical-performance","returnAdjustment":"split","drawdownFrequency":"monthly","riskWindowYears":5,"priceObservationId":null,"quotedPriceObservationId":null},
       | "lastUpdatedAt" : null
       |},
       |"financialMetrics":{
@@ -128,7 +129,7 @@ class StockControllerSpec extends HttpRoutesWordSpec {
             |,{
             |"ticker":"MSFT",
             |"name":"Microsoft Corporation",
-            |"security":{"exchange":"nasdaq","kind":"stock","isActive":true},
+            |"security":{"exchange":"nasdaq","kind":"stock","isActive":true,"listingStatus":"listed","exclusionReason":null},
             |"profile":{
             | "country":"US",
             |  "industry":"Software—Infrastructure",
@@ -303,34 +304,34 @@ class StockControllerSpec extends HttpRoutesWordSpec {
         res mustHaveStatus (Status.Ok, Some(s"""[${applStockJson}]""".stripMargin))
         verify(svc).findAll(
           StockFilters(
-            exchange            = Some(stockschecker.domain.Exchange.NASDAQ),
-            kind                = Some(stockschecker.domain.SecurityKind.Stock),
-            isActive            = Some(true),
-            country             = Some("US"),
-            minMarketCap        = Some(1000000000000L),
-            maxMarketCap        = Some(5000000000000L),
-            minPrice            = Some(BigDecimal(100)),
-            maxPrice            = Some(BigDecimal(500)),
-            minChange           = Some(BigDecimal(5)),
-            maxChange           = Some(BigDecimal(50)),
-            period              = Some(stockschecker.domain.TimePeriod.OneYear),
-            minOverallScore     = Some(BigDecimal(60)),
-            minCagrScore        = Some(BigDecimal(50)),
-            minVolatilityScore  = Some(BigDecimal(40)),
-            maxDrawdown         = Some(BigDecimal(30)),
+            exchange = Some(stockschecker.domain.Exchange.NASDAQ),
+            kind = Some(stockschecker.domain.SecurityKind.Stock),
+            isActive = Some(true),
+            country = Some("US"),
+            minMarketCap = Some(1000000000000L),
+            maxMarketCap = Some(5000000000000L),
+            minPrice = Some(BigDecimal(100)),
+            maxPrice = Some(BigDecimal(500)),
+            minChange = Some(BigDecimal(5)),
+            maxChange = Some(BigDecimal(50)),
+            period = Some(stockschecker.domain.TimePeriod.OneYear),
+            minOverallScore = Some(BigDecimal(60)),
+            minCagrScore = Some(BigDecimal(50)),
+            minVolatilityScore = Some(BigDecimal(40)),
+            maxDrawdown = Some(BigDecimal(30)),
             minConsistencyScore = Some(BigDecimal(70)),
-            minPE               = Some(BigDecimal(15)),
-            maxPE               = Some(BigDecimal(35)),
-            minROE              = Some(BigDecimal(15)),
-            maxDebtToEquity     = Some(BigDecimal(1.5)),
-            minProfitMargin     = Some(BigDecimal(10)),
-            maxProfitMargin     = Some(BigDecimal(50)),
-            minFreeCashFlow     = Some(BigDecimal(5)),
-            minDividendYield    = Some(BigDecimal(0.5)),
-            maxDividendYield    = Some(BigDecimal(5)),
-            minRevenueGrowth5Y  = Some(BigDecimal(8)),
-            minEpsGrowth5Y      = Some(BigDecimal(10)),
-            sortBy              = Some(stockschecker.domain.StockSortField.OverallScore)
+            minPE = Some(BigDecimal(15)),
+            maxPE = Some(BigDecimal(35)),
+            minROE = Some(BigDecimal(15)),
+            maxDebtToEquity = Some(BigDecimal(1.5)),
+            minProfitMargin = Some(BigDecimal(10)),
+            maxProfitMargin = Some(BigDecimal(50)),
+            minFreeCashFlow = Some(BigDecimal(5)),
+            minDividendYield = Some(BigDecimal(0.5)),
+            maxDividendYield = Some(BigDecimal(5)),
+            minRevenueGrowth5Y = Some(BigDecimal(8)),
+            minEpsGrowth5Y = Some(BigDecimal(10)),
+            sortBy = Some(stockschecker.domain.StockSortField.OverallScore)
           ),
           Some(10)
         )

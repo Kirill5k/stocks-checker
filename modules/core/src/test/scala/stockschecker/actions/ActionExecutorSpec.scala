@@ -19,7 +19,7 @@ class ActionExecutorSpec extends IOWordSpec {
   given Clock[IO]  = Clock.mock(Instant.now())
 
   val config = ActionExecutorConfig(3)
-  
+
   "An ActionExecutor" when {
     "handling RecordCompanyProfileUpdate action" should {
       "call security service markAsEnriched method" in {

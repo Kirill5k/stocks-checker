@@ -3,8 +3,9 @@ package stockschecker.domain
 import cats.data.NonEmptyList
 import io.circe.Codec as CirceCodec
 
-import java.lang.Double.{isNaN, isInfinite}
-import java.time.LocalDate
+import java.lang.Double.{isInfinite, isNaN}
+import java.time.{LocalDate, YearMonth}
+import java.time.temporal.ChronoUnit
 import scala.math.BigDecimal.RoundingMode
 
 final case class PricePerformanceSummary(
@@ -42,17 +43,69 @@ final case class PriceAnalytics(
     ticker: Ticker,
     performanceSummary: PricePerformanceSummary,
     metrics: StockAnalysisMetrics,
-    scores: StockAnalysisScores
+    scores: StockAnalysisScores,
+    basis: Option[PriceAnalyticsBasis] = None
+) derives CirceCodec.AsObject
+
+final case class PriceAnalyticsBasis(
+    purpose: String,
+    returnAdjustment: String,
+    drawdownFrequency: String,
+    riskWindowYears: Int,
+    priceObservationId: Option[String],
+    quotedPriceObservationId: Option[String]
 ) derives CirceCodec.AsObject
 
 object PriceAnalytics:
+  def validate(candles: NonEmptyList[PriceCandle], monthly: Boolean = true): Either[String, NonEmptyList[PriceCandle]] = {
+    val sorted = candles.toList.sortBy(_.date).reverse
+    if (sorted.exists(_.close <= 0)) Left("Prices must be positive")
+    else if (sorted.map(_.date).distinct.size != sorted.size) Left("Duplicate price dates")
+    else if (
+      monthly && sorted.sliding(2).exists {
+        case List(a, b) => ChronoUnit.MONTHS.between(YearMonth.from(b.date), YearMonth.from(a.date)) != 1
+        case _          => false
+      }
+    ) Left("Monthly price history contains missing or duplicate months")
+    else Right(NonEmptyList.fromListUnsafe(sorted))
+  }
+
+  def fromDaily(ticker: Ticker, daily: NonEmptyList[PriceCandle]): PriceAnalytics = {
+    val sorted  = daily.toList.sortBy(_.date).reverse
+    val monthly = NonEmptyList.fromListUnsafe(
+      sorted
+        .groupBy(c => YearMonth.from(c.date))
+        .values
+        .map(_.maxBy(_.date))
+        .toList
+        .sortBy(_.date)
+        .reverse
+    )
+    val base                                 = from(ticker, monthly)
+    val latest                               = sorted.head
+    val prices                               = sorted.filter(c => !c.date.isBefore(latest.date.minusYears(5))).map(_.close)
+    def cagr(years: Int): Option[BigDecimal] =
+      candleOnOrBefore(sorted, latest.date.minusYears(years.toLong)).map { start =>
+        val elapsed = ChronoUnit.DAYS.between(start.date, latest.date).toDouble / 365.2425
+        calculateCAGR(start.close, latest.close, elapsed)
+      }
+    val metrics = base.metrics.copy(cagr3Year = cagr(3), cagr5Year = cagr(5), maxDrawdown = calculateMaxDrawdown(prices))
+    base.copy(
+      performanceSummary = calculatePerformanceSummary(NonEmptyList.fromListUnsafe(sorted), monthly = false),
+      metrics = metrics,
+      scores = calculateScores(metrics),
+      basis = Some(PriceAnalyticsBasis("historical-performance", "split-and-dividend", "daily", 5, None, None))
+    )
+  }
+
   def from(ticker: Ticker, priceCandles: NonEmptyList[PriceCandle]): PriceAnalytics = {
     val metrics = calculateMetrics(priceCandles)
     PriceAnalytics(
       ticker = ticker,
       performanceSummary = calculatePerformanceSummary(priceCandles),
       metrics = metrics,
-      scores = calculateScores(metrics)
+      scores = calculateScores(metrics),
+      basis = Some(PriceAnalyticsBasis("historical-performance", "split", "monthly", 5, None, None))
     )
   }
 
@@ -60,7 +113,10 @@ object PriceAnalytics:
     def toLatestPrice: LatestPrice =
       LatestPrice(pa.ticker, pa.performanceSummary.latestPrice, pa.performanceSummary.latestPriceDate)
 
-  private def calculatePerformanceSummary(priceCandles: NonEmptyList[PriceCandle]): PricePerformanceSummary = {
+  private def candleOnOrBefore(candles: List[PriceCandle], target: LocalDate): Option[PriceCandle] =
+    candles.find(c => !c.date.isAfter(target) && ChronoUnit.DAYS.between(c.date, target) <= 7)
+
+  private def calculatePerformanceSummary(priceCandles: NonEmptyList[PriceCandle], monthly: Boolean = true): PricePerformanceSummary = {
     val latestCandle    = priceCandles.head
     val latestPrice     = latestCandle.close
     val latestPriceDate = latestCandle.date
@@ -75,7 +131,11 @@ object PriceAnalytics:
       }
 
     def calculatePeriodChange(monthsAgo: Int): Option[BigDecimal] =
-      calculateChange(priceCandles.toList.lift(monthsAgo))
+      val target = latestPriceDate.minusMonths(monthsAgo.toLong)
+      val start  =
+        if monthly then priceCandles.toList.find(c => YearMonth.from(c.date) == YearMonth.from(target))
+        else candleOnOrBefore(priceCandles.toList, target)
+      calculateChange(start)
 
     PricePerformanceSummary(
       latestPrice = latestPrice,
@@ -93,24 +153,31 @@ object PriceAnalytics:
 
   private def calculateMetrics(candles: NonEmptyList[PriceCandle]): StockAnalysisMetrics = {
     val latestPrice = candles.head.close
-    val prices      = candles.map(_.close).toList
+    val riskCandles = NonEmptyList.fromListUnsafe(candles.toList.filter(c => !c.date.isBefore(candles.head.date.minusYears(5))))
+    val prices      = riskCandles.map(_.close).toList
+
+    def cagr(years: Int): Option[BigDecimal] =
+      candles.toList.find(c => YearMonth.from(c.date) == YearMonth.from(candles.head.date.minusYears(years.toLong))).map { start =>
+        val elapsed = ChronoUnit.DAYS.between(start.date, candles.head.date).toDouble / 365.2425
+        calculateCAGR(start.close, latestPrice, elapsed)
+      }
 
     val yearlyReturns = calculateYearlyReturns(prices)
     val positiveYears = yearlyReturns.count(_ > 0)
     val totalYears    = yearlyReturns.size
 
     StockAnalysisMetrics(
-      cagr3Year = if (candles.size >= 37) Some(calculateCAGR(prices(36), latestPrice, 3)) else None,
-      cagr5Year = if (candles.size >= 61) Some(calculateCAGR(prices(60), latestPrice, 5)) else None,
+      cagr3Year = cagr(3),
+      cagr5Year = cagr(5),
       volatility = calculateVolatility(prices),
       maxDrawdown = calculateMaxDrawdown(prices),
-      consistencyScore = calculateConsistency(candles),
+      consistencyScore = calculateConsistency(riskCandles),
       positiveYears = positiveYears,
       totalYears = totalYears
     )
   }
 
-  private def calculateCAGR(startPrice: BigDecimal, endPrice: BigDecimal, years: Int): BigDecimal =
+  private def calculateCAGR(startPrice: BigDecimal, endPrice: BigDecimal, years: Double): BigDecimal =
     if (startPrice <= 0 || years <= 0) BigDecimal(0)
     else {
       val ratio = endPrice / startPrice
@@ -185,8 +252,8 @@ object PriceAnalytics:
         Math.pow(y - yPred, 2)
       }.sum
 
-      val rSquared        = if (ssTotal == 0) 0.0 else 1.0 - (ssRes / ssTotal)
-      val safeRSquared    = if (isNaN(rSquared) || isInfinite(rSquared)) 0.0 else rSquared
+      val rSquared     = if (ssTotal == 0) 0.0 else 1.0 - (ssRes / ssTotal)
+      val safeRSquared = if (isNaN(rSquared) || isInfinite(rSquared)) 0.0 else rSquared
       BigDecimal(Math.max(0.0, Math.min(1.0, safeRSquared))).setScale(4, RoundingMode.HALF_UP)
     }
   }

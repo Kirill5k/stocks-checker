@@ -152,28 +152,46 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         yield ()).asserting { _ =>
           verify(client).getCompanyProfile(AAPL)
           verify(client).getCompanyProfile(MSFT)
-          verify(repo).save(List(AAPLCompanyProfile, MSFTCompanyProfile))
-          verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(List(AAPL, MSFT)))
+          verify(repo).save(List(AAPLCompanyProfile))
+          verify(repo).save(List(MSFTCompanyProfile))
+          verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(List(AAPL)))
+          verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(List(MSFT)))
           succeed
         }
       }
 
-      "handle errors gracefully and still dispatch action for successful fetches" in {
+      "persist successful profiles and report a partially failed batch" in {
         val (repo, client, dispatcher) = mocks
         val tickers                    = NonEmptyList.of(AAPL, MSFT)
         when(client.getCompanyProfile(AAPL)).thenReturnSome(AAPLCompanyProfile)
-        when(client.getCompanyProfile(MSFT)).thenReturn(IO.raiseError(new RuntimeException("API error")))
+        val error = new RuntimeException("API error")
+        when(client.getCompanyProfile(MSFT)).thenReturn(IO.raiseError(error))
         when(repo.save(anyList[CompanyProfile])).thenReturnUnit
         when(dispatcher.dispatch(any[Action])).thenReturnUnit
 
         (for
           svc <- CompanyProfileService.make(repo, client, dispatcher)
           _   <- svc.fetchLatest(tickers)
-        yield ()).asserting { _ =>
+        yield ()).attempt.asserting { result =>
+          result mustBe Left(error)
           verify(client).getCompanyProfile(AAPL)
           verify(client).getCompanyProfile(MSFT)
           verify(repo).save(List(AAPLCompanyProfile))
           verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(List(AAPL)))
+          succeed
+        }
+      }
+
+      "report unavailable provider data without dispatching security deactivation" in {
+        val (repo, client, dispatcher) = mocks
+        when(client.getCompanyProfile(AAPL)).thenReturnNone
+        val result = for
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
+          _   <- svc.fetchLatest(NonEmptyList.of(AAPL))
+        yield ()
+        result.attempt.asserting { outcome =>
+          outcome mustBe Left(AppError.CompanyProfileNotFound(AAPL))
+          verifyNoInteractions(repo, dispatcher)
           succeed
         }
       }

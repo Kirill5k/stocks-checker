@@ -43,7 +43,11 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
              |    },
              |    "lastExecutedAt" : "${ts}",
              |    "executionCount" : 1,
-             |    "maxExecutions" : 10
+             |    "maxExecutions" : 10,
+             |    "version" : null,
+             |    "nextRunAt" : null,
+             |    "activeRunId" : null,
+             |    "outbox" : null
              |  }
              |]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))

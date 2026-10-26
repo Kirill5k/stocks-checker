@@ -5,6 +5,7 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
 import stockschecker.common.JsonCodecs
 import stockschecker.domain.{CommandId, CompanyProfileFilter, Exchange, SecurityFilter, Ticker}
 
+import java.time.LocalDate
 import scala.concurrent.duration.FiniteDuration
 
 enum Action derives ConfiguredCodec:
@@ -20,6 +21,7 @@ enum Action derives ConfiguredCodec:
   case UpdateCompanyProfiles(tickers: NonEmptyList[Ticker])
   case UpdateFinancialMetrics(tickers: NonEmptyList[Ticker])
   case UpdatePriceAnalytics(tickers: NonEmptyList[Ticker])
+  case RefreshEvaluationPrices(ticker: Ticker, from: LocalDate, through: LocalDate)
   // Record operations - audit/tracking
   case RecordCompanyProfileUpdate(tickers: List[Ticker])
   case RecordFinancialMetricsUpdate(tickers: List[Ticker])

@@ -8,6 +8,7 @@ import org.scalatest.wordspec.AnyWordSpec
 import org.scalatest.prop.TableDrivenPropertyChecks
 import stockschecker.domain.*
 
+import java.time.LocalDate
 import scala.concurrent.duration.*
 
 class ActionSpec extends AnyWordSpec with Matchers with TableDrivenPropertyChecks {
@@ -42,6 +43,10 @@ class ActionSpec extends AnyWordSpec with Matchers with TableDrivenPropertyCheck
       Action.UpdateCompanyProfiles(NonEmptyList.of(Ticker("AAPL"), Ticker("MSFT")))
     ),
     ("""{"tickers":["GOOGL"],"kind":"update-financial-metrics"}""", Action.UpdateFinancialMetrics(NonEmptyList.one(Ticker("GOOGL")))),
+    (
+      """{"ticker":"AAPL","from":"2025-01-01","through":"2026-01-01","kind":"refresh-evaluation-prices"}""",
+      Action.RefreshEvaluationPrices(Ticker("AAPL"), LocalDate.parse("2025-01-01"), LocalDate.parse("2026-01-01"))
+    ),
     (
       """{"tickers":["TSLA","NVDA"],"kind":"update-price-analytics"}""",
       Action.UpdatePriceAnalytics(NonEmptyList.of(Ticker("TSLA"), Ticker("NVDA")))

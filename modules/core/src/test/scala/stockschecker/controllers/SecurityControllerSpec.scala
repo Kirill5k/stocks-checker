@@ -35,6 +35,8 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
                         |  "name" : "Apple Inc.",
                         |  "kind" : "stock",
                         |  "isActive" : true,
+                        |  "exclusionReason" : null,
+                        |  "listingStatus" : "listed",
                         |  "companyProfileLastUpdatedAt" : "2024-01-15T10:00:00Z"
                         |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(resBody))
@@ -104,6 +106,8 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
              |    "name" : "Apple Inc.",
              |    "kind" : "stock",
              |    "isActive" : true,
+             |    "exclusionReason" : null,
+             |    "listingStatus" : "listed",
              |    "companyProfileLastUpdatedAt" : "2024-01-15T10:00:00Z"
              |  },
              |  {
@@ -112,6 +116,8 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
              |    "name" : "Microsoft Corporation",
              |    "kind" : "stock",
              |    "isActive" : true,
+             |    "exclusionReason" : null,
+             |    "listingStatus" : "listed",
              |    "companyProfileLastUpdatedAt" : null
              |  }
              |]""".stripMargin

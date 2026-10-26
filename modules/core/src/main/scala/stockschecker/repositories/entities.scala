@@ -14,6 +14,7 @@ import stockschecker.domain.{
   FinancialMetrics,
   LatestPrice,
   PriceAnalytics,
+  PriceAnalyticsBasis,
   PricePerformanceSummary,
   Schedule,
   Security,
@@ -39,7 +40,9 @@ private[repositories] object entities extends MongoJsonCodecs {
       isActive: Boolean,
       companyProfileLastUpdatedAt: Option[Instant],
       createdAt: Instant,
-      updatedAt: Instant
+      updatedAt: Instant,
+      listingStatus: Option[String] = None,
+      exclusionReason: Option[String] = None
   ) derives Codec.AsObject:
     def toDomain: Security =
       Security(
@@ -48,7 +51,9 @@ private[repositories] object entities extends MongoJsonCodecs {
         name = name,
         kind = kind,
         isActive = isActive,
-        companyProfileLastUpdatedAt = companyProfileLastUpdatedAt
+        companyProfileLastUpdatedAt = companyProfileLastUpdatedAt,
+        listingStatus = listingStatus.getOrElse("listed"),
+        exclusionReason = exclusionReason.orElse(Option.when(!isActive && !listingStatus.contains("delisted"))("legacy-excluded"))
       )
 
   object SecurityEntity:
@@ -112,14 +117,16 @@ private[repositories] object entities extends MongoJsonCodecs {
       metrics: StockAnalysisMetrics,
       scores: StockAnalysisScores,
       createdAt: Instant,
-      updatedAt: Instant
+      updatedAt: Instant,
+      basis: Option[PriceAnalyticsBasis] = None
   ) derives Codec.AsObject:
     def toDomain: PriceAnalytics =
       PriceAnalytics(
         ticker = _id,
         performanceSummary = performanceSummary,
         metrics = metrics,
-        scores = scores
+        scores = scores,
+        basis = basis
       )
 
   object PriceAnalyticsEntity:
