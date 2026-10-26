@@ -7,7 +7,7 @@ import cats.syntax.functor.*
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.{DateRange, EvaluationClose, EvaluationPriceSeries, PriceAdjustment, PriceHistorySnapshot, Ticker}
 import stockschecker.repositories.PriceHistoryRepository
-import java.time.{LocalDate, ZoneOffset}
+import java.time.{Duration, LocalDate, Period, ZoneOffset}
 
 /** A daily, total-return history with source provenance and validation issues. */
 trait EvaluationPriceHistory[F[_]]:
@@ -21,6 +21,11 @@ final private class LiveEvaluationPriceHistory[F[_]](
     F: Temporal[F]
 ) extends EvaluationPriceHistory[F] {
 
+  private val sharedHistoryLookback = Period.ofYears(13)
+  // Matches the output size requested from TwelveData; a full response may be truncated.
+  private val providerCandleLimit = 5000
+  private val maxSnapshotAge      = Duration.ofDays(1)
+
   private def coversCompletedSessions(snapshot: PriceHistorySnapshot, range: DateRange): Boolean =
     !snapshot.requestedRange.through.isBefore(range.through) &&
       !snapshot.fetchedAt.isBefore(range.through.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant)
@@ -29,7 +34,7 @@ final private class LiveEvaluationPriceHistory[F[_]](
     val issues = List(
       Option.when(snapshot.currency != "USD")("unsupported evaluation currency"),
       Option.when(snapshot.adjustment != PriceAdjustment.SplitsAndDividends)("total-return adjustments unavailable"),
-      Option.when(snapshot.candles.size >= 5000)("provider response may be truncated")
+      Option.when(snapshot.candles.size >= providerCandleLimit)("provider response may be truncated")
     ).flatten
     EvaluationPriceSeries(
       snapshot.ticker,
@@ -54,14 +59,15 @@ final private class LiveEvaluationPriceHistory[F[_]](
       today = LocalDate.ofInstant(now, ZoneOffset.UTC)
       // Fetch the shared analytics horizon once, so every screen creation date and
       // completed monthly cutoff can reuse the same unmerged adjustment vintage.
-      sharedFrom    = if (range.from.isBefore(today.minusYears(13))) range.from else today.minusYears(13)
+      sharedStart   = today.minus(sharedHistoryLookback)
+      sharedFrom    = if (range.from.isBefore(sharedStart)) range.from else sharedStart
       sharedThrough = if (range.through.isAfter(today)) range.through else today
       sharedRange   = DateRange(sharedFrom, sharedThrough)
       stored <- repository.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)
       // Explicit jobs can refresh an incomplete vintage the next day. Other readers use cached(),
       // which preserves complete historical captures without an age limit.
       snapshot <- stored
-        .filter(s => coversCompletedSessions(s, range) && !s.fetchedAt.isAfter(now) && s.fetchedAt.isAfter(now.minusSeconds(86400)))
+        .filter(s => coversCompletedSessions(s, range) && !s.fetchedAt.isAfter(now) && s.fetchedAt.isAfter(now.minus(maxSnapshotAge)))
         .map(_.pure[F])
         .getOrElse(client.getDailyPriceHistory(ticker, sharedRange, PriceAdjustment.SplitsAndDividends).flatTap(repository.save))
     yield toSeries(snapshot, range)
