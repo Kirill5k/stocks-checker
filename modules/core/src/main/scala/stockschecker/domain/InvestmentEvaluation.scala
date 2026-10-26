@@ -4,7 +4,11 @@ import io.circe.Codec
 import java.time.{Instant, LocalDate, ZoneOffset}
 import scala.math.BigDecimal.RoundingMode
 
-final case class EvaluationClose(date: LocalDate, totalReturnClose: BigDecimal) derives Codec.AsObject
+final case class EvaluationClose(
+    date: LocalDate,
+    totalReturnClose: BigDecimal
+) derives Codec.AsObject
+
 final case class EvaluationPriceSeries(
     ticker: Ticker,
     closes: List[EvaluationClose],

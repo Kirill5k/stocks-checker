@@ -27,4 +27,7 @@ final case class FinancialSnapshot(
     validationErrors: List[String]
 ) derives Codec.AsObject
 
-final case class FinancialData(metrics: FinancialMetrics, snapshot: FinancialSnapshot) derives Codec.AsObject
+final case class FinancialData(
+    metrics: FinancialMetrics,
+    snapshot: FinancialSnapshot
+) derives Codec.AsObject

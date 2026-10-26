@@ -1,13 +1,12 @@
 import com.typesafe.sbt.packager.docker.*
 import org.typelevel.scalacoptions.ScalacOptions
-import sbtghactions.{JavaSpec, WorkflowStep}
+import sbtghactions.JavaSpec
 
 ThisBuild / scalaVersion := "3.10.0"
 ThisBuild / scalacOptions ++= Seq("-Wunused:all")
 ThisBuild / version                             := scala.sys.process.Process("git rev-parse HEAD").!!.trim.slice(0, 7)
 ThisBuild / organization                        := "io.github.kirill5k"
 ThisBuild / githubWorkflowPublishTargetBranches := Nil
-ThisBuild / githubWorkflowBuildPreamble += WorkflowStep.Sbt(List("scalafmtCheckAll"), name = Some("Check formatting"))
 ThisBuild / githubWorkflowJavaVersions := Seq(JavaSpec.corretto("27"))
 githubWorkflowDir                      := (LocalRootProject / baseDirectory).value / ".github"
 

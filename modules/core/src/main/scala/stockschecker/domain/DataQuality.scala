@@ -13,7 +13,12 @@ final case class DatasetAvailability(
     failure: Option[String]
 ) derives Codec.AsObject
 
-final case class ExcludedSecurity(ticker: Ticker, reason: String, listingStatus: String) derives Codec.AsObject
+final case class ExcludedSecurity(
+    ticker: Ticker,
+    reason: String,
+    listingStatus: String
+) derives Codec.AsObject
+
 final case class DataQualityReport(
     generatedAt: Instant,
     datasets: List[DatasetAvailability],
