@@ -8,7 +8,11 @@ import stockschecker.repositories.PriceHistoryRepository
 import java.time.{LocalDate, ZoneOffset}
 
 object ProviderEvaluationPriceHistory {
-  def make[F[_]: Temporal](client: MarketDataClient[F], repository: PriceHistoryRepository[F], audited: Boolean): EvaluationPriceHistory[F] =
+  def make[F[_]: Temporal](
+      client: MarketDataClient[F],
+      repository: PriceHistoryRepository[F],
+      audited: Boolean
+  ): EvaluationPriceHistory[F] =
     new EvaluationPriceHistory[F] {
       private def coversCompletedSessions(snapshot: PriceHistorySnapshot, through: LocalDate): Boolean =
         !snapshot.requestedThrough.isBefore(through) &&
@@ -19,23 +23,41 @@ object ProviderEvaluationPriceHistory {
           Option.when(snapshot.currency != "USD")("unsupported evaluation currency"),
           Option.when(snapshot.candles.size >= 5000)("provider response may be truncated")
         ).flatten
-        EvaluationPriceSeries(snapshot.ticker,
+        EvaluationPriceSeries(
+          snapshot.ticker,
           snapshot.candles.filter(c => !c.date.isBefore(from) && !c.date.isAfter(through)).map(c => EvaluationClose(c.date, c.close)),
-          snapshot.provider, snapshot.fetchedAt, audited && issues.isEmpty, snapshot.adjustment,
-          snapshot.requestedFrom, snapshot.requestedThrough, issues, snapshotIds = List(snapshot.id))
+          snapshot.provider,
+          snapshot.fetchedAt,
+          audited && issues.isEmpty,
+          snapshot.adjustment,
+          snapshot.requestedFrom,
+          snapshot.requestedThrough,
+          issues,
+          snapshotIds = List(snapshot.id)
+        )
       }
 
       def cached(ticker: Ticker, from: LocalDate, through: LocalDate): F[Option[EvaluationPriceSeries]] =
-        repository.latestCovering(ticker, "split-and-dividend", from)
+        repository
+          .latestCovering(ticker, "split-and-dividend", from)
           .map(_.filter(coversCompletedSessions(_, through)).map(toSeries(_, from, through)))
 
       def history(ticker: Ticker, from: LocalDate, through: LocalDate): F[EvaluationPriceSeries] =
         for
+          now <- Temporal[F].realTimeInstant
+          today = LocalDate.ofInstant(now, ZoneOffset.UTC)
+          // Fetch the shared analytics horizon once, so every screen creation date and
+          // completed monthly cutoff can reuse the same unmerged adjustment vintage.
+          sharedFrom    = if (from.isBefore(today.minusYears(13))) from else today.minusYears(13)
+          sharedThrough = if (through.isAfter(today)) through else today
           stored <- repository.latestCovering(ticker, "split-and-dividend", from)
-          // A fixed evaluation cutoff needs only one complete vintage, regardless of today's date.
-          snapshot <- stored.filter(coversCompletedSessions(_, through)).fold(
-            client.getDailyPriceHistory(ticker, from, through, "all").flatTap(repository.save)
-          )(_.pure[F])
+          // Explicit jobs can refresh an incomplete vintage the next day. Other readers use cached(),
+          // which preserves complete historical captures without an age limit.
+          snapshot <- stored
+            .filter(s => coversCompletedSessions(s, through) && !s.fetchedAt.isAfter(now) && s.fetchedAt.isAfter(now.minusSeconds(86400)))
+            .fold(
+              client.getDailyPriceHistory(ticker, sharedFrom, sharedThrough, "all").flatTap(repository.save)
+            )(_.pure[F])
         yield toSeries(snapshot, from, through)
     }
 }

@@ -1,10 +1,9 @@
 package stockschecker.repositories
 
 import cats.data.NonEmptyList
-import org.scalatest.wordspec.AsyncWordSpec
 import stockschecker.actions.Action
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{CreateCommand, Exchange, Schedule}
+import stockschecker.domain.{CreateCommand, Exchange, Schedule, UpdateCommand}
 import stockschecker.fixtures.*
 
 import scala.concurrent.duration.*
@@ -49,7 +48,7 @@ class CommandRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- CommandRepository.make(db)
-            res  <- repo.update(FetchLatestSecuritiesCommand).attempt
+            res  <- repo.update(UpdateCommand(FetchLatestSecuritiesCommand.id, false, action, Schedule.Periodic(5.minutes), None)).attempt
           yield res mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestSecuritiesCommand.id.value))
         }
 
@@ -58,12 +57,12 @@ class CommandRepositorySpec extends RepositorySpec {
           for
             repo       <- CommandRepository.make(db)
             cmd        <- repo.create(newCmd)
-            _          <- repo.update(cmd.copy(isActive = false, lastExecutedAt = Some(ts), executionCount = 10, maxExecutions = Some(10)))
+            _          <- repo.update(UpdateCommand(cmd.id, false, cmd.action, cmd.schedule, Some(10)))
             updatedCmd <- repo.find(cmd.id)
           yield {
             updatedCmd.isActive mustBe false
-            updatedCmd.lastExecutedAt mustBe Some(ts)
-            updatedCmd.executionCount mustBe 10
+            updatedCmd.lastExecutedAt mustBe None
+            updatedCmd.executionCount mustBe 0
             updatedCmd.maxExecutions mustBe Some(10)
           }
         }
@@ -89,15 +88,34 @@ class CommandRepositorySpec extends RepositorySpec {
         }
     }
 
-    "streamActive" should {
-      "stream active commands" in
+    "pending" should {
+      "exclude future and exhausted schedules while including outbox recovery" in
+        withEmbeddedMongoDatabase { db =>
+          for {
+            repo        <- CommandRepository.make(db)
+            future      <- repo.create(CreateCommand(action, Schedule.Cron.unsafe("0 0 * * *"), None))
+            _           <- repo.initializeNextRun(future, ts)
+            exhausted   <- repo.create(CreateCommand(action, Schedule.Periodic(1.hour), Some(1)))
+            ready       <- repo.initializeNextRun(exhausted, ts).map(_.get)
+            occurrence  <- repo.reserve(ready, ts).map(_.get)
+            recoverable <- repo.pending(ts)
+            _           <- repo.clearOutbox(exhausted.id, occurrence.job.id)
+            _           <- repo.completeRun(exhausted.id, occurrence.job.id)
+            idle        <- repo.pending(ts)
+          } yield {
+            recoverable.map(_.id) mustBe List(exhausted.id)
+            idle mustBe Nil
+          }
+        }
+
+      "select uninitialized active commands and exclude inactive ones" in
         withEmbeddedMongoDatabase { db =>
           for
             repo           <- CommandRepository.make(db)
             cmd            <- repo.create(newCmd)
             _              <- repo.setActive(cmd.id, false)
             activeCmd      <- repo.create(newCmd)
-            activeCommands <- repo.streamActive.compile.toList
+            activeCommands <- repo.pending(ts)
           yield activeCommands mustBe List(activeCmd)
         }
     }

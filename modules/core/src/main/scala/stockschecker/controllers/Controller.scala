@@ -117,6 +117,8 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
       (StatusCode.TooManyRequests, ErrorResponse(err.getMessage))
     case err: AppError.ProviderConfiguration =>
       (StatusCode.ServiceUnavailable, ErrorResponse(err.getMessage))
+    case err: AppError.DataUnavailable =>
+      (StatusCode.ServiceUnavailable, ErrorResponse(err.getMessage))
     case err: AppError.Conflict =>
       (StatusCode.Conflict, ErrorResponse(err.getMessage))
     case err: AppError.BadReq =>

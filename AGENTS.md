@@ -110,8 +110,8 @@ The application starts in `Application.scala` which:
 The application uses a custom action-based task system for background jobs:
 
 *   **Action**: A sealed trait representing different types of background tasks (e.g., `FetchSecurities`, `FetchCompanyProfiles`). Actions are defined in `actions/Action.scala`.
-*   **ActionDispatcher**: A queue-based dispatcher that manages pending actions. Uses an FS2 queue with a capacity of 128.
-*   **ActionExecutor**: Consumes actions from the dispatcher and executes them by calling appropriate service methods. Runs as an FS2 stream in parallel with the HTTP server.
+*   **ActionDispatcher**: A queue-based dispatcher that manages pending actions. Persists accepted jobs in MongoDB.
+*   **ActionExecutor**: Claims durable jobs with leases and executes them through service methods. Parent jobs aggregate child states with backoff. Runs as an FS2 stream in parallel with the HTTP server.
 
 ### Command System
 
@@ -120,7 +120,7 @@ Commands provide scheduled execution of actions:
 *   **Command**: Represents a scheduled task with a cron or periodic schedule, stored in MongoDB
 *   **Schedule**: Supports both periodic (fixed interval) and cron-based scheduling
 *   Commands track execution count, last execution time, and can have a maximum execution limit
-*   On startup, `Action.RescheduleAll` reschedules all active commands
+*   The independent command scheduler reserves due occurrences and recovers persisted outbox entries
 
 ### Layered Architecture
 

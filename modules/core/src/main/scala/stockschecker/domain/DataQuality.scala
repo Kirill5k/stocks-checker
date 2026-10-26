@@ -21,5 +21,6 @@ final case class DataQualityReport(
     countsByStatus: Map[String, Int],
     rankingCoverage: Map[String, Int],
     rankingEnabled: Boolean,
-    coverageAudited: Boolean
+    coverageAudited: Boolean,
+    rankingAsOf: Option[Instant] = None
 ) derives Codec.AsObject

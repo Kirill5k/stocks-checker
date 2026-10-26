@@ -4,14 +4,10 @@ import cats.data.NonEmptyList
 import cats.effect.Temporal
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
-import cats.syntax.applicativeError.*
-import fs2.Stream
-import org.typelevel.log4cats.Logger
-import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{LatestPriceRepository, PriceAnalyticsRepository, PriceHistoryRepository}
+import stockschecker.repositories.{CompanyProfileRepository, LatestPriceRepository, PriceAnalyticsRepository, PriceHistoryRepository}
 import java.time.{Instant, LocalDate, ZoneOffset}
 import java.time.temporal.ChronoUnit
 
@@ -19,77 +15,63 @@ trait PriceService[F[_]]:
   def getAllPriceAnalytics(limit: Option[Int]): F[List[PriceAnalytics]]
   def findPriceAnalyticsBy(filter: PriceAnalyticsFilter, limit: Option[Int]): F[List[PriceAnalytics]]
   def findPriceAnalytics(ticker: Ticker, fetch: Boolean): F[PriceAnalytics]
-  def fetchLatestPriceAnalytics(tickers: NonEmptyList[Ticker]): F[Unit]
 
 final private class LivePriceService[F[_]](
     private val repository: PriceAnalyticsRepository[F],
     private val latestPriceRepository: LatestPriceRepository[F],
     private val marketDataClient: MarketDataClient[F],
-    private val dispatcher: ActionDispatcher[F],
-    private val history: Option[PriceHistoryRepository[F]]
+    private val profiles: CompanyProfileRepository[F],
+    private val history: PriceHistoryRepository[F]
 )(using
-    F: Temporal[F],
-    logger: Logger[F]
+    F: Temporal[F]
 ) extends PriceService[F] {
-
-  override def fetchLatestPriceAnalytics(tickers: NonEmptyList[Ticker]): F[Unit] =
-    Stream
-      .emits(tickers.toList)
-      .evalMap(ticker =>
-        findPriceAnalytics(ticker, fetch = true).void.onError { case error =>
-          logger.error(error)(s"Price refresh failed for $ticker")
-        }.attempt
-      )
-      .compile
-      .toList
-      .flatMap { outcomes =>
-        outcomes.collectFirst { case Left(error) => error }.fold(F.unit)(F.raiseError[Unit])
-      }
 
   override def findPriceAnalytics(ticker: Ticker, fetch: Boolean): F[PriceAnalytics] =
     if (fetch) fetchPriceAnalytics(ticker).flatTap(analytics => save(List(analytics)))
     else repository.find(ticker).flatMap(analytics => F.fromOption(analytics, AppError.PriceAnalyticsNotFound(ticker)))
 
-  private def fetchPriceAnalytics(ticker: Ticker): F[PriceAnalytics] = history match
-    case None =>
-      for
-        candles <- marketDataClient.getMonthlyPriceCandles(ticker)
-        valid   <- F.fromEither(PriceAnalytics.validate(candles).left.map(AppError.FailedValidation(_)))
-      yield PriceAnalytics.from(ticker, valid)
-    case Some(repo) =>
-      for
-        now <- F.realTimeInstant
-        through = LocalDate.ofInstant(now, ZoneOffset.UTC)
-        // Retain the existing ten-year return horizon while risk measures use a fixed five-year window.
-        totalCached <- repo.latest(ticker, "split-and-dividend")
-        total       <- totalCached
-          .filter(s => reusable(s, ticker, "split-and-dividend", through.minusYears(13), through, now))
-          .fold(
-            marketDataClient.getDailyPriceHistory(ticker, through.minusYears(13), through, "all").flatTap(repo.save)
-          )(F.pure)
-        quotedCached <- repo.latest(ticker, "none")
-        quoted       <- quotedCached
-          .filter(s => reusable(s, ticker, "none", through.minusDays(14), through, now))
-          .fold(
-            marketDataClient.getDailyPriceHistory(ticker, through.minusDays(14), through, "none").flatTap(repo.save)
-          )(F.pure)
-        _ <- F.raiseWhen(
-          !validIdentity(total, ticker, "split-and-dividend") || !validIdentity(quoted, ticker, "none") ||
-            !total.currency.equalsIgnoreCase(quoted.currency)
-        )(AppError.FailedValidation("Adjusted and quoted price histories must have matching ticker, currency and adjustment metadata"))
-        bars        <- F.fromOption(NonEmptyList.fromList(total.candles), AppError.PriceAnalyticsNotFound(ticker))
-        valid       <- F.fromEither(PriceAnalytics.validate(bars, monthly = false).left.map(AppError.FailedValidation(_)))
-        quoteBars   <- F.fromOption(NonEmptyList.fromList(quoted.candles), AppError.PriceAnalyticsNotFound(ticker))
-        validQuotes <- F.fromEither(PriceAnalytics.validate(quoteBars, monthly = false).left.map(AppError.FailedValidation(_)))
-        latest = validQuotes.head
-        _ <- F.raiseWhen(
-          latest.date != valid.head.date || latest.date.isAfter(through) || ChronoUnit.DAYS.between(latest.date, through) > 7
-        )(AppError.FailedValidation("Adjusted and quoted price histories must end on the same recent trading date"))
-        analytics = PriceAnalytics.fromDaily(ticker, valid)
-      yield analytics.copy(
-        performanceSummary = analytics.performanceSummary.copy(latestPrice = latest.close, latestPriceDate = latest.date),
-        basis = analytics.basis.map(_.copy(priceObservationId = Some(total.id), quotedPriceObservationId = Some(quoted.id)))
+  private def fetchPriceAnalytics(ticker: Ticker): F[PriceAnalytics] =
+    for
+      now <- F.realTimeInstant
+      through = LocalDate.ofInstant(now, ZoneOffset.UTC)
+      // Retain the existing ten-year return horizon while risk measures use a fixed five-year window.
+      totalCached <- history.latestCovering(ticker, "split-and-dividend", through.minusYears(13))
+      total       <- totalCached
+        .filter(s => reusable(s, ticker, "split-and-dividend", through.minusYears(13), through, now))
+        .fold(
+          marketDataClient.getDailyPriceHistory(ticker, through.minusYears(13), through, "all").flatTap(history.save)
+        )(F.pure)
+      quotedCached <- history.latest(ticker, "none")
+      quoted       <- quotedCached
+        .filter(s => reusable(s, ticker, "none", through.minusDays(14), through, now))
+        .fold(
+          marketDataClient.getDailyPriceHistory(ticker, through.minusDays(14), through, "none").flatTap(history.save)
+        )(F.pure)
+      _ <- F.raiseWhen(
+        !validIdentity(total, ticker, "split-and-dividend") || !validIdentity(quoted, ticker, "none") ||
+          !total.currency.equalsIgnoreCase(quoted.currency)
+      )(AppError.FailedValidation("Adjusted and quoted price histories must have matching ticker, currency and adjustment metadata"))
+      bars        <- F.fromOption(NonEmptyList.fromList(total.candles), AppError.PriceAnalyticsNotFound(ticker))
+      valid       <- F.fromEither(PriceAnalytics.validate(bars, monthly = false).left.map(AppError.FailedValidation(_)))
+      quoteBars   <- F.fromOption(NonEmptyList.fromList(quoted.candles), AppError.PriceAnalyticsNotFound(ticker))
+      validQuotes <- F.fromEither(PriceAnalytics.validate(quoteBars, monthly = false).left.map(AppError.FailedValidation(_)))
+      // A deferred second request may finish in a later session. Use one common endpoint
+      // for returns and the raw quote, without consuming another provider request.
+      quoteDates = validQuotes.toList.map(_.date).toSet
+      common <- F.fromOption(
+        valid.toList.find(c => quoteDates.contains(c.date) && !c.date.isAfter(through)),
+        AppError.DataUnavailable("TwelveData", ticker, "adjusted and quoted histories have no common trading session")
       )
+      _ <- F.raiseWhen(ChronoUnit.DAYS.between(common.date, through) > 7)(
+        AppError.DataUnavailable("TwelveData", ticker, "the latest matching trading session is more than seven days old")
+      )
+      latest    = validQuotes.toList.find(_.date == common.date).get
+      aligned   = NonEmptyList.fromListUnsafe(valid.toList.filter(c => !c.date.isAfter(common.date)))
+      analytics = PriceAnalytics.fromDaily(ticker, aligned)
+    yield analytics.copy(
+      performanceSummary = analytics.performanceSummary.copy(latestPrice = latest.close, latestPriceDate = latest.date),
+      basis = analytics.basis.map(_.copy(priceObservationId = Some(total.id), quotedPriceObservationId = Some(quoted.id)))
+    )
 
   private def validIdentity(snapshot: PriceHistorySnapshot, ticker: Ticker, adjustment: String): Boolean =
     snapshot.ticker == ticker && snapshot.adjustment == adjustment && snapshot.currency.trim.nonEmpty
@@ -110,7 +92,7 @@ final private class LivePriceService[F[_]](
   private def save(analyticsList: List[PriceAnalytics]): F[Unit] =
     repository.save(analyticsList) >>
       latestPriceRepository.save(analyticsList.map(_.toLatestPrice)) >>
-      dispatcher.dispatch(Action.RecordPriceAnalyticsUpdate(analyticsList.map(_.ticker)))
+      profiles.updatePriceAnalyticsLastUpdated(analyticsList.map(_.ticker))
 
   override def findPriceAnalyticsBy(filter: PriceAnalyticsFilter, limit: Option[Int]): F[List[PriceAnalytics]] =
     repository.findBy(filter, limit)
@@ -120,11 +102,11 @@ final private class LivePriceService[F[_]](
 }
 
 object PriceService:
-  def make[F[_]: {Temporal, Logger}](
+  def make[F[_]: Temporal](
       repository: PriceAnalyticsRepository[F],
       latestPriceRepository: LatestPriceRepository[F],
       marketDataClient: MarketDataClient[F],
-      dispatcher: ActionDispatcher[F],
-      history: Option[PriceHistoryRepository[F]] = None
+      profiles: CompanyProfileRepository[F],
+      history: PriceHistoryRepository[F]
   ): F[PriceService[F]] =
-    Temporal[F].pure(LivePriceService[F](repository, latestPriceRepository, marketDataClient, dispatcher, history))
+    Temporal[F].pure(LivePriceService[F](repository, latestPriceRepository, marketDataClient, profiles, history))

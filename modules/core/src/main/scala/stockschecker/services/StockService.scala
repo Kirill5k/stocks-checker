@@ -16,8 +16,8 @@ trait StockService[F[_]]:
 final private class LiveStockService[F[_]](
     stockRepository: StockRepository[F],
     dispatcher: ActionDispatcher[F],
-    securityRepository: Option[SecurityRepository[F]],
-    profileRepository: Option[CompanyProfileRepository[F]]
+    securityRepository: SecurityRepository[F],
+    profileRepository: CompanyProfileRepository[F]
 )(using
     F: MonadThrow[F]
 ) extends StockService[F] {
@@ -29,12 +29,8 @@ final private class LiveStockService[F[_]](
 
   override def activate(ticker: Ticker): F[Unit] =
     findByTicker(ticker).flatMap { stock =>
-      securityRepository match
-        case Some(repo) =>
-          repo.activate(ticker) >> profileRepository.fold(F.unit)(p =>
-            F.whenA(stock.security.listingStatus != "delisted")(p.activate(ticker))
-          )
-        case None => F.raiseError(AppError.Critical("Security state repository is not configured"))
+      securityRepository.activate(ticker) >>
+        F.whenA(stock.security.listingStatus != "delisted")(profileRepository.activate(ticker))
     }
 
   override def deactivate(ticker: Ticker): F[Unit] =
@@ -46,7 +42,7 @@ object StockService:
   def make[F[_]: MonadThrow](
       stockRepository: StockRepository[F],
       dispatcher: ActionDispatcher[F],
-      securityRepository: Option[SecurityRepository[F]] = None,
-      profileRepository: Option[CompanyProfileRepository[F]] = None
+      securityRepository: SecurityRepository[F],
+      profileRepository: CompanyProfileRepository[F]
   ): F[StockService[F]] =
     MonadThrow[F].pure(LiveStockService(stockRepository, dispatcher, securityRepository, profileRepository))

@@ -560,6 +560,39 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
         analytics.basis.map(_.returnAdjustment) mustBe Some("split-and-dividend")
       }
 
+      "preserve valid returns while withholding monthly risk statistics across a trading halt" in {
+        val today = LocalDate.parse("2026-10-19")
+        val daily = NonEmptyList.fromListUnsafe((0 to 60).toList.filterNot(_ == 6).map { i =>
+          val price = BigDecimal(200 - i)
+          PriceCandle(today.minusMonths(i.toLong), price, price, price, price, 1L)
+        })
+        val analytics = PriceAnalytics.fromDaily(ticker, daily)
+        analytics.performanceSummary.latestPrice mustBe BigDecimal(200)
+        analytics.performanceSummary.fiveYearChange mustBe defined
+        analytics.metrics.cagr5Year mustBe defined
+        analytics.metrics.maxDrawdown mustBe Some(BigDecimal(0))
+        analytics.metrics.volatility mustBe None
+        analytics.metrics.consistencyScore mustBe None
+        analytics.metrics.totalYears mustBe 0
+        analytics.metrics.positiveYears mustBe 0
+        analytics.scores.volatilityScore mustBe BigDecimal(0)
+        analytics.scores.consistencyScore mustBe BigDecimal(0)
+      }
+
+      "retain current risk statistics when a historical halt is outside the risk window" in {
+        val today                                                 = LocalDate.parse("2026-10-19")
+        def candles(months: List[Int]): NonEmptyList[PriceCandle] = NonEmptyList.fromListUnsafe(months.map { i =>
+          val price = BigDecimal(200 - i)
+          PriceCandle(today.minusMonths(i.toLong), price, price, price, price, 1L)
+        })
+        val current    = PriceAnalytics.fromDaily(ticker, candles((0 to 60).toList))
+        val historical = PriceAnalytics.fromDaily(ticker, candles((0 to 72).toList.filterNot(_ == 66)))
+        historical.metrics mustBe current.metrics
+        historical.metrics.volatility mustBe defined
+        historical.metrics.consistencyScore mustBe defined
+        historical.metrics.totalYears mustBe 5
+      }
+
       "leave a horizon unavailable when no observation is close to its target date" in {
         def candle(date: String, value: Int): PriceCandle = PriceCandle(LocalDate.parse(date), value, value, value, value, 1L)
         val daily     = NonEmptyList.of(candle("2026-10-19", 600), candle("2026-09-30", 400), candle("2023-10-31", 300))

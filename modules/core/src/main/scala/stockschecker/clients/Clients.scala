@@ -17,8 +17,8 @@ object Clients:
   def make[F[_]: Async](
       config: ClientsConfig,
       backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-      quality: Option[DataQualityRepository[F]] = None,
-      providerBudgets: Option[ProviderBudgetRepository[F]] = None
+      quality: DataQualityRepository[F],
+      providerBudgets: ProviderBudgetRepository[F]
   ): F[Clients[F]] =
     for
       finnhubClient    <- FinnhubClient.make[F](config.finnhub, backend)

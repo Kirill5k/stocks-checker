@@ -5,7 +5,6 @@ import cats.syntax.functor.*
 import cats.syntax.flatMap.*
 import cats.syntax.applicative.*
 import com.mongodb.client.model.ReturnDocument
-import fs2.Stream
 import mongo4cats.collection.MongoCollection
 import mongo4cats.models.collection.FindOneAndUpdateOptions
 import mongo4cats.operations.{Filter, Index, Update}
@@ -23,16 +22,15 @@ import java.time.Instant
 
 trait CommandRepository[F[_]]:
   def all: F[List[Command]]
-  def streamActive: Stream[F, Command]
+  def pending(now: Instant): F[List[Command]]
   def find(id: CommandId): F[Command]
   def create(cmd: CreateCommand): F[Command]
   def update(cmd: UpdateCommand): F[Command]
-  def update(cmd: Command): F[Command]
-  def setActive(id: CommandId, isActive: Boolean): F[Unit]
-  def initializeNextRun(cmd: Command, now: Instant): F[Unit]
+  def setActive(id: CommandId, isActive: Boolean): F[Command]
+  def initializeNextRun(cmd: Command, now: Instant): F[Option[Command]]
   def reserve(cmd: Command, now: Instant): F[Option[ScheduledOccurrence]]
   def clearOutbox(id: CommandId, runId: String): F[Unit]
-  def completeRun(id: CommandId, runId: String): F[Unit]
+  def completeRun(id: CommandId, runId: String): F[Option[Command]]
 
 final private case class ScheduledCommandEntity(
     _id: ObjectId,
@@ -73,8 +71,16 @@ final private class LiveCommandRepository[F[_]](
   override def all: F[List[Command]] =
     collection.find.all.mapList(_.toDomain)
 
-  override def streamActive: Stream[F, Command] =
-    collection.find(Filter.eq(Field.isActive, true)).stream.map(_.toDomain)
+  override def pending(now: Instant): F[List[Command]] = {
+    val remaining = Filter.isNull(Field.maxExecutions) ||
+      Filter.expr(org.bson.Document.parse("""{"$lt":["$executionCount","$maxExecutions"]}"""))
+    val due = Filter.eq(Field.isActive, true) && remaining && Filter.isNull("activeRunId") &&
+      (Filter.isNull("nextRunAt") || Filter.lte("nextRunAt", now))
+    collection
+      .find(due || Filter.ne("outbox", Option.empty[ScheduledOccurrence]) || Filter.ne("activeRunId", Option.empty[String]))
+      .all
+      .mapList(_.toDomain)
+  }
 
   override def find(id: CommandId): F[Command] =
     collection
@@ -97,29 +103,8 @@ final private class LiveCommandRepository[F[_]](
         .set(Field.maxExecutions, cmd.maxExecutions)
     )
 
-  override def update(cmd: Command): F[Command] =
-    updateCommand(
-      cmd.id,
-      Update
-        .set(Field.isActive, cmd.isActive)
-        .set(Field.action, cmd.action)
-        .set(Field.schedule, cmd.schedule)
-        .set(Field.lastExecutedAt, cmd.lastExecutedAt)
-        .set(Field.executionCount, cmd.executionCount)
-        .set(Field.maxExecutions, cmd.maxExecutions)
-    )
-
-  private def updateCommand(id: CommandId, update: Update): F[Command] =
-    collection
-      .findOneAndUpdate(
-        Filter.idEq(id.toObjectId),
-        update,
-        FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
-      )
-      .flatMap(toCommandOrError(id))
-
-  override def setActive(id: CommandId, isActive: Boolean): F[Unit] =
-    editCommand(id, Update.set(Field.isActive, isActive)).void
+  override def setActive(id: CommandId, isActive: Boolean): F[Command] =
+    editCommand(id, Update.set(Field.isActive, isActive))
 
   private def versionFilter(cmd: Command): Filter =
     Filter.idEq(cmd.id.toObjectId) && cmd.version.fold(Filter.isNull("version"))(v => Filter.eq("version", v))
@@ -140,15 +125,16 @@ final private class LiveCommandRepository[F[_]](
         }
     }
 
-  override def initializeNextRun(cmd: Command, now: Instant): F[Unit] =
-    if (!cmd.canBeExecuted || cmd.nextRunAt.nonEmpty || cmd.activeRunId.nonEmpty) F.unit
+  override def initializeNextRun(cmd: Command, now: Instant): F[Option[Command]] =
+    if (!cmd.canBeExecuted || cmd.nextRunAt.nonEmpty || cmd.activeRunId.nonEmpty) Some(cmd).pure[F]
     else
       collection
-        .updateOne(
+        .findOneAndUpdate(
           versionFilter(cmd) && Filter.isNull("nextRunAt") && Filter.isNull("activeRunId"),
-          Update.set("nextRunAt", now.plusMillis(cmd.durationUntilNextExecution(now).toMillis))
+          Update.set("nextRunAt", now.plusMillis(cmd.durationUntilNextExecution(now).toMillis)),
+          FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
         )
-        .void
+        .map(_.map(_.toDomain))
 
   override def reserve(cmd: Command, now: Instant): F[Option[ScheduledOccurrence]] =
     if (!cmd.canBeExecuted || cmd.activeRunId.nonEmpty || !cmd.nextRunAt.exists(!_.isAfter(now))) None.pure
@@ -176,10 +162,14 @@ final private class LiveCommandRepository[F[_]](
       .updateOne(Filter.idEq(id.toObjectId) && Filter.eq("outbox.job.id", runId), Update.set("outbox", Option.empty[ScheduledOccurrence]))
       .void
 
-  override def completeRun(id: CommandId, runId: String): F[Unit] =
+  override def completeRun(id: CommandId, runId: String): F[Option[Command]] =
     collection
-      .updateOne(Filter.idEq(id.toObjectId) && Filter.eq("activeRunId", runId), Update.set("activeRunId", Option.empty[String]))
-      .void
+      .findOneAndUpdate(
+        Filter.idEq(id.toObjectId) && Filter.eq("activeRunId", runId),
+        Update.set("activeRunId", Option.empty[String]),
+        FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
+      )
+      .map(_.map(_.toDomain))
 
   private def toCommandOrError(id: CommandId)(maybeCmd: Option[ScheduledCommandEntity]): F[Command] =
     F.fromOption(maybeCmd.map(_.toDomain), AppError.EntityDoesNotExist("Command", id.value))
@@ -199,6 +189,22 @@ object CommandRepository:
   def make[F[_]](db: MongoDatabase[F])(using F: MonadThrow[F]): F[CommandRepository[F]] =
     for
       collection <- db.getCollectionWithCodec[ScheduledCommandEntity](CollectionName)
-      _          <- collection.createIndex(Index.ascending(Field.isActive))
-      _          <- collection.createIndex(Index.ascending(List(Field.isActive, "nextRunAt")))
+      _          <- collection.updateMany(
+        Filter.in(
+          "action.kind",
+          List(
+            "schedule",
+            "reschedule-all",
+            "record-company-profile-update",
+            "record-financial-metrics-update",
+            "record-price-analytics-update",
+            "legacy-retired"
+          )
+        ),
+        Update.set(Field.isActive, false)
+      )
+      _ <- collection.createIndex(Index.ascending("outbox.job.id"))
+      _ <- collection.createIndex(Index.ascending("activeRunId"))
+      _ <- collection.createIndex(Index.ascending(Field.isActive))
+      _ <- collection.createIndex(Index.ascending(List(Field.isActive, "nextRunAt")))
     yield LiveCommandRepository(collection.withAddedCodec[Schedule].withAddedCodec[Action].withAddedCodec[ScheduledOccurrence])

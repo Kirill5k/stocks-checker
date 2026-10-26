@@ -24,7 +24,7 @@ object config {
   final case class FinnhubClientConfig(
       baseUri: String,
       apiKey: String,
-      limits: ProviderLimits = ProviderLimits()
+      limits: ProviderLimits
   ) derives ConfigReader
 
   final case class AlphaVantageClientConfig(
@@ -35,7 +35,7 @@ object config {
   final case class TwelveDataConfig(
       baseUri: String,
       apiKey: String,
-      limits: ProviderLimits = ProviderLimits(8, 800, 1)
+      limits: ProviderLimits
   ) derives ConfigReader
 
   final case class ClientsConfig(
@@ -59,13 +59,13 @@ object config {
   ) derives ConfigReader
 
   final case class InvestmentConfig(
-      enabled: Boolean = false,
-      coverageAudited: Boolean = false,
-      totalReturnAudited: Boolean = false,
-      priceFreshnessDays: Int = 7,
-      snapshotFreshnessDays: Int = 14,
-      quarterlyFreshnessDays: Int = 180,
-      annualFreshnessDays: Int = 550
+      enabled: Boolean,
+      coverageAudited: Boolean,
+      totalReturnAudited: Boolean,
+      priceFreshnessDays: Int,
+      snapshotFreshnessDays: Int,
+      quarterlyFreshnessDays: Int,
+      annualFreshnessDays: Int
   ) derives ConfigReader
 
   final case class AppConfig(
@@ -74,7 +74,7 @@ object config {
       clients: ClientsConfig,
       mongo: MongoConfig,
       actionExecutor: ActionExecutorConfig,
-      investment: InvestmentConfig = InvestmentConfig()
+      investment: InvestmentConfig
   ) derives ConfigReader
 
   object AppConfig:

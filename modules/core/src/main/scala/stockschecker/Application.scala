@@ -6,7 +6,7 @@ import fs2.Stream
 import kirill5k.common.http4s.Server
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.log4cats.Logger
-import stockschecker.actions.{Action, ActionDispatcher, ActionExecutor, CommandScheduler}
+import stockschecker.actions.{ActionDispatcher, ActionExecutor, CommandScheduler}
 import stockschecker.clients.Clients
 import stockschecker.common.config.AppConfig
 import stockschecker.controllers.Controllers
@@ -31,15 +31,14 @@ object Application extends IOApp.Simple {
           for
             repositories     <- Repositories.make(res.mongoDatabase)
             actionDispatcher <- ActionDispatcher.durable[IO](repositories.jobs)
-            clients     <- Clients.make(config.clients, res.httpBackend, Some(repositories.dataQuality), Some(repositories.providerBudgets))
-            services    <- Services.make(clients, repositories, actionDispatcher, config.investment)
-            controllers <- Controllers.make(services, config.api)
-            actionExecutor <- ActionExecutor.make(actionDispatcher, services, config.actionExecutor)
-            restartTime    <- IO.realTimeInstant
-            _              <- repositories.jobs.resumePaused("Finnhub", restartTime)
-            _              <- repositories.jobs.resumePaused("TwelveData", restartTime)
-            _              <- actionDispatcher.dispatch(Action.RescheduleAll)
-            _              <- Stream(
+            clients          <- Clients.make(config.clients, res.httpBackend, repositories.dataQuality, repositories.providerBudgets)
+            services         <- Services.make(clients, repositories, actionDispatcher, config.investment)
+            controllers      <- Controllers.make(services, config.api)
+            actionExecutor   <- ActionExecutor.make(repositories.jobs, services, config.actionExecutor)
+            restartTime      <- IO.realTimeInstant
+            _                <- repositories.jobs.resumePaused("Finnhub", restartTime)
+            _                <- repositories.jobs.resumePaused("TwelveData", restartTime)
+            _                <- Stream(
               Server.serveEmber(config.server, controllers.routes),
               actionExecutor.run,
               CommandScheduler.run(repositories.command, repositories.jobs),

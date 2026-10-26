@@ -53,7 +53,7 @@ private[repositories] object entities extends MongoJsonCodecs {
         isActive = isActive,
         companyProfileLastUpdatedAt = companyProfileLastUpdatedAt,
         listingStatus = listingStatus.getOrElse("listed"),
-        exclusionReason = exclusionReason.orElse(Option.when(!isActive && !listingStatus.contains("delisted"))("legacy-excluded"))
+        exclusionReason = exclusionReason
       )
 
   object SecurityEntity:

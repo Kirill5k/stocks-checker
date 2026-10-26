@@ -3,139 +3,100 @@ package stockschecker.services
 import cats.effect.IO
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
-import kirill5k.common.syntax.time.*
 import stockschecker.actions.{Action, ActionDispatcher}
+import stockschecker.domain.{CommandId, CreateCommand, Schedule}
+import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
-import stockschecker.repositories.CommandRepository
-import fs2.Stream
-import stockschecker.domain.{Command, CommandId, CreateCommand}
+import stockschecker.repositories.{CommandRepository, JobRepository}
 
 import scala.concurrent.duration.*
 
 class CommandServiceSpec extends IOWordSpec {
+  given Clock[IO] = Clock.mock(ts)
 
-  val now = ts.plus(10.minutes)
-
-  given Clock[IO] = Clock.mock(now)
-
-  "A CommandService" when {
-    "create" should {
-      "create new command and schedule it for execution" in {
-        val cc     = CreateCommand(FetchLatestSecuritiesCommand.action, FetchLatestSecuritiesCommand.schedule, None)
-        val newCmd = FetchLatestSecuritiesCommand.copy(lastExecutedAt = None)
-
-        val (ad, repo) = mocks
-        when(repo.create(any[CreateCommand])).thenReturnIO(newCmd)
-        when(ad.dispatch(any[Action])).thenReturnUnit
-
-        val res = for
-          svc <- CommandService.make(repo, ad)
-          cmd <- svc.create(cc)
-        yield cmd
-
-        res.asserting { r =>
-          verify(repo).create(cc)
-          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 0.minutes))
-          r mustBe newCmd
-        }
+  "A CommandService" should {
+    "initialize a durable schedule and return the updated command" in {
+      val (dispatcher, commands, jobs) = mocks
+      val input                        = CreateCommand(FetchLatestSecuritiesCommand.action, Schedule.Periodic(1.hour), None)
+      val created                      = FetchLatestSecuritiesCommand.copy(lastExecutedAt = None, nextRunAt = None)
+      val initialized                  = created.copy(nextRunAt = Some(ts))
+      when(commands.create(input)).thenReturnIO(created)
+      when(commands.initializeNextRun(created, ts)).thenReturnIO(Some(initialized))
+      (for {
+        service <- CommandService.make(commands, dispatcher, jobs)
+        command <- service.create(input)
+      } yield command).asserting { result =>
+        result mustBe initialized
+        verifyNoInteractions(dispatcher)
+        succeed
       }
     }
 
-    "rescheduleAll" should {
-      "not do anything when there are no active commands" in {
-        val (ad, repo) = mocks
-        when(repo.streamActive).thenReturn(Stream.empty)
-
-        val res = for
-          svc <- CommandService.make(repo, ad)
-          _   <- svc.rescheduleAll
-        yield ()
-
-        res.asserting { r =>
-          verify(ad).jobRepository
-          verifyNoMoreInteractions(ad)
-          verify(repo).streamActive
-          r mustBe ()
-        }
-      }
-
-      "reschedule command that needs to be executed" in {
-        val (ad, repo) = mocks
-        when(repo.streamActive).thenStream(FetchLatestSecuritiesCommand)
-        when(ad.dispatch(any[Action])).thenReturnUnit
-
-        val res = for
-          svc <- CommandService.make(repo, ad)
-          _   <- svc.rescheduleAll
-        yield ()
-
-        res.asserting { r =>
-          verify(repo).streamActive
-          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 10.minutes))
-          r mustBe ()
-        }
+    "reject an invalid schedule before persisting it" in {
+      val (dispatcher, commands, jobs) = mocks
+      val input                        = CreateCommand(FetchLatestSecuritiesCommand.action, Schedule.Periodic(0.seconds), None)
+      (for {
+        service <- CommandService.make(commands, dispatcher, jobs)
+        result  <- service.create(input).attempt
+      } yield result).asserting { result =>
+        result.left.toOption.get mustBe a[AppError.FailedValidation]
+        verifyNoInteractions(commands)
+        succeed
       }
     }
 
-    "execute" should {
-      "dispatch an action from command" in {
-        val (ad, repo) = mocks
-        when(repo.find(any[CommandId])).thenReturnIO(FetchLatestSecuritiesCommand)
-        when(repo.update(any[Command])).thenReturnIO(FetchLatestSecuritiesCommand)
-        when(ad.dispatch(any[Action])).thenReturnUnit
-
-        val res = for
-          svc <- CommandService.make(repo, ad)
-          _   <- svc.execute(FetchLatestSecuritiesCommand.id)
-        yield ()
-
-        res.asserting { r =>
-          verify(repo).find(FetchLatestSecuritiesCommand.id)
-          verify(ad).dispatch(FetchLatestSecuritiesCommand.action)
-          verify(repo).update(FetchLatestSecuritiesCommand.copy(lastExecutedAt = Some(now), executionCount = 2))
-          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 20.minutes))
-          r mustBe ()
-        }
+    "reject retired actions inside newly submitted sequences" in {
+      val (dispatcher, commands, jobs) = mocks
+      val input                        = CreateCommand(
+        Action.Sequence(cats.data.NonEmptyList.of(FetchLatestSecuritiesCommand.action, Action.LegacyRetired)),
+        Schedule.Periodic(1.hour),
+        None
+      )
+      (for {
+        service <- CommandService.make(commands, dispatcher, jobs)
+        result  <- service.create(input).attempt
+      } yield result).asserting { result =>
+        result.left.toOption.get mustBe a[AppError.FailedValidation]
+        verifyNoInteractions(commands, dispatcher, jobs)
+        succeed
       }
+    }
 
-      "not execute command when maxExecutions is equal to executionCount" in {
-        val (ad, repo) = mocks
-        when(repo.find(any[CommandId])).thenReturnIO(FetchLatestSecuritiesCommand.copy(executionCount = 2, maxExecutions = Some(2)))
-        when(ad.dispatch(any[Action])).thenReturnUnit
-
-        val res = for
-          svc <- CommandService.make(repo, ad)
-          _   <- svc.execute(FetchLatestSecuritiesCommand.id)
-        yield ()
-
-        res.asserting { r =>
-          verify(repo).find(FetchLatestSecuritiesCommand.id)
-          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 20.minutes))
-          verifyNoMoreInteractions(repo)
-          r mustBe ()
-        }
+    "dispatch manual execution independently of a schedule's execution limit" in {
+      val (dispatcher, commands, jobs) = mocks
+      val command                      = FetchLatestSecuritiesCommand.copy(executionCount = 1, maxExecutions = Some(1))
+      when(commands.find(any[CommandId])).thenReturnIO(command)
+      when(dispatcher.dispatch(any[Action])).thenReturnUnit
+      (for {
+        service <- CommandService.make(commands, dispatcher, jobs)
+        _       <- service.executeManually(command.id)
+      } yield ()).asserting { _ =>
+        verify(dispatcher).dispatch(command.action)
+        verify(commands).find(command.id)
+        verifyNoMoreInteractions(commands)
+        succeed
       }
+    }
 
-      "not execute command when is it inactive" in {
-        val (ad, repo) = mocks
-        when(repo.find(any[CommandId])).thenReturnIO(FetchLatestSecuritiesCommand.copy(isActive = false))
-        when(ad.dispatch(any[Action])).thenReturnUnit
-
-        val res = for
-          svc <- CommandService.make(repo, ad)
-          _   <- svc.execute(FetchLatestSecuritiesCommand.id)
-        yield ()
-
-        res.asserting { r =>
-          verify(repo).find(FetchLatestSecuritiesCommand.id)
-          verify(ad).dispatch(Action.Schedule(FetchLatestSecuritiesCommand.id, 20.minutes))
-          verifyNoMoreInteractions(repo)
-          r mustBe ()
-        }
+    "cancel obsolete jobs using the revision returned by activation" in {
+      val (dispatcher, commands, jobs) = mocks
+      val command                      = FetchLatestSecuritiesCommand.copy(isActive = false, version = Some(3L))
+      when(commands.setActive(command.id, false)).thenReturnIO(command)
+      when(jobs.cancelObsolete(command.id, 3L)).thenReturnUnit
+      when(commands.initializeNextRun(command, ts)).thenReturnIO(Some(command))
+      (for {
+        service <- CommandService.make(commands, dispatcher, jobs)
+        _       <- service.activate(command.id, false)
+      } yield ()).asserting { _ =>
+        verify(jobs).cancelObsolete(command.id, 3L)
+        verify(commands).setActive(command.id, false)
+        verify(commands).initializeNextRun(command, ts)
+        verifyNoMoreInteractions(commands)
+        succeed
       }
     }
   }
 
-  def mocks: (ActionDispatcher[IO], CommandRepository[IO]) =
-    mock[ActionDispatcher[IO]] -> mock[CommandRepository[IO]]
+  private def mocks: (ActionDispatcher[IO], CommandRepository[IO], JobRepository[IO]) =
+    (mock[ActionDispatcher[IO]], mock[CommandRepository[IO]], mock[JobRepository[IO]])
 }

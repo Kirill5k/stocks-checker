@@ -5,7 +5,7 @@ import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.domain.{StockFilters, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.StockRepository
+import stockschecker.repositories.{CompanyProfileRepository, SecurityRepository, StockRepository}
 import stockschecker.fixtures.*
 
 class StockServiceSpec extends IOWordSpec {
@@ -17,7 +17,7 @@ class StockServiceSpec extends IOWordSpec {
         when(repo.find(any[Ticker])).thenReturnSome(AAPLStock)
 
         val res = for
-          svc <- StockService.make(repo, dispatcher)
+          svc <- StockService.make(repo, dispatcher, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
           res <- svc.findByTicker(AAPL)
         yield res
 
@@ -32,7 +32,7 @@ class StockServiceSpec extends IOWordSpec {
         when(repo.find(any[Ticker])).thenReturnNone
 
         val res = for
-          svc <- StockService.make(repo, dispatcher)
+          svc <- StockService.make(repo, dispatcher, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
           res <- svc.findByTicker(AAPL)
         yield res
 
@@ -46,7 +46,7 @@ class StockServiceSpec extends IOWordSpec {
         when(repo.findAll(any[StockFilters], anyOpt[Int])).thenReturnIO(List(AAPLStock, MSFTStock))
 
         val res = for
-          svc <- StockService.make(repo, dispatcher)
+          svc <- StockService.make(repo, dispatcher, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
           res <- svc.findAll(StockFilters(), Some(10))
         yield res
 
@@ -63,7 +63,7 @@ class StockServiceSpec extends IOWordSpec {
         when(dispatcher.dispatch(any[Action])).thenReturnUnit
 
         val res = for
-          svc <- StockService.make(repo, dispatcher)
+          svc <- StockService.make(repo, dispatcher, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
           _   <- svc.deactivate(AAPL)
         yield ()
 

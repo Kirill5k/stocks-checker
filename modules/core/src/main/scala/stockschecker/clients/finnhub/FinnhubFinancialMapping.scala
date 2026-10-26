@@ -11,11 +11,29 @@ import scala.util.Try
 /** Explicit mapping contract. Unknown numeric fields are preserved but never automatically scored. */
 object FinnhubFinancialMapping:
   private val fractions = Set(
-    "roa", "roe", "roic", "rotc", "roaTTM", "roeTTM", "roicTTM", "rotcTTM", "netMargin", "operatingMargin",
-    "grossMargin", "fcfMargin", "pretaxMargin", "totalDebtToTotalAsset", "totalDebtToEquity", "totalDebtToTotalCapital",
-    "longtermDebtTotalAsset", "longtermDebtTotalCapital", "longtermDebtTotalEquity", "netDebtToTotalCapital", "netDebtToTotalEquity"
+    "roa",
+    "roe",
+    "roic",
+    "rotc",
+    "roaTTM",
+    "roeTTM",
+    "roicTTM",
+    "rotcTTM",
+    "netMargin",
+    "operatingMargin",
+    "grossMargin",
+    "fcfMargin",
+    "pretaxMargin",
+    "totalDebtToTotalAsset",
+    "totalDebtToEquity",
+    "totalDebtToTotalCapital",
+    "longtermDebtTotalAsset",
+    "longtermDebtTotalCapital",
+    "longtermDebtTotalEquity",
+    "netDebtToTotalCapital",
+    "netDebtToTotalEquity"
   )
-  private val perShare = Set("eps", "salesPerShare", "fcfPerShareTTM", "ebitPerShare")
+  private val perShare  = Set("eps", "salesPerShare", "fcfPerShareTTM", "ebitPerShare")
   private val multiples = Set("pe", "peTTM", "pfcf", "pfcfTTM", "pb", "ps", "psTTM", "evEbitda", "evEbitdaTTM", "evRevenue", "evRevenueTTM")
 
   def decode(body: JsonObject, ticker: Ticker, observedAt: Instant): Decoder.Result[Option[FinancialData]] =
@@ -23,7 +41,7 @@ object FinnhubFinancialMapping:
       if metric.isEmpty then Right(None)
       else
         metric.toJson.as[FinnhubClient.FinancialMetricsResponse].map { parsed =>
-          val errors = List.newBuilder[String]
+          val errors                                                      = List.newBuilder[String]
           def observations(frequency: String): List[FinancialObservation] =
             val fields = body("series").flatMap(_.asObject).flatMap(_(frequency)).flatMap(_.asObject)
             fields.toList.flatMap(_.toList).flatMap { case (name, values) =>
@@ -33,10 +51,10 @@ object FinnhubFinancialMapping:
                   Nil
                 case Some(entries) =>
                   val points = entries.toList.flatMap { entry =>
-                    val cursor = entry.hcursor
+                    val cursor  = entry.hcursor
                     val decoded = for
                       period <- cursor.get[String]("period").toOption.flatMap(p => Try(LocalDate.parse(p)).toOption)
-                      value <- cursor.get[BigDecimal]("v").toOption
+                      value  <- cursor.get[BigDecimal]("v").toOption
                     yield FinancialObservation(name, period, value, unit(name))
                     // A provider null represents unavailable data; retain it in rawPayload, never manufacture a zero.
                     if decoded.isEmpty && !cursor.downField("v").focus.exists(_.isNull) then
@@ -46,10 +64,10 @@ object FinnhubFinancialMapping:
                   if points.map(_.period).distinct.size != points.size then errors += s"duplicate-period:$frequency:$name"
                   points.sortBy(_.period)
             }
-          val annual = observations("annual")
+          val annual    = observations("annual")
           val quarterly = observations("quarterly")
           body("symbol").flatMap(_.asString).filterNot(_.equalsIgnoreCase(ticker.value)).foreach(_ => errors += "response-symbol-mismatch")
-          val raw = Json.fromJsonObject(body).noSpaces
+          val raw  = Json.fromJsonObject(body).noSpaces
           val hash = MessageDigest.getInstance("SHA-256").digest(raw.getBytes(StandardCharsets.UTF_8)).map(b => f"${b & 0xff}%02x").mkString
           val snapshot = FinancialSnapshot(
             id = s"${ticker.value}:$observedAt:$hash",

@@ -15,7 +15,11 @@ final case class InvestmentScreenRequest(
     recipeVersion: Option[String] = None
 ) derives Codec.AsObject
 
-final case class InvestmentScreenSettings(enabled: Boolean = false, coverageAudited: Boolean = false)
+final case class InvestmentRankingSummary(
+    universeCount: Int,
+    eligibleCount: Int,
+    excludedByReason: Map[String, Int]
+) derives Codec.AsObject
 
 final case class InvestmentRankingRun(
     id: String,
@@ -25,7 +29,9 @@ final case class InvestmentRankingRun(
     scorecards: List[InvestmentScorecard]
 ) derives Codec.AsObject
 
-/** Inputs and scorecards always contain the entire scoring universe, before display filters or limits. */
+/** The entire scoring universe is retained before display filters or limits. Persisted inputs contain stock metadata and compact financial
+  * diagnostics; scorecards preserve the observations actually used by the recipe.
+  */
 final case class InvestmentScreenRun(
     id: String,
     createdAt: Instant,

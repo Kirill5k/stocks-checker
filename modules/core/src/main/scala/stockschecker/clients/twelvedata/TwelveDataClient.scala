@@ -17,7 +17,6 @@ import java.time.LocalDate
 import scala.concurrent.duration.*
 
 trait TwelveDataClient[F[_]]:
-  def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]]
   def getDailyPriceHistory(ticker: Ticker, from: LocalDate, through: LocalDate, adjustment: String): F[PriceHistorySnapshot]
 
 final private class LiveTwelveDataClient[F[_]](
@@ -26,23 +25,6 @@ final private class LiveTwelveDataClient[F[_]](
 )(using
     F: Async[F]
 ) extends TwelveDataClient[F] {
-
-  override def getMonthlyPriceCandles(ticker: Ticker): F[NonEmptyList[PriceCandle]] =
-    for
-      response <- backend.send {
-        emptyRequest
-          .get(uri"${config.baseUri}/time_series?symbol=$ticker&interval=1month&apikey=${config.apiKey}&outputsize=150&adjust=splits")
-          .response(asJson[TwelveDataClient.TimeSeriesResponse])
-          .readTimeout(30.seconds)
-      }
-      result <- response.body match
-        case Right(data) =>
-          processData(data, ticker)
-        case Left(ResponseException.DeserializationException(responseBody, error, _)) =>
-          F.raiseError(AppError.JsonParsingFailure(responseBody, s"TwelveData client returned ${error.getMessage}"))
-        case Left(ResponseException.UnexpectedStatusCode(body, meta)) =>
-          failure(meta.code.code, body, meta.header("Retry-After"))
-    yield result
 
   override def getDailyPriceHistory(ticker: Ticker, from: LocalDate, through: LocalDate, adjustment: String): F[PriceHistorySnapshot] =
     for
@@ -70,12 +52,10 @@ final private class LiveTwelveDataClient[F[_]](
       _ <- F.raiseWhen(candles.exists(c => c.date.isBefore(from) || c.date.isAfter(through)) || candles.size >= 5000)(
         AppError.FailedValidation("Price history is outside the requested range or may be truncated")
       )
-      _ <- F.raiseWhen(candles.sliding(2).exists {
-        case List(older, newer) => java.time.temporal.ChronoUnit.DAYS.between(older.date, newer.date) > 7
-        case _                  => false
-      })(AppError.FailedValidation("Daily price history contains an unexplained gap longer than seven calendar days"))
+      // Calendar gaps can be valid exchange closures or trading halts. Consumers validate
+      // the dates actually needed for their return horizons instead of rejecting the whole vintage.
       meta <- F.fromOption(data.meta, AppError.FailedValidation("Price history has no currency metadata"))
-      _    <- F.raiseWhen(meta.symbol != ticker.value || meta.interval != "1day")(
+      _    <- F.raiseWhen(meta.symbol != ticker.value || meta.interval != "1day" || meta.currency.trim.isEmpty)(
         AppError.FailedValidation("Price history identity/interval mismatch")
       )
     yield PriceHistorySnapshot(

@@ -13,8 +13,12 @@ object DataQualityController {
   def make[F[_]: Async](service: DataQualityService[F], config: ApiConfig): F[Controller[F]] =
     Async[F].pure(new Controller[F](ApiKeyRequirement.Required(config.key)) {
       val routes: HttpRoutes[F] = Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
-        secured(Controller.secureEndpoint.get.in("data-quality").out(jsonBody[DataQualityReport]))
-          .serverLogic(_ => _ => service.report.asResponse)
+        List(
+          secured(Controller.secureEndpoint.get.in("data-quality").out(jsonBody[DataQualityReport]))
+            .serverLogic(_ => _ => service.report.asResponse),
+          secured(Controller.secureEndpoint.post.in("providers" / path[String]("provider") / "resume"))
+            .serverLogic(_ => provider => service.resumeProvider(provider).asResponse)
+        )
       )
     })
 }

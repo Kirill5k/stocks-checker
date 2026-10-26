@@ -47,6 +47,7 @@ final case class PriceAnalytics(
     basis: Option[PriceAnalyticsBasis] = None
 ) derives CirceCodec.AsObject
 
+/** Observation IDs identify source vintages. Raw candle retention is bounded, so these IDs do not guarantee replayability. */
 final case class PriceAnalyticsBasis(
     purpose: String,
     returnAdjustment: String,
@@ -162,16 +163,22 @@ object PriceAnalytics:
         calculateCAGR(start.close, latestPrice, elapsed)
       }
 
-    val yearlyReturns = calculateYearlyReturns(prices)
+    // A missing calendar month can be a valid trading halt, but a multi-month
+    // change must not be treated as one monthly return or compress a "year" to 12 observations.
+    val consecutiveRiskMonths = riskCandles.toList.sliding(2).forall {
+      case List(newer, older) => ChronoUnit.MONTHS.between(YearMonth.from(older.date), YearMonth.from(newer.date)) == 1
+      case _                  => true
+    }
+    val yearlyReturns = if (consecutiveRiskMonths) calculateYearlyReturns(prices) else Nil
     val positiveYears = yearlyReturns.count(_ > 0)
     val totalYears    = yearlyReturns.size
 
     StockAnalysisMetrics(
       cagr3Year = cagr(3),
       cagr5Year = cagr(5),
-      volatility = calculateVolatility(prices),
+      volatility = if (consecutiveRiskMonths) calculateVolatility(prices) else None,
       maxDrawdown = calculateMaxDrawdown(prices),
-      consistencyScore = calculateConsistency(riskCandles),
+      consistencyScore = if (consecutiveRiskMonths) calculateConsistency(riskCandles) else None,
       positiveYears = positiveYears,
       totalYears = totalYears
     )

@@ -4,50 +4,212 @@ import cats.data.NonEmptyList
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import kirill5k.common.cats.Clock
+import mongo4cats.operations.Filter
 import org.mockito.Mockito.{mock, when}
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.actions.{Action, ActionDispatcher, ActionExecutor, CommandScheduler}
 import stockschecker.common.config.ActionExecutorConfig
-import stockschecker.domain.{CreateCommand, Job, JobCommand, Schedule, Ticker, UpdateCommand}
+import stockschecker.domain.{CreateCommand, EvaluationCapturePlan, Job, JobCommand, JobPlan, Schedule, Ticker, UpdateCommand}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.services.{CommandService, CompanyProfileService, SecurityService, Services}
 
-import java.time.Instant
+import java.time.{Instant, LocalDate}
 import java.time.temporal.ChronoUnit
 import scala.concurrent.duration.*
 
 class JobRepositorySpec extends RepositorySpec {
   override def port: Int = 12156
-  given Clock[IO] = Clock.make[IO]
-  given Logger[IO] = Slf4jLogger.getLogger[IO]
+  given Clock[IO]        = Clock.make[IO]
+  given Logger[IO]       = Slf4jLogger.getLogger[IO]
 
-  private val action = Action.RecordCompanyProfileUpdate(List(AAPL))
+  private val action            = Action.DeactivateSecurity(AAPL)
+  private val evaluationThrough = LocalDate.parse("2026-01-01")
+  private val evaluationAction  = Action.RefreshEvaluationPrices(AAPL, LocalDate.parse("2013-01-01"), evaluationThrough)
   private def awaitTerminal(repo: JobRepository[IO], id: String): IO[Job] =
-    repo.find(id).flatMap {
-      case Some(job) if job.isTerminal => IO.pure(job)
-      case _ => IO.sleep(30.millis) >> awaitTerminal(repo, id)
-    }.timeout(10.seconds)
+    repo
+      .find(id)
+      .flatMap {
+        case Some(job) if job.isTerminal => IO.pure(job)
+        case _                           => IO.sleep(30.millis) >> awaitTerminal(repo, id)
+      }
+      .timeout(10.seconds)
 
   "Durable jobs" should {
+
+    "bound canonical evaluation restarts across failures and repository restarts" in withEmbeddedMongoDatabase { db =>
+      val later = Instant.now().plusSeconds(10.days.toSeconds)
+      for {
+        jobs          <- JobRepository.make[IO](db)
+        _             <- jobs.enqueue(Job("bounded", evaluationAction, ts, ts, state = Job.Failed, completedAt = Some(ts)))
+        first         <- jobs.retryTerminal("bounded", later)
+        firstAttempt  <- jobs.claim(later, 2.minutes).map(_.get)
+        _             <- jobs.finish(firstAttempt, Job.Failed)
+        restarted     <- JobRepository.make[IO](db)
+        second        <- (restarted.retryTerminal("bounded", later), restarted.retryTerminal("bounded", later)).parTupled
+        secondAttempt <- restarted.claim(later, 2.minutes).map(_.get)
+        _             <- restarted.finish(secondAttempt, Job.Failed)
+        exhausted     <- restarted.retryTerminal("bounded", later)
+        finalJob      <- restarted.find("bounded").map(_.get)
+      } yield {
+        first mustBe true
+        firstAttempt.restartCount mustBe Some(1)
+        List(second._1, second._2).count(identity) mustBe 1
+        secondAttempt.restartCount mustBe Some(Job.MaxEvaluationRestarts)
+        exhausted mustBe false
+        finalJob.state mustBe Job.Failed
+        finalJob.restartCount mustBe Some(Job.MaxEvaluationRestarts)
+      }
+    }
+
+    "retain evaluation attempt counts while a capture needs its cutoff, then prune after it settles" in withEmbeddedMongoDatabase { db =>
+      val expiredAt = ts.minusSeconds(31.days.toSeconds)
+      for {
+        jobs        <- JobRepository.make[IO](db)
+        evaluations <- InvestmentEvaluationRepository.make[IO](db)
+        _           <- jobs.enqueue(
+          Job(
+            "needed",
+            evaluationAction,
+            expiredAt,
+            expiredAt,
+            state = Job.Failed,
+            completedAt = Some(expiredAt),
+            restartCount = Some(Job.MaxEvaluationRestarts)
+          )
+        )
+        _            <- evaluations.getOrCreateCapturePlan(EvaluationCapturePlan("screen", "2026-02", evaluationThrough, ts))
+        _            <- jobs.pruneCompleted(ts)
+        protectedJob <- jobs.find("needed")
+        plans        <- db.getCollection(InvestmentEvaluationRepository.PlanCollectionName)
+        _            <- plans.deleteMany(Filter.empty)
+        _            <- jobs.pruneCompleted(ts)
+        expired      <- jobs.find("needed")
+      } yield {
+        protectedJob.flatMap(_.restartCount) mustBe Some(Job.MaxEvaluationRestarts)
+        expired mustBe None
+      }
+    }
+
+    "aggregate child outcomes while preserving missing children as unfinished" in withEmbeddedMongoDatabase { db =>
+      for {
+        jobs <- JobRepository.make[IO](db)
+        _    <- List(
+          Job("parent/0", action, ts, ts, state = Job.Succeeded),
+          Job("parent/1", action, ts, ts, state = Job.Failed),
+          Job("parent/2", action, ts, ts, state = Job.Paused)
+        ).traverse_(jobs.enqueue)
+        summary  <- jobs.summarize(List("parent/0", "parent/1", "parent/2", "parent/missing"))
+        terminal <- jobs.terminalIds(List("parent/0", "parent/1", "parent/2", "parent/missing"))
+      } yield {
+        summary.total mustBe 3
+        summary.terminal mustBe 2
+        summary.usable mustBe 1
+        summary.count(Job.Paused) mustBe 1
+        terminal mustBe Set("parent/0", "parent/1")
+      }
+    }
+
+    "claim normal updates before evaluation backfills and break due-time ties deterministically" in withEmbeddedMongoDatabase { db =>
+      val evaluation = Action.RefreshEvaluationPrices(AAPL, LocalDate.parse("2020-01-01"), LocalDate.parse("2026-01-01"))
+      for {
+        jobs <- JobRepository.make[IO](db)
+        _    <- List(
+          Job("z", action, ts, ts),
+          Job("a", action, ts, ts),
+          Job("first", action, ts.minusSeconds(1), ts),
+          Job("evaluation", evaluation, ts.minusSeconds(60), ts),
+          Job("future", action, ts.plusSeconds(60), ts)
+        ).traverse_(jobs.enqueue)
+        claimed <- List.fill(4)(()).traverse(_ => jobs.claim(ts, 2.minutes))
+        none    <- jobs.claim(ts, 2.minutes)
+      } yield {
+        claimed.flatten.map(_.id) mustBe List("first", "a", "z", "evaluation")
+        none mustBe None
+      }
+    }
+
+    "back off waiting parents without consuming execution retries" in withEmbeddedMongoDatabase { db =>
+      for {
+        jobs      <- JobRepository.make[IO](db)
+        _         <- jobs.enqueue(Job("parent", action, ts, ts))
+        first     <- jobs.claim(ts, 2.minutes).map(_.get)
+        _         <- jobs.waitForChildren(first, List("parent/0"), ts)
+        waiting   <- jobs.find("parent").map(_.get)
+        second    <- jobs.claim(ts.plusSeconds(1), 2.minutes).map(_.get)
+        _         <- jobs.waitForChildren(second, second.children, ts.plusSeconds(1))
+        backedOff <- jobs.find("parent").map(_.get)
+      } yield {
+        waiting.availableAt mustBe ts.plusSeconds(1)
+        backedOff.availableAt mustBe ts.plusSeconds(3)
+        backedOff.retries mustBe 0
+        backedOff.copy(waitCount = Some(30)).nextPollDelaySeconds mustBe 300L
+      }
+    }
+
+    "retain completed children of unfinished parents and prune completed trees together" in withEmbeddedMongoDatabase { db =>
+      val expiredAt = ts.minusSeconds(31.days.toSeconds)
+      for {
+        jobs <- JobRepository.make[IO](db)
+        _    <- List(
+          Job("waiting", action, ts, expiredAt, children = List("waiting/0"), state = Job.Waiting),
+          Job("waiting/0", action, expiredAt, expiredAt, state = Job.Succeeded, completedAt = Some(expiredAt)),
+          Job("finished", action, expiredAt, expiredAt, children = List("finished/0"), state = Job.Partial, completedAt = Some(expiredAt)),
+          Job("finished/0", action, expiredAt, expiredAt, state = Job.Failed, completedAt = Some(expiredAt)),
+          Job("recent", action, ts, ts, state = Job.Succeeded, completedAt = Some(ts))
+        ).traverse_(jobs.enqueue)
+        _            <- jobs.pruneCompleted(ts)
+        kept         <- jobs.find("waiting/0")
+        removedRoot  <- jobs.find("finished")
+        removedChild <- jobs.find("finished/0")
+        recent       <- jobs.find("recent")
+      } yield {
+        kept must not be empty
+        removedRoot mustBe None
+        removedChild mustBe None
+        recent must not be empty
+      }
+    }
+
+    "retry a terminal evaluation once with a daily cooldown and clear its retention clock" in withEmbeddedMongoDatabase { db =>
+      for {
+        jobs     <- JobRepository.make[IO](db)
+        _        <- jobs.enqueue(Job("evaluation", evaluationAction, ts, ts, state = Job.Failed, retries = 3, completedAt = Some(ts)))
+        _        <- jobs.enqueue(Job("planned", action, ts, ts, state = Job.Failed, plan = Some(JobPlan(List(action), false))))
+        _        <- jobs.enqueue(Job("parent/0", action, ts, ts, state = Job.Failed))
+        rejected <- List("planned", "parent/0").traverse(jobs.retryTerminal(_, ts))
+        retries  <- (jobs.retryTerminal("evaluation", ts), jobs.retryTerminal("evaluation", ts)).parTupled
+        queued   <- jobs.find("evaluation").map(_.get)
+        early    <- jobs.claim(ts.plusSeconds(1), 2.minutes)
+        due      <- jobs.claim(ts.plusSeconds(1.day.toSeconds), 2.minutes)
+      } yield {
+        rejected mustBe List(false, false)
+        List(retries._1, retries._2).count(identity) mustBe 1
+        queued.state mustBe Job.Pending
+        queued.completedAt mustBe None
+        queued.retries mustBe 0
+        queued.restartCount mustBe Some(1)
+        queued.availableAt mustBe ts.plusSeconds(1.day.toSeconds)
+        early mustBe None
+        due.map(_.id) mustBe Some("evaluation")
+      }
+    }
     "enqueue idempotently, claim once, recover expired leases and fence stale owners" in withEmbeddedMongoDatabase { db =>
       val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       for {
-        jobs <- JobRepository.make[IO](db)
-        _ <- jobs.enqueue(Job("same", action, now, now))
-        _ <- jobs.enqueue(Job("same", Action.RescheduleAll, now, now))
+        jobs   <- JobRepository.make[IO](db)
+        _      <- jobs.enqueue(Job("same", action, now, now))
+        _      <- jobs.enqueue(Job("same", Action.DeactivateSecurity(MSFT), now, now))
         claims <- (jobs.claim(now, 2.minutes), jobs.claim(now, 2.minutes)).parTupled
         first = List(claims._1, claims._2).flatten.head
-        all <- jobs.list()
         recovered <- jobs.claim(now.plusSeconds(121), 2.minutes).map(_.get)
-        _ <- jobs.finish(first, Job.Succeeded)
-        fenced <- jobs.find("same").map(_.get)
-        _ <- jobs.finish(recovered, Job.Succeeded)
+        _         <- jobs.finish(first, Job.Succeeded)
+        fenced    <- jobs.find("same").map(_.get)
+        _         <- jobs.finish(recovered, Job.Succeeded)
         completed <- jobs.find("same").map(_.get)
       } yield {
         List(claims._1, claims._2).flatten.size mustBe 1
-        all.size mustBe 1
         first.action mustBe action
         recovered.leaseToken must not be first.leaseToken
         fenced.state mustBe Job.Running
@@ -58,25 +220,23 @@ class JobRepositorySpec extends RepositorySpec {
     "recover the command outbox after a crash without counting the occurrence twice" in withEmbeddedMongoDatabase { db =>
       val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       for {
-        jobs <- JobRepository.make[IO](db)
-        commands <- CommandRepository.make[IO](db)
-        cmd <- commands.create(CreateCommand(action, Schedule.Periodic(1.hour), Some(1)))
-        _ <- commands.initializeNextRun(cmd, now)
-        due <- commands.find(cmd.id)
-        reserved <- commands.reserve(due, now)
-        before <- jobs.list()
-        _ <- CommandScheduler.tick(commands, jobs)
-        _ <- CommandScheduler.tick(commands, jobs)
-        after <- commands.find(cmd.id)
-        all <- jobs.list()
-        claimed <- jobs.claim(Instant.now(), 2.minutes).map(_.get)
-        _ <- jobs.finish(claimed, Job.Succeeded)
-        _ <- CommandScheduler.tick(commands, jobs)
+        jobs      <- JobRepository.make[IO](db)
+        commands  <- CommandRepository.make[IO](db)
+        cmd       <- commands.create(CreateCommand(action, Schedule.Periodic(1.hour), Some(1)))
+        _         <- commands.initializeNextRun(cmd, now)
+        due       <- commands.find(cmd.id)
+        reserved  <- commands.reserve(due, now)
+        before    <- jobs.find(reserved.get.job.id)
+        _         <- CommandScheduler.tick(commands, jobs)
+        _         <- CommandScheduler.tick(commands, jobs)
+        after     <- commands.find(cmd.id)
+        claimed   <- jobs.claim(Instant.now(), 2.minutes).map(_.get)
+        _         <- jobs.finish(claimed, Job.Succeeded)
+        _         <- CommandScheduler.tick(commands, jobs)
         exhausted <- commands.find(cmd.id)
       } yield {
         reserved must not be empty
-        before mustBe empty
-        all.size mustBe 1
+        before mustBe None
         after.executionCount mustBe 1
         after.outbox mustBe None
         exhausted.activeRunId mustBe None
@@ -86,14 +246,14 @@ class JobRepositorySpec extends RepositorySpec {
     }
 
     "never cancel a newer occurrence from an older scheduler snapshot" in withEmbeddedMongoDatabase { db =>
-      val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
+      val now       = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       val commandId = FetchLatestSecuritiesCommand.id
       for {
-        jobs <- JobRepository.make[IO](db)
-        _ <- jobs.enqueue(Job("old", action, now, now, Some(JobCommand(commandId, 0, "old"))))
-        _ <- jobs.enqueue(Job("new", action, now, now, Some(JobCommand(commandId, 2, "new"))))
-        _ <- jobs.cancelObsolete(commandId, 1)
-        old <- jobs.find("old").map(_.get)
+        jobs  <- JobRepository.make[IO](db)
+        _     <- jobs.enqueue(Job("old", action, now, now, Some(JobCommand(commandId, 0, "old"))))
+        _     <- jobs.enqueue(Job("new", action, now, now, Some(JobCommand(commandId, 2, "new"))))
+        _     <- jobs.cancelObsolete(commandId, 1)
+        old   <- jobs.find("old").map(_.get)
         newer <- jobs.find("new").map(_.get)
       } yield {
         old.state mustBe Job.Cancelled
@@ -103,19 +263,19 @@ class JobRepositorySpec extends RepositorySpec {
 
     "cancel queued old versions on edits and deactivate, and schedule again on activation" in withEmbeddedMongoDatabase { db =>
       for {
-        jobs <- JobRepository.make[IO](db)
-        commands <- CommandRepository.make[IO](db)
-        dispatcher <- ActionDispatcher.durable(jobs)
-        service <- CommandService.make(commands, dispatcher)
-        cmd <- service.create(CreateCommand(action, Schedule.Periodic(1.hour), None))
-        _ <- CommandScheduler.tick(commands, jobs)
-        before <- commands.find(cmd.id)
-        _ <- service.update(UpdateCommand(cmd.id, true, Action.RecordCompanyProfileUpdate(List(MSFT)), Schedule.Periodic(1.second), None))
-        old <- jobs.find(before.activeRunId.get).map(_.get)
-        _ <- service.activate(cmd.id, false)
-        _ <- CommandScheduler.tick(commands, jobs)
-        inactive <- commands.find(cmd.id)
-        _ <- service.activate(cmd.id, true)
+        jobs        <- JobRepository.make[IO](db)
+        commands    <- CommandRepository.make[IO](db)
+        dispatcher  <- ActionDispatcher.durable(jobs)
+        service     <- CommandService.make(commands, dispatcher, jobs)
+        cmd         <- service.create(CreateCommand(action, Schedule.Periodic(1.hour), None))
+        _           <- CommandScheduler.tick(commands, jobs)
+        before      <- commands.find(cmd.id)
+        _           <- service.update(UpdateCommand(cmd.id, true, Action.DeactivateSecurity(MSFT), Schedule.Periodic(1.second), None))
+        old         <- jobs.find(before.activeRunId.get).map(_.get)
+        _           <- service.activate(cmd.id, false)
+        _           <- CommandScheduler.tick(commands, jobs)
+        inactive    <- commands.find(cmd.id)
+        _           <- service.activate(cmd.id, true)
         reactivated <- commands.find(cmd.id)
       } yield {
         old.state mustBe Job.Cancelled
@@ -127,43 +287,41 @@ class JobRepositorySpec extends RepositorySpec {
     }
 
     "run ready work with sixteen future schedules and no free timer workers" in withEmbeddedMongoDatabase { db =>
-      val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
+      val now      = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       val services = mock(classOf[Services[IO]])
       val security = mock(classOf[SecurityService[IO]])
       when(services.security).thenReturn(security)
-      when(security.recordCompanyProfileUpdate(List(AAPL))).thenReturn(IO.unit)
+      when(security.deactivate(AAPL)).thenReturn(IO.unit)
       for {
-        jobs <- JobRepository.make[IO](db)
-        _ <- (1 to 16).toList.traverse_(n => jobs.enqueue(Job(s"timer-$n", Action.Schedule(FetchLatestSecuritiesCommand.id, 1.day), now.plusSeconds(86400), now)))
-        _ <- jobs.enqueue(Job("ready", action, now, now))
-        dispatcher <- ActionDispatcher.durable(jobs)
-        executor <- ActionExecutor.make(dispatcher, services, ActionExecutorConfig(16))
-        _ <- executor.run.take(1).compile.drain.timeout(3.seconds)
-        ready <- jobs.find("ready").map(_.get)
-        timers <- jobs.list()
+        jobs     <- JobRepository.make[IO](db)
+        _        <- (1 to 16).toList.traverse_(n => jobs.enqueue(Job(s"timer-$n", action, now.plusSeconds(86400), now)))
+        _        <- jobs.enqueue(Job("ready", action, now, now))
+        executor <- ActionExecutor.make(jobs, services, ActionExecutorConfig(16))
+        _        <- executor.run.take(1).compile.drain.timeout(3.seconds)
+        ready    <- jobs.find("ready").map(_.get)
+        timers   <- jobs.summarize((1 to 16).toList.map(n => s"timer-$n"))
       } yield {
         ready.state mustBe Job.Succeeded
-        timers.count(_.state == Job.Pending) mustBe 16
+        timers.count(Job.Pending) mustBe 16
       }
     }
 
     "finish a fan-out larger than the old queue capacity with one worker" in withEmbeddedMongoDatabase { db =>
       val services = mock(classOf[Services[IO]])
       val profiles = mock(classOf[CompanyProfileService[IO]])
-      val tickers = (1 to 130).toList.map(n => Ticker(s"TEST$n"))
+      val tickers  = (1 to 130).toList.map(n => Ticker(s"TEST$n"))
       when(services.companyProfile).thenReturn(profiles)
       tickers.foreach(t => when(profiles.get(t, true)).thenReturn(IO.pure(AAPLCompanyProfile)))
       for {
-        jobs <- JobRepository.make[IO](db)
-        now <- IO.realTimeInstant
-        _ <- jobs.enqueue(Job("fanout", Action.UpdateCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)), now, now))
-        dispatcher <- ActionDispatcher.durable(jobs)
-        executor <- ActionExecutor.make(dispatcher, services, ActionExecutorConfig(1))
-        result <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, "fanout"))
-        children <- jobs.list(200)
+        jobs     <- JobRepository.make[IO](db)
+        now      <- IO.realTimeInstant
+        _        <- jobs.enqueue(Job("fanout", Action.UpdateCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)), now, now))
+        executor <- ActionExecutor.make(jobs, services, ActionExecutorConfig(1))
+        result   <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, "fanout"))
+        children <- jobs.summarize((0 until 130).toList.map(n => s"fanout/$n"))
       } yield {
         result.state mustBe Job.Succeeded
-        children.count(_.state == Job.Succeeded) mustBe 131
+        children.count(Job.Succeeded) mustBe 130
       }
     }
 
@@ -176,15 +334,16 @@ class JobRepositorySpec extends RepositorySpec {
       for {
         started <- Deferred[IO, Unit]
         release <- Deferred[IO, Unit]
-        second <- Ref.of[IO, Boolean](false)
+        second  <- Ref.of[IO, Boolean](false)
         _ = when(profiles.get(AAPL, true)).thenReturn(started.complete(()).void >> release.get.as(AAPLCompanyProfile))
-        _ = when(security.recordCompanyProfileUpdate(List(AAPL))).thenReturn(second.set(true))
+        _ = when(security.deactivate(AAPL)).thenReturn(second.set(true))
         jobs <- JobRepository.make[IO](db)
-        now <- IO.realTimeInstant
-        _ <- jobs.enqueue(Job("sequence", Action.Sequence(NonEmptyList.of(Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), action)), now, now))
-        dispatcher <- ActionDispatcher.durable(jobs)
-        executor <- ActionExecutor.make(dispatcher, services, ActionExecutorConfig(3))
-        result <- executor.run.compile.drain.background.use { _ =>
+        now  <- IO.realTimeInstant
+        _    <- jobs.enqueue(
+          Job("sequence", Action.Sequence(NonEmptyList.of(Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), action)), now, now)
+        )
+        executor <- ActionExecutor.make(jobs, services, ActionExecutorConfig(3))
+        result   <- executor.run.compile.drain.background.use { _ =>
           started.get.timeout(3.seconds) >> second.get.flatMap { early =>
             release.complete(()) >> awaitTerminal(jobs, "sequence").tupleLeft(early)
           }
@@ -200,21 +359,20 @@ class JobRepositorySpec extends RepositorySpec {
     "persist provider cooldown without consuming retries, and stop after three transient retries" in withEmbeddedMongoDatabase { db =>
       val services = mock(classOf[Services[IO]])
       val profiles = mock(classOf[CompanyProfileService[IO]])
-      val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
+      val now      = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       when(services.companyProfile).thenReturn(profiles)
       when(profiles.get(AAPL, true)).thenReturn(IO.raiseError(AppError.ProviderDeferred("Finnhub", now.plusSeconds(300), "cooldown")))
       when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.HttpClient("Finnhub", 503, "unavailable")))
       for {
-        jobs <- JobRepository.make[IO](db)
-        _ <- jobs.enqueue(Job("cooldown", Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), now, now, retries = 2))
-        _ <- jobs.enqueue(Job("exhausted", Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 3))
-        _ <- jobs.enqueue(Job("retry", Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 2))
-        dispatcher <- ActionDispatcher.durable(jobs)
-        executor <- ActionExecutor.make(dispatcher, services, ActionExecutorConfig(1))
-        _ <- executor.run.take(3).compile.drain.timeout(3.seconds)
-        cooldown <- jobs.find("cooldown").map(_.get)
+        jobs      <- JobRepository.make[IO](db)
+        _         <- jobs.enqueue(Job("cooldown", Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), now, now, retries = 2))
+        _         <- jobs.enqueue(Job("exhausted", Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 3))
+        _         <- jobs.enqueue(Job("retry", Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 2))
+        executor  <- ActionExecutor.make(jobs, services, ActionExecutorConfig(1))
+        _         <- executor.run.take(3).compile.drain.timeout(3.seconds)
+        cooldown  <- jobs.find("cooldown").map(_.get)
         exhausted <- jobs.find("exhausted").map(_.get)
-        retry <- jobs.find("retry").map(_.get)
+        retry     <- jobs.find("retry").map(_.get)
       } yield {
         cooldown.state mustBe Job.Pending
         cooldown.availableAt mustBe now.plusSeconds(300)
@@ -224,6 +382,54 @@ class JobRepositorySpec extends RepositorySpec {
         retry.state mustBe Job.Pending
         retry.retries mustBe 3
         retry.availableAt.isAfter(now) mustBe true
+      }
+    }
+
+    "bound unavailable-data retries, retain partial results and release the scheduled occurrence" in withEmbeddedMongoDatabase { db =>
+      val services = mock(classOf[Services[IO]])
+      val profiles = mock(classOf[CompanyProfileService[IO]])
+      when(services.companyProfile).thenReturn(profiles)
+      when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.DataUnavailable("Finnhub", MSFT, "missing session")))
+      for {
+        jobs           <- JobRepository.make[IO](db)
+        commands       <- CommandRepository.make[IO](db)
+        dispatcher     <- ActionDispatcher.durable(jobs)
+        commandService <- CommandService.make(commands, dispatcher, jobs)
+        _ = when(services.command).thenReturn(commandService)
+        now     <- IO.realTimeInstant
+        command <- commands.create(
+          CreateCommand(Action.UpdateCompanyProfiles(NonEmptyList.of(AAPL, MSFT)), Schedule.Periodic(1.hour), Some(1))
+        )
+        ready      <- commands.initializeNextRun(command, now).map(_.get)
+        occurrence <- commands.reserve(ready, now).map(_.get)
+        parent   = occurrence.job
+        childIds = List(s"${parent.id}/0", s"${parent.id}/1")
+        _ <- jobs.enqueue(parent.copy(children = childIds, state = Job.Waiting, availableAt = now.plusSeconds(1)))
+        _ <- jobs.enqueue(
+          Job(
+            childIds.head,
+            Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)),
+            now,
+            now,
+            command = parent.command,
+            state = Job.Succeeded
+          )
+        )
+        _ <- jobs.enqueue(
+          Job(childIds.last, Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, command = parent.command, retries = 2)
+        )
+        executor  <- ActionExecutor.make(jobs, services, ActionExecutorConfig(1))
+        result    <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, parent.id))
+        failed    <- jobs.find(childIds.last).map(_.get)
+        _         <- CommandScheduler.tick(commands, jobs)
+        completed <- commands.find(command.id)
+      } yield {
+        failed.state mustBe Job.Failed
+        failed.retries mustBe 3
+        result.state mustBe Job.Partial
+        completed.activeRunId mustBe None
+        completed.outbox mustBe None
+        completed.executionCount mustBe 1
       }
     }
 
@@ -237,13 +443,14 @@ class JobRepositorySpec extends RepositorySpec {
       when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.CompanyProfileNotFound(MSFT)))
       for {
         ran <- Ref.of[IO, Boolean](false)
-        _ = when(security.recordCompanyProfileUpdate(List(AAPL))).thenReturn(ran.set(true))
+        _ = when(security.deactivate(AAPL)).thenReturn(ran.set(true))
         jobs <- JobRepository.make[IO](db)
-        now <- IO.realTimeInstant
-        _ <- jobs.enqueue(Job("partial", Action.Sequence(NonEmptyList.of(Action.UpdateCompanyProfiles(NonEmptyList.of(AAPL, MSFT)), action)), now, now))
-        dispatcher <- ActionDispatcher.durable(jobs)
-        executor <- ActionExecutor.make(dispatcher, services, ActionExecutorConfig(4))
-        result <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, "partial"))
+        now  <- IO.realTimeInstant
+        _    <- jobs.enqueue(
+          Job("partial", Action.Sequence(NonEmptyList.of(Action.UpdateCompanyProfiles(NonEmptyList.of(AAPL, MSFT)), action)), now, now)
+        )
+        executor  <- ActionExecutor.make(jobs, services, ActionExecutorConfig(4))
+        result    <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, "partial"))
         continued <- ran.get
       } yield {
         result.state mustBe Job.Partial

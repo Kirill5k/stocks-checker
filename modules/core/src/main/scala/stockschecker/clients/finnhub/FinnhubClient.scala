@@ -2,7 +2,6 @@ package stockschecker.clients.finnhub
 
 import cats.effect.Async
 import cats.syntax.flatMap.*
-import cats.syntax.functor.*
 import fs2.Stream
 import io.circe.{Codec, JsonObject}
 import io.circe.fs2.{byteArrayParser, decoder}
@@ -21,7 +20,6 @@ import scala.util.Try
 trait FinnhubClient[F[_]]:
   def getListedSecurities(exchange: Exchange): Stream[F, Security]
   def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]]
-  def getFinancialMetrics(ticker: Ticker): F[Option[FinancialMetrics]]
   def getFinancialData(ticker: Ticker): F[Option[FinancialData]]
 
 final private class LiveFinnhubClient[F[_]](
@@ -30,9 +28,6 @@ final private class LiveFinnhubClient[F[_]](
 )(using
     F: Async[F]
 ) extends FinnhubClient[F] {
-
-  override def getFinancialMetrics(ticker: Ticker): F[Option[FinancialMetrics]] =
-    getFinancialData(ticker).map(_.map(_.metrics))
 
   override def getFinancialData(ticker: Ticker): F[Option[FinancialData]] = {
     val request = emptyRequest

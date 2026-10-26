@@ -1,21 +1,32 @@
 package stockschecker.actions
 
-import cats.data.NonEmptyList
 import cats.effect.IO
+import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
-import stockschecker.domain.Exchange
+import org.mockito.ArgumentCaptor
+import stockschecker.domain.Job
+import stockschecker.fixtures.*
+import stockschecker.repositories.JobRepository
 
 class ActionDispatcherSpec extends IOWordSpec {
+  given Clock[IO] = Clock.mock(ts)
+
   "An ActionDispatcher" should {
-    "add an action to the queue of dispatched actions" in {
-      val a1 = Action.FetchSecurities(NonEmptyList.of(Exchange.NYSE))
-      val a2 = Action.FetchSecurities(NonEmptyList.of(Exchange.NASDAQ))
-      (for
-        ad      <- ActionDispatcher.make[IO]
-        _       <- ad.dispatch(a1)
-        _       <- ad.dispatch(a2)
-        actions <- ad.pendingActions.take(2).compile.toList
-      yield actions).asserting(_ mustBe List(a1, a2))
+    "persist accepted work before returning" in {
+      val jobs   = mock[JobRepository[IO]]
+      val action = Action.DeactivateSecurity(AAPL)
+      when(jobs.enqueue(any[Job])).thenReturnUnit
+      val captured = ArgumentCaptor.forClass(classOf[Job])
+      (for {
+        dispatcher <- ActionDispatcher.durable(jobs)
+        _          <- dispatcher.dispatch(action)
+      } yield ()).asserting { _ =>
+        verify(jobs).enqueue(captured.capture())
+        captured.getValue.action mustBe action
+        captured.getValue.availableAt mustBe ts
+        captured.getValue.createdAt mustBe ts
+        captured.getValue.id must not be empty
+      }
     }
   }
 }

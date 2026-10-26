@@ -16,26 +16,40 @@ trait DataQualityRepository[F[_]]:
   def all: F[List[DatasetAvailability]]
 
 object DataQualityRepository extends MongoJsonCodecs {
-  private final case class Record(
-      _id: String, ticker: Ticker, provider: String, dataset: String, status: String,
-      lastAttemptAt: Instant, lastSuccessAt: Option[Instant], failure: Option[String]
+  final private case class Record(
+      _id: String,
+      ticker: Ticker,
+      provider: String,
+      dataset: String,
+      status: String,
+      lastAttemptAt: Instant,
+      lastSuccessAt: Option[Instant],
+      failure: Option[String]
   ) derives Codec.AsObject
   private given MongoCodecProvider[Record] = deriveCirceCodecProvider[Record]
 
   def make[F[_]: Concurrent](db: MongoDatabase[F]): F[DataQualityRepository[F]] =
     db.getCollectionWithCodec[Record]("dataset-availability").flatMap { raw =>
       val collection = raw.withAddedCodec[Ticker]
-      collection.createIndex(Index.ascending("status")).as(new DataQualityRepository[F] {
-        def record(ticker: Ticker, provider: String, dataset: String, status: String, at: Instant, failure: Option[String]): F[Unit] = {
-          val id = s"$provider:$dataset:${ticker.value}"
-          val update = Update.setOnInsert("_id", id).set("ticker", ticker).set("provider", provider).set("dataset", dataset)
-            .set("status", status).set("lastAttemptAt", at).set("failure", failure)
-          val dated = if (status == "available") update.set("lastSuccessAt", at) else update
-          collection.updateOne(Filter.idEq(id), dated, UpdateOptions(upsert = true)).void
-        }
-        def all: F[List[DatasetAvailability]] = collection.find.all.map(_.toList.map(r =>
-          DatasetAvailability(r.ticker, r.provider, r.dataset, r.status, r.lastAttemptAt, r.lastSuccessAt, r.failure)
-        ))
-      })
+      collection
+        .createIndex(Index.ascending("status"))
+        .as(new DataQualityRepository[F] {
+          def record(ticker: Ticker, provider: String, dataset: String, status: String, at: Instant, failure: Option[String]): F[Unit] = {
+            val id     = s"$provider:$dataset:${ticker.value}"
+            val update = Update
+              .setOnInsert("_id", id)
+              .set("ticker", ticker)
+              .set("provider", provider)
+              .set("dataset", dataset)
+              .set("status", status)
+              .set("lastAttemptAt", at)
+              .set("failure", failure)
+            val dated = if (status == "available") update.set("lastSuccessAt", at) else update
+            collection.updateOne(Filter.idEq(id), dated, UpdateOptions(upsert = true)).void
+          }
+          def all: F[List[DatasetAvailability]] = collection.find.all.map(
+            _.toList.map(r => DatasetAvailability(r.ticker, r.provider, r.dataset, r.status, r.lastAttemptAt, r.lastSuccessAt, r.failure))
+          )
+        })
     }
 }

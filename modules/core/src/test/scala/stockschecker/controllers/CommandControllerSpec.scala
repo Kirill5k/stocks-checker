@@ -1,6 +1,7 @@
 package stockschecker.controllers
 
 import cats.effect.IO
+import kirill5k.common.cats.Clock
 import org.http4s.*
 import org.http4s.implicits.*
 import kirill5k.common.http4s.test.HttpRoutesWordSpec
@@ -8,6 +9,8 @@ import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
 import stockschecker.domain.CreateCommand
 import stockschecker.services.CommandService
+import stockschecker.actions.ActionDispatcher
+import stockschecker.repositories.{CommandRepository, JobRepository}
 import stockschecker.fixtures.*
 
 class CommandControllerSpec extends HttpRoutesWordSpec {
@@ -83,6 +86,26 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
     }
 
     "POST /commands" should {
+      "reject a retired action before writing a command" in {
+        given Clock[IO] = Clock.mock(ts)
+        val commands    = mock[CommandRepository[IO]]
+        val dispatcher  = mock[ActionDispatcher[IO]]
+        val jobs        = mock[JobRepository[IO]]
+        val res         = for
+          service    <- CommandService.make(commands, dispatcher, jobs)
+          controller <- CommandController.make(apiConfig, service)
+          body = """{"action":{"kind":"legacy-retired"},"schedule":{"kind":"periodic","period":"20minutes"}}"""
+          req  = Request[IO](uri = uri"/commands", method = Method.POST).withHeaders(apiKeyHeader).withBody(body)
+          response <- controller.routes.orNotFound.run(req)
+          _        <- IO(verifyNoInteractions(commands, dispatcher, jobs))
+        yield response
+
+        res mustHaveStatus (
+          Status.UnprocessableContent,
+          Some("""{"message":"This scheduling or audit action has been retired"}""")
+        )
+      }
+
       "return 201 and command id on success" in {
         val svc = mocks
         when(svc.create(any[CreateCommand])).thenReturnIO(FetchLatestSecuritiesCommand)

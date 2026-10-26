@@ -9,7 +9,7 @@ import stockschecker.actions.ActionDispatcher
 import stockschecker.clients.Clients
 import stockschecker.repositories.Repositories
 import stockschecker.common.config.InvestmentConfig
-import stockschecker.domain.{InvestmentRecipe, InvestmentScreenSettings}
+import stockschecker.domain.InvestmentRecipe
 
 trait Services[F[_]]:
   def security: SecurityService[F]
@@ -26,22 +26,22 @@ object Services:
       clients: Clients[F],
       repos: Repositories[F],
       ad: ActionDispatcher[F],
-      investmentConfig: InvestmentConfig = InvestmentConfig()
+      investmentConfig: InvestmentConfig
   ): F[Services[F]] =
     for
       s          <- SecurityService.make(repos.security, clients.marketData)
-      cp         <- CompanyProfileService.make(repos.companyProfile, clients.marketData, ad)
-      p          <- PriceService.make(repos.priceAnalytics, repos.latestPrice, clients.marketData, ad, Some(repos.priceHistory))
-      c          <- CommandService.make(repos.command, ad)
-      st         <- StockService.make(repos.stock, ad, Some(repos.security), Some(repos.companyProfile))
-      fm         <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, ad, Some(repos.financialHistory))
+      cp         <- CompanyProfileService.make(repos.companyProfile, clients.marketData, repos.security)
+      p          <- PriceService.make(repos.priceAnalytics, repos.latestPrice, clients.marketData, repos.companyProfile, repos.priceHistory)
+      c          <- CommandService.make(repos.command, ad, repos.jobs)
+      st         <- StockService.make(repos.stock, ad, repos.security, repos.companyProfile)
+      fm         <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, repos.companyProfile, repos.financialHistory)
       investment <- InvestmentScreenService.make(
         repos.stock,
         repos.financialHistory,
         repos.investmentScreens,
         repos.investmentEvaluations,
         ProviderEvaluationPriceHistory.make(clients.marketData, repos.priceHistory, investmentConfig.totalReturnAudited),
-        InvestmentScreenSettings(investmentConfig.enabled, investmentConfig.coverageAudited),
+        investmentConfig,
         InvestmentRecipe(
           maxSnapshotAgeDays = investmentConfig.snapshotFreshnessDays,
           maxAnnualAgeDays = investmentConfig.annualFreshnessDays,
@@ -49,9 +49,9 @@ object Services:
           maxQuarterlyAgeDays = investmentConfig.quarterlyFreshnessDays
         ),
         repos.investmentRankings,
-        Some(repos.jobs)
+        repos.jobs
       )
-      quality <- DataQualityService.make(repos, investmentConfig)
+      quality <- DataQualityService.make(repos, clients.marketData, investmentConfig)
     yield new Services[F]:
       override def security: SecurityService[F]                  = s
       override def companyProfile: CompanyProfileService[F]      = cp

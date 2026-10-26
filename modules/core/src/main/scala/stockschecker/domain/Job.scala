@@ -1,6 +1,6 @@
 package stockschecker.domain
 
-import io.circe.Codec
+import io.circe.{Codec, Decoder, Encoder}
 import stockschecker.actions.Action
 
 import java.time.Instant
@@ -16,28 +16,51 @@ final case class Job(
     command: Option[JobCommand] = None,
     dependsOn: List[String] = Nil,
     children: List[String] = Nil,
-    state: String = Job.Pending,
+    state: JobState = Job.Pending,
     retries: Int = 0,
     leaseToken: Option[String] = None,
     leaseUntil: Option[Instant] = None,
     error: Option[String] = None,
     pausedProvider: Option[String] = None,
-    plan: Option[JobPlan] = None
+    plan: Option[JobPlan] = None,
+    waitCount: Option[Int] = None,
+    completedAt: Option[Instant] = None,
+    restartCount: Option[Int] = None
 ) derives Codec.AsObject {
-  def isTerminal: Boolean = Job.terminalStates.contains(state)
-  def hasUsableResults: Boolean = state == Job.Succeeded || state == Job.Partial
+  def isTerminal: Boolean        = Job.terminalStates.contains(state)
+  def nextPollDelaySeconds: Long = (1L << waitCount.getOrElse(0).min(9)).min(300L)
+  def hasUsableResults: Boolean  = state == Job.Succeeded || state == Job.Partial
+}
+
+enum JobState(val value: String) {
+  case Pending   extends JobState("pending")
+  case Running   extends JobState("running")
+  case Waiting   extends JobState("waiting")
+  case Succeeded extends JobState("succeeded")
+  case Partial   extends JobState("partial")
+  case Failed    extends JobState("failed")
+  case Cancelled extends JobState("cancelled")
+  case Paused    extends JobState("paused")
+}
+
+object JobState {
+  given Codec[JobState] = Codec.from(
+    Decoder.decodeString.emap(value => values.find(_.value == value).toRight(s"Unknown job state: $value")),
+    Encoder.encodeString.contramap(_.value)
+  )
 }
 
 object Job {
-  val Pending   = "pending"
-  val Running   = "running"
-  val Waiting   = "waiting"
-  val Succeeded = "succeeded"
-  val Partial   = "partial"
-  val Failed    = "failed"
-  val Cancelled = "cancelled"
-  val Paused    = "paused"
-  val terminalStates: List[String] = List(Succeeded, Partial, Failed, Cancelled)
+  export JobState.*
+  val MaxEvaluationRestarts          = 2
+  val terminalStates: List[JobState] = List(Succeeded, Partial, Failed, Cancelled)
+}
+
+final case class JobStatusSummary(counts: Map[JobState, Long]) {
+  def count(state: JobState): Long = counts.getOrElse(state, 0L)
+  def total: Long                  = counts.values.sum
+  def terminal: Long               = Job.terminalStates.map(count).sum
+  def usable: Long                 = count(Job.Succeeded) + count(Job.Partial)
 }
 
 /** Stored on the command before enqueueing, so a crash cannot lose an accepted scheduled occurrence. */

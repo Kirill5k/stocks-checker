@@ -1,306 +1,195 @@
 package stockschecker.services
 
-import cats.data.NonEmptyList
 import cats.effect.IO
 import kirill5k.common.cats.test.IOWordSpec
-import org.typelevel.log4cats.Logger
-import org.typelevel.log4cats.slf4j.Slf4jLogger
-import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.{PriceAnalytics, PriceCandle, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{LatestPriceRepository, PriceAnalyticsRepository, PriceHistoryRepository}
+import stockschecker.repositories.{CompanyProfileRepository, LatestPriceRepository, PriceAnalyticsRepository, PriceHistoryRepository}
 import stockschecker.fixtures.*
-import java.time.{LocalDate, ZoneOffset}
+import java.time.{Instant, LocalDate, ZoneOffset}
 
 class PriceServiceSpec extends IOWordSpec {
-  given Logger[IO] = Slf4jLogger.getLogger[IO]
+  private case class Dependencies(
+      repo: PriceAnalyticsRepository[IO],
+      latest: LatestPriceRepository[IO],
+      client: MarketDataClient[IO],
+      profiles: CompanyProfileRepository[IO],
+      history: PriceHistoryRepository[IO]
+  ) {
+    def service: IO[PriceService[IO]] = PriceService.make(repo, latest, client, profiles, history)
+    def cache(adjusted: PriceHistorySnapshot, quoted: PriceHistorySnapshot): Unit = {
+      when(history.latestCovering(AAPL, "split-and-dividend", adjusted.requestedThrough.minusYears(13))).thenReturnIO(Some(adjusted))
+      when(history.latest(AAPL, "none")).thenReturnIO(Some(quoted))
+      ()
+    }
+  }
+  private def mocks: Dependencies = {
+    val d = Dependencies(
+      mock[PriceAnalyticsRepository[IO]],
+      mock[LatestPriceRepository[IO]],
+      mock[MarketDataClient[IO]],
+      mock[CompanyProfileRepository[IO]],
+      mock[PriceHistoryRepository[IO]]
+    )
+    when(d.repo.save(anyList[PriceAnalytics])).thenReturnUnit
+    when(d.latest.save(anyList)).thenReturnUnit
+    when(d.profiles.updatePriceAnalyticsLastUpdated(anyList)).thenReturnUnit
+    when(d.history.save(any[PriceHistorySnapshot])).thenReturnUnit
+    d
+  }
+  private def snapshot(now: Instant, adjustment: String, offsets: List[Long] = List(0L)): PriceHistorySnapshot = {
+    val through = LocalDate.ofInstant(now, ZoneOffset.UTC)
+    val close   = if (adjustment == "none") BigDecimal(100) else BigDecimal(50)
+    PriceHistorySnapshot(
+      adjustment,
+      AAPL,
+      offsets.map(offset => PriceCandle(through.minusDays(offset), close, close, close, close, 1L)),
+      "TwelveData",
+      "USD",
+      adjustment,
+      now,
+      through.minusYears(13),
+      through
+    )
+  }
 
-  "A PriceService" when {
-    "fetchLatestPriceAnalytics" should {
-      "fetch price candles, save price analytics and dispatch Action.RecordPriceAnalyticsUpdate" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        when(client.getMonthlyPriceCandles(any[Ticker])).thenReturnIO(AAPLPriceCandles)
-        when(repo.save(anyList[PriceAnalytics])).thenReturnUnit
-        when(latestPriceRepo.save(anyList)).thenReturnUnit
-        when(dispatcher.dispatch(any)).thenReturnUnit
-
-        val res = for
-          svc <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          _   <- svc.fetchLatestPriceAnalytics(NonEmptyList.of(AAPL))
-        yield ()
-
-        res.asserting { _ =>
-          verify(client).getMonthlyPriceCandles(AAPL)
-          verify(repo).save(anyList[PriceAnalytics])
-          verify(latestPriceRepo).save(anyList)
-          verify(dispatcher).dispatch(Action.RecordPriceAnalyticsUpdate(List(AAPL)))
-          succeed
-        }
-      }
-
-      "report errors when fetching price candles fails" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val error                                       = new RuntimeException("API error")
-        when(client.getMonthlyPriceCandles(any[Ticker])).thenRaiseError(error)
-
-        val res = for
-          svc <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          _   <- svc.fetchLatestPriceAnalytics(NonEmptyList.of(AAPL))
-        yield ()
-
-        res.attempt.asserting { result =>
-          verify(client).getMonthlyPriceCandles(AAPL)
-          verifyNoInteractions(repo, latestPriceRepo)
-          result mustBe Left(error)
-        }
-      }
-
-      "report unavailable provider prices without deactivating the security" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val error = stockschecker.domain.errors.AppError.HttpClient("TwelveData", 404, "Ticker not found")
-        when(client.getMonthlyPriceCandles(any[Ticker])).thenRaiseError(error)
-
-        val res = for
-          svc <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          _   <- svc.fetchLatestPriceAnalytics(NonEmptyList.of(AAPL))
-        yield ()
-
-        res.attempt.asserting { result =>
-          verify(client).getMonthlyPriceCandles(AAPL)
-          verifyNoInteractions(repo, latestPriceRepo, dispatcher)
-          result mustBe Left(error)
-        }
-      }
-
-      "keep the successful price update when another ticker fails" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val error                                       = new RuntimeException("Price provider unavailable")
-        when(client.getMonthlyPriceCandles(AAPL)).thenReturnIO(AAPLPriceCandles)
-        when(client.getMonthlyPriceCandles(MSFT)).thenRaiseError(error)
-        when(repo.save(anyList[PriceAnalytics])).thenReturnUnit
-        when(latestPriceRepo.save(anyList)).thenReturnUnit
-        when(dispatcher.dispatch(any)).thenReturnUnit
-        val result = for
-          svc <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          _   <- svc.fetchLatestPriceAnalytics(NonEmptyList.of(AAPL, MSFT))
-        yield ()
-        result.attempt.asserting { outcome =>
-          outcome mustBe Left(error)
-          verify(repo).save(List(AAPLPriceAnalytics))
-          verify(dispatcher).dispatch(Action.RecordPriceAnalyticsUpdate(List(AAPL)))
-          succeed
-        }
-      }
-
-      "handle errors when saving to repository fails" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val error                                       = new RuntimeException("Database error")
-        when(client.getMonthlyPriceCandles(any[Ticker])).thenReturnIO(AAPLPriceCandles)
-        when(repo.save(anyList[PriceAnalytics])).thenRaiseError(error)
-
-        val res = for
-          svc <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          _   <- svc.fetchLatestPriceAnalytics(NonEmptyList.of(AAPL))
-        yield ()
-
-        res.attempt.asserting { result =>
-          verify(client).getMonthlyPriceCandles(AAPL)
-          verify(repo).save(anyList[PriceAnalytics])
-          result mustBe Left(error)
-        }
+  "PriceService" should {
+    "reuse daily observations and save the unadjusted quote with direct profile updates" in {
+      val d = mocks
+      (for
+        now <- IO.realTimeInstant
+        _ = d.cache(snapshot(now, "split-and-dividend"), snapshot(now, "none"))
+        service   <- d.service
+        analytics <- service.findPriceAnalytics(AAPL, fetch = true)
+      yield analytics).asserting { analytics =>
+        analytics.performanceSummary.latestPrice mustBe BigDecimal(100)
+        analytics.basis.flatMap(_.priceObservationId) mustBe Some("split-and-dividend")
+        analytics.basis.flatMap(_.quotedPriceObservationId) mustBe Some("none")
+        verify(d.repo).save(List(analytics))
+        verify(d.latest).save(List(analytics.toLatestPrice))
+        verify(d.profiles).updatePriceAnalyticsLastUpdated(List(AAPL))
+        verifyNoInteractions(d.client)
+        succeed
       }
     }
 
-    "findPriceAnalytics" should {
-      "reuse cached daily observations and retain a distinct unadjusted quote" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val history                                     = mock[PriceHistoryRepository[IO]]
-        when(repo.save(anyList[PriceAnalytics])).thenReturnUnit
-        when(latestPriceRepo.save(anyList)).thenReturnUnit
-        when(dispatcher.dispatch(any)).thenReturnUnit
-        val result = for
-          now <- IO.realTimeInstant
-          through  = LocalDate.ofInstant(now, ZoneOffset.UTC)
-          adjusted = PriceHistorySnapshot(
-            "adjusted",
-            AAPL,
-            List(PriceCandle(through, 50, 50, 50, 50, 1L)),
-            "TwelveData",
-            "USD",
-            "split-and-dividend",
-            now,
-            through.minusYears(13),
-            through
-          )
-          quoted = adjusted.copy(
-            id = "quote",
-            adjustment = "none",
-            requestedFrom = through.minusDays(14),
-            candles = List(PriceCandle(through, 100, 100, 100, 100, 1L))
-          )
-          _ = when(history.latest(AAPL, "split-and-dividend")).thenReturnIO(Some(adjusted))
-          _ = when(history.latest(AAPL, "none")).thenReturnIO(Some(quoted))
-          svc       <- PriceService.make(repo, latestPriceRepo, client, dispatcher, Some(history))
-          analytics <- svc.findPriceAnalytics(AAPL, fetch = true)
-        yield analytics
-        result.asserting { analytics =>
-          analytics.performanceSummary.latestPrice mustBe BigDecimal(100)
-          analytics.basis.flatMap(_.priceObservationId) mustBe Some("adjusted")
-          analytics.basis.flatMap(_.quotedPriceObservationId) mustBe Some("quote")
-          verifyNoInteractions(client)
-          succeed
-        }
+    "align a cached adjusted series and a later quote to their latest common trading session" in {
+      val d = mocks
+      (for
+        now <- IO.realTimeInstant
+        _ = d.cache(snapshot(now, "split-and-dividend", List(1L, 2L)), snapshot(now, "none", List(0L, 1L, 2L)))
+        service   <- d.service
+        analytics <- service.findPriceAnalytics(AAPL, fetch = true)
+      yield (analytics, LocalDate.ofInstant(now, ZoneOffset.UTC))).asserting { case (analytics, today) =>
+        analytics.performanceSummary.latestPriceDate mustBe today.minusDays(1)
+        analytics.performanceSummary.latestPrice mustBe BigDecimal(100)
+        verifyNoInteractions(d.client)
+        succeed
       }
+    }
 
-      "refetch a fresh cached history when it does not cover the requested horizon" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val history                                     = mock[PriceHistoryRepository[IO]]
-        when(repo.save(anyList[PriceAnalytics])).thenReturnUnit
-        when(latestPriceRepo.save(anyList)).thenReturnUnit
-        when(dispatcher.dispatch(any)).thenReturnUnit
-        when(history.save(any[PriceHistorySnapshot])).thenReturnUnit
-        val result = for
-          now <- IO.realTimeInstant
-          through = LocalDate.ofInstant(now, ZoneOffset.UTC)
-          full    = PriceHistorySnapshot(
-            "full",
-            AAPL,
-            List(PriceCandle(through, 100, 100, 100, 100, 1L)),
-            "TwelveData",
-            "USD",
-            "split-and-dividend",
-            now,
-            through.minusYears(13),
-            through
-          )
-          short  = full.copy(id = "short", requestedFrom = through.minusDays(14))
-          quoted = short.copy(id = "quote", adjustment = "none")
-          _      = when(history.latest(AAPL, "split-and-dividend")).thenReturnIO(Some(short))
-          _      = when(history.latest(AAPL, "none")).thenReturnIO(Some(quoted))
-          _      = when(client.getDailyPriceHistory(AAPL, through.minusYears(13), through, "all")).thenReturnIO(full)
-          svc       <- PriceService.make(repo, latestPriceRepo, client, dispatcher, Some(history))
-          analytics <- svc.findPriceAnalytics(AAPL, fetch = true)
-        yield (analytics, full)
-        result.asserting { case (analytics, full) =>
-          analytics.basis.flatMap(_.priceObservationId) mustBe Some("full")
-          verify(history).save(full)
-          verify(client).getDailyPriceHistory(AAPL, full.requestedFrom, full.requestedThrough, "all")
-          succeed
-        }
+    "report disjoint sessions as unavailable data eligible for bounded retries" in {
+      val d = mocks
+      (for
+        now <- IO.realTimeInstant
+        _ = d.cache(snapshot(now, "split-and-dividend", List(0L)), snapshot(now, "none", List(1L)))
+        service <- d.service
+        outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
+      yield outcome).asserting { outcome =>
+        outcome mustBe Left(AppError.DataUnavailable("TwelveData", AAPL, "adjusted and quoted histories have no common trading session"))
+        verify(d.repo, never).save(anyList[PriceAnalytics])
+        verify(d.latest, never).save(anyList)
+        verify(d.profiles, never).updatePriceAnalyticsLastUpdated(anyList)
+        verifyNoInteractions(d.client)
+        succeed
       }
+    }
 
-      "reject adjusted and quoted histories with inconsistent dates or currencies" in {
-        def run(currency: String, dateOffset: Long): IO[Either[Throwable, PriceAnalytics]] = {
-          val (repo, latestPriceRepo, client, dispatcher) = mocks
-          val history                                     = mock[PriceHistoryRepository[IO]]
-          for
-            now <- IO.realTimeInstant
-            through  = LocalDate.ofInstant(now, ZoneOffset.UTC)
-            adjusted = PriceHistorySnapshot(
-              "adjusted",
-              AAPL,
-              List(PriceCandle(through, 100, 100, 100, 100, 1L)),
-              "TwelveData",
-              "USD",
-              "split-and-dividend",
-              now,
-              through.minusYears(13),
-              through
-            )
-            quoted = adjusted.copy(
-              id = "quote",
-              currency = currency,
-              adjustment = "none",
-              requestedFrom = through.minusDays(14),
-              candles = List(PriceCandle(through.minusDays(dateOffset), 100, 100, 100, 100, 1L))
-            )
-            _ = when(history.latest(AAPL, "split-and-dividend")).thenReturnIO(Some(adjusted))
-            _ = when(history.latest(AAPL, "none")).thenReturnIO(Some(quoted))
-            svc     <- PriceService.make(repo, latestPriceRepo, client, dispatcher, Some(history))
-            outcome <- svc.findPriceAnalytics(AAPL, fetch = true).attempt
-            _ = verifyNoInteractions(repo, latestPriceRepo, dispatcher, client)
-          yield outcome
-        }
-        (for
-          currencyMismatch <- run("CAD", 0)
-          dateMismatch     <- run("USD", 1)
-        yield List(currencyMismatch, dateMismatch)).asserting { outcomes =>
-          outcomes.foreach(_.left.toOption.get mustBe a[AppError.FailedValidation])
-          succeed
-        }
+    "report a halted ticker's stale session as unavailable data without indefinitely deferring its job" in {
+      val d = mocks
+      (for
+        now <- IO.realTimeInstant
+        _ = d.cache(snapshot(now, "split-and-dividend", List(45L)), snapshot(now, "none", List(45L)))
+        service <- d.service
+        outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
+      yield outcome).asserting { outcome =>
+        outcome mustBe Left(AppError.DataUnavailable("TwelveData", AAPL, "the latest matching trading session is more than seven days old"))
+        verify(d.repo, never).save(anyList[PriceAnalytics])
+        verify(d.latest, never).save(anyList)
+        verify(d.profiles, never).updatePriceAnalyticsLastUpdated(anyList)
+        verifyNoInteractions(d.client)
+        succeed
       }
+    }
 
-      "return price analytics from repository when found and fetch is false" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        when(repo.find(any[Ticker])).thenReturnIO(Some(AAPLPriceAnalytics))
-
-        val res = for
-          svc    <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          result <- svc.findPriceAnalytics(AAPL, fetch = false)
-        yield result
-
-        res.asserting { result =>
-          verify(repo).find(AAPL)
-          verifyNoInteractions(client, dispatcher)
-          result mustBe AAPLPriceAnalytics
-        }
+    "reject mismatched currencies without publishing analytics" in {
+      val d = mocks
+      (for
+        now <- IO.realTimeInstant
+        _ = d.cache(snapshot(now, "split-and-dividend"), snapshot(now, "none").copy(currency = "CAD"))
+        service <- d.service
+        result  <- service.findPriceAnalytics(AAPL, fetch = true).attempt
+      yield result).asserting { result =>
+        result.left.toOption.get mustBe a[AppError.FailedValidation]
+        verify(d.repo, never).save(anyList[PriceAnalytics])
+        succeed
       }
+    }
 
-      "fetch from market data client when fetch is true" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        when(client.getMonthlyPriceCandles(any[Ticker])).thenReturnIO(AAPLPriceCandles)
-        when(repo.save(anyList[PriceAnalytics])).thenReturnUnit
-        when(latestPriceRepo.save(anyList)).thenReturnUnit
-        when(dispatcher.dispatch(any[Action])).thenReturnUnit
-
-        val res = for
-          svc    <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          result <- svc.findPriceAnalytics(AAPL, fetch = true)
-        yield result
-
-        res.asserting { result =>
-          verify(client).getMonthlyPriceCandles(AAPL)
-          verify(repo).save(anyList[PriceAnalytics])
-          verify(latestPriceRepo).save(anyList)
-          result.ticker.mustBe(AAPL)
-        }
+    "refetch fresh cached history when it does not cover the requested horizon" in {
+      val d = mocks
+      (for
+        now <- IO.realTimeInstant
+        full = snapshot(now, "split-and-dividend")
+        _    = d.cache(full.copy(requestedFrom = full.requestedThrough.minusDays(14)), snapshot(now, "none"))
+        _    = when(d.client.getDailyPriceHistory(AAPL, full.requestedFrom, full.requestedThrough, "all")).thenReturnIO(full)
+        service <- d.service
+        _       <- service.findPriceAnalytics(AAPL, fetch = true)
+      yield full).asserting { full =>
+        verify(d.history).save(full)
+        verify(d.client).getDailyPriceHistory(AAPL, full.requestedFrom, full.requestedThrough, "all")
+        succeed
       }
+    }
 
-      "raise error when not found in repository and fetch is false" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        when(repo.find(any[Ticker])).thenReturnIO(None)
-
-        val res = for
-          svc    <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          result <- svc.findPriceAnalytics(AAPL, fetch = false)
-        yield result
-
-        res.attempt.asserting { result =>
-          verify(repo).find(AAPL)
-          verifyNoInteractions(client)
-          result.isLeft mustBe true
-        }
+    "retain the first fetched observation when the second request is rate limited" in {
+      val d = mocks
+      (for
+        now <- IO.realTimeInstant
+        full     = snapshot(now, "split-and-dividend")
+        _        = when(d.history.latest(any[Ticker], anyString)).thenReturnIO(None)
+        _        = when(d.history.latestCovering(AAPL, "split-and-dividend", full.requestedFrom)).thenReturnIO(None)
+        _        = when(d.client.getDailyPriceHistory(AAPL, full.requestedFrom, full.requestedThrough, "all")).thenReturnIO(full)
+        deferred = AppError.ProviderDeferred("TwelveData", now.plusSeconds(60), "quota")
+        _        = when(d.client.getDailyPriceHistory(AAPL, full.requestedThrough.minusDays(14), full.requestedThrough, "none"))
+          .thenRaiseError(deferred)
+        service <- d.service
+        result  <- service.findPriceAnalytics(AAPL, fetch = true).attempt
+      yield (full, deferred, result)).asserting { case (full, deferred, result) =>
+        result mustBe Left(deferred)
+        verify(d.history).save(full)
+        verify(d.repo, never).save(anyList[PriceAnalytics])
+        succeed
       }
+    }
 
-      "handle errors when market data client fails with fetch true" in {
-        val (repo, latestPriceRepo, client, dispatcher) = mocks
-        val error                                       = new RuntimeException("API error")
-        when(client.getMonthlyPriceCandles(any[Ticker])).thenRaiseError(error)
+    "return stored analytics without consulting providers when fetch is false" in {
+      val d = mocks
+      when(d.repo.find(AAPL)).thenReturnIO(Some(AAPLPriceAnalytics))
+      d.service.flatMap(_.findPriceAnalytics(AAPL, fetch = false)).asserting { result =>
+        result mustBe AAPLPriceAnalytics
+        verifyNoInteractions(d.client, d.history)
+        succeed
+      }
+    }
 
-        val res = for
-          svc    <- PriceService.make(repo, latestPriceRepo, client, dispatcher)
-          result <- svc.findPriceAnalytics(AAPL, fetch = true)
-        yield result
-
-        res.attempt.asserting { result =>
-          verify(client).getMonthlyPriceCandles(AAPL)
-          result mustBe Left(error)
-        }
+    "report a missing stored analytics result" in {
+      val d = mocks
+      when(d.repo.find(AAPL)).thenReturnIO(None)
+      d.service.flatMap(_.findPriceAnalytics(AAPL, fetch = false)).attempt.asserting { result =>
+        result mustBe Left(AppError.PriceAnalyticsNotFound(AAPL))
       }
     }
   }
-
-  def mocks: (PriceAnalyticsRepository[IO], LatestPriceRepository[IO], MarketDataClient[IO], ActionDispatcher[IO]) =
-    (mock[PriceAnalyticsRepository[IO]], mock[LatestPriceRepository[IO]], mock[MarketDataClient[IO]], mock[ActionDispatcher[IO]])
 }

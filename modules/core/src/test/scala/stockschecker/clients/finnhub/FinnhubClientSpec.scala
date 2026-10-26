@@ -2,6 +2,7 @@ package stockschecker.clients.finnhub
 
 import cats.effect.IO
 import kirill5k.common.sttp.test.Sttp4WordSpec
+import stockschecker.clients.ProviderLimits
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.{CompanyProfile, Exchange, FinancialMetrics, Security, SecurityKind, Ticker}
 import stockschecker.domain.errors.AppError
@@ -14,7 +15,7 @@ import java.time.LocalDate
 class FinnhubClientSpec extends Sttp4WordSpec {
   "A FinnhubClient" when {
 
-    val config = FinnhubClientConfig("http://finnhub.io", "api-key")
+    val config = FinnhubClientConfig("http://finnhub.io", "api-key", ProviderLimits(60, 0, 2))
 
     "getListedSecurities" should {
       "return list of securities for NASDAQ on success" in {
@@ -139,7 +140,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
       }
     }
 
-    "getFinancialMetrics" should {
+    "getFinancialData" should {
       "return financial metrics on success" in {
         val expectedParams = Map("token" -> "api-key", "symbol" -> "AAPL", "metric" -> "all")
         val testingBackend = fs2BackendStub
@@ -151,11 +152,11 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
         val result = for
           client  <- FinnhubClient.make[IO](config, testingBackend)
-          metrics <- client.getFinancialMetrics(Ticker("AAPL"))
+          metrics <- client.getFinancialData(Ticker("AAPL"))
         yield metrics
 
         result.asserting { m =>
-          m mustBe Some(
+          m.map(_.metrics) mustBe Some(
             FinancialMetrics(
               ticker = Ticker("AAPL"),
               peRatioTtm = Some(BigDecimal(34.1119)),
@@ -185,7 +186,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
         val result = for
           client  <- FinnhubClient.make[IO](config, testingBackend)
-          metrics <- client.getFinancialMetrics(Ticker("INVALID"))
+          metrics <- client.getFinancialData(Ticker("INVALID"))
         yield metrics
 
         result.asserting { m =>
@@ -202,7 +203,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
         val result = for
           client  <- FinnhubClient.make[IO](config, testingBackend)
-          profile <- client.getFinancialMetrics(Ticker("AAPL"))
+          profile <- client.getFinancialData(Ticker("AAPL"))
         yield profile
 
         result.attempt.asserting { response =>

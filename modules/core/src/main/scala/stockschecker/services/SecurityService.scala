@@ -17,7 +17,6 @@ trait SecurityService[F[_]]:
   def streamAll: Stream[F, Security]
   def fetchLatest(exchanges: NonEmptyList[Exchange]): F[Unit]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
-  def recordCompanyProfileUpdate(tickers: List[Ticker]): F[Unit]
   def deactivate(ticker: Ticker): F[Unit]
 
 final private class LiveSecurityService[F[_]](
@@ -56,9 +55,6 @@ final private class LiveSecurityService[F[_]](
 
   override def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
-
-  override def recordCompanyProfileUpdate(tickers: List[Ticker]): F[Unit] =
-    repository.updateCompanyProfileLastUpdated(tickers)
 
   override def deactivate(ticker: Ticker): F[Unit] =
     repository.deactivate(ticker)

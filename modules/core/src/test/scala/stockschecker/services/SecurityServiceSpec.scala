@@ -64,38 +64,6 @@ class SecurityServiceSpec extends IOWordSpec {
       }
     }
 
-    "markAsEnriched" should {
-      "update companyProfileLastUpdated for given tickers" in {
-        val (repo, client) = mocks
-        val tickers        = List(AAPL, MSFT)
-        when(repo.updateCompanyProfileLastUpdated(anyList[stockschecker.domain.Ticker])).thenReturnUnit
-
-        val res = for
-          svc <- SecurityService.make(repo, client)
-          _   <- svc.recordCompanyProfileUpdate(tickers)
-        yield ()
-
-        res.asserting { r =>
-          verify(repo).updateCompanyProfileLastUpdated(tickers)
-          r mustBe ()
-        }
-      }
-
-      "handle empty list gracefully" in {
-        val (repo, client) = mocks
-        when(repo.updateCompanyProfileLastUpdated(anyList[stockschecker.domain.Ticker])).thenReturnUnit
-
-        val res = for
-          svc <- SecurityService.make(repo, client)
-          _   <- svc.recordCompanyProfileUpdate(List.empty)
-        yield ()
-
-        res.asserting { r =>
-          verify(repo).updateCompanyProfileLastUpdated(List.empty)
-          r mustBe ()
-        }
-      }
-    }
   }
 
   def mocks: (SecurityRepository[IO], MarketDataClient[IO]) =

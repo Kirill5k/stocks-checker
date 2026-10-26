@@ -8,8 +8,6 @@ final case class InvestmentCandidate(stock: Stock, financialSnapshot: Option[Fin
 final case class InvestmentEvidence(
     provider: String,
     observedAt: Instant,
-    publishedAt: Option[Instant],
-    reportingCurrency: Option[String],
     mappingVersion: String,
     payloadHash: String,
     annualPeriods: Map[String, List[LocalDate]],

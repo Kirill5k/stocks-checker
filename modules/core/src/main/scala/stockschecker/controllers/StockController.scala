@@ -1,7 +1,6 @@
 package stockschecker.controllers
 
 import cats.effect.kernel.Async
-import cats.syntax.flatMap.*
 import io.circe.Codec as CirceCodec
 import org.http4s.HttpRoutes
 import stockschecker.common.config.ApiConfig
@@ -18,7 +17,6 @@ import stockschecker.domain.{
   TimePeriod
 }
 import stockschecker.services.StockService
-import stockschecker.domain.errors.AppError
 import stockschecker.domain.PriceAnalyticsBasis
 import sttp.model.StatusCode
 import sttp.tapir.*
@@ -70,8 +68,7 @@ final private class StockController[F[_]: Async](
         minEpsGrowth5Y = params.financial.minEpsGrowth5Y,
         sortBy = params.basic.sortBy
       )
-      (Async[F].fromEither(filters.validate(params.basic.limit).left.map(AppError.FailedValidation(_))) >>
-        stockService.findAll(filters, params.basic.limit)).mapToResponse(_.map(StockView.from))
+      stockService.findAll(filters, params.basic.limit).mapToResponse(_.map(StockView.from))
     }
 
   private val deactivateStock = secured(StockController.deactivateStockEndpoint)
