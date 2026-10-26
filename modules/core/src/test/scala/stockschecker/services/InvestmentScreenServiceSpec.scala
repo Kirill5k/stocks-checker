@@ -4,6 +4,7 @@ import cats.effect.{IO, Ref}
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.domain.*
+import stockschecker.domain.errors.AppError
 import stockschecker.repositories.*
 import stockschecker.fixtures.*
 import java.time.{Instant, LocalDate}
@@ -14,17 +15,38 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
 
   private def memoryScreens(state: Ref[IO, List[InvestmentScreenRun]]): InvestmentScreenRepository[IO] =
     new InvestmentScreenRepository[IO]:
-      def save(run: InvestmentScreenRun): IO[Unit]                                      = state.update(_ :+ run)
-      def find(id: InvestmentScreenId): IO[Option[InvestmentScreenRun]]                 = state.get.map(_.find(_.id == id))
-      def header(id: InvestmentScreenId): IO[Option[InvestmentScreenRepository.Header]] = find(id).map(
-        _.map(r =>
-          InvestmentScreenRepository.Header(r.id, r.createdAt, r.rankingId, r.request, r.cohorts, InvestmentScreenRepository.summary(r))
+      def save(run: InvestmentScreenRun): IO[Unit]              = state.update(_ :+ run)
+      def find(id: InvestmentScreenId): IO[InvestmentScreenRun] =
+        state.get.flatMap(runs => IO.fromOption(runs.find(_.id == id))(AppError.EntityDoesNotExist("Investment screen", id.value)))
+      def header(id: InvestmentScreenId): IO[Option[InvestmentScreenRepository.Header]] = state.get
+        .map(_.find(_.id == id))
+        .map(
+          _.map(r =>
+            InvestmentScreenRepository.Header(r.id, r.createdAt, r.rankingId, r.request, r.cohorts, InvestmentScreenRepository.summary(r))
+          )
         )
-      )
       def list(limit: Int): IO[List[InvestmentScreenSummary]] = state.get.map(_.reverse.take(limit).map(InvestmentScreenRepository.summary))
       def ids: IO[List[InvestmentScreenId]]                   = state.get.map(_.map(_.id))
 
   "InvestmentScreenService" should {
+    "propagate a missing-screen error from the repository" in {
+      val screens     = mock[InvestmentScreenRepository[IO]]
+      val rankings    = mock[InvestmentRankingService[IO]]
+      val evaluations = mock[InvestmentEvaluationService[IO]]
+      val id          = InvestmentScreenId("missing")
+      val error       = AppError.EntityDoesNotExist("Investment screen", id.value)
+      when(screens.find(id)).thenRaiseError(error)
+      (for
+        service <- InvestmentScreenService.make(screens, rankings, evaluations)
+        result  <- service.get(id)
+      yield result).attempt.asserting { result =>
+        result mustBe Left(error)
+        verify(screens).find(id)
+        verifyNoInteractions(rankings, evaluations)
+        succeed
+      }
+    }
+
     "publish the daily ranking before capturing monthly evaluations during a research refresh" in {
       val screens     = mock[InvestmentScreenRepository[IO]]
       val rankings    = mock[InvestmentRankingService[IO]]

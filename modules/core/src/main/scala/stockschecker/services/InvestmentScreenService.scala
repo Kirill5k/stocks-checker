@@ -38,8 +38,6 @@ final private class LiveInvestmentScreenService[F[_]](
       Sync[F].raiseWhen(request.recipeVersion.exists(_ != recipe.version))(
         AppError.FailedValidation(s"Unknown recipeVersion; supported version: ${recipe.version}")
       )
-  private def load(id: InvestmentScreenId): F[InvestmentScreenRun] =
-    screens.find(id).flatMap(Sync[F].fromOption(_, AppError.EntityDoesNotExist("Investment screen", id.value)))
 
   private def saveScreen(
       id: InvestmentScreenId,
@@ -69,7 +67,7 @@ final private class LiveInvestmentScreenService[F[_]](
       saved   <- saveScreen(id, request, ranking)
     yield saved
 
-  override def get(id: InvestmentScreenId): F[InvestmentScreenResult] = load(id).map(result)
+  override def get(id: InvestmentScreenId): F[InvestmentScreenResult] = screens.find(id).map(result)
   override def list(limit: Int): F[List[InvestmentScreenSummary]]     =
     Sync[F].raiseWhen(limit < 1 || limit > 100)(AppError.FailedValidation("limit must be between 1 and 100")) >> screens.list(limit)
 
@@ -102,10 +100,6 @@ final private class LiveInvestmentScreenService[F[_]](
   private def inScope(input: InvestmentCandidate, request: InvestmentScreenRequest): Boolean =
     request.exchange.forall(_ == input.stock.security.exchange) &&
       request.country.forall(country => input.stock.profile.exists(_.country == country))
-
-  private def scopedCards(run: InvestmentScreenRun): List[InvestmentScorecard] =
-    val tickers = run.inputs.filter(inScope(_, run.request)).map(_.stock.security.ticker).toSet
-    run.scorecards.filter(c => tickers(c.ticker))
 
   private def buildCohorts(
       inputs: List[InvestmentCandidate],
@@ -168,7 +162,8 @@ final private class LiveInvestmentScreenService[F[_]](
     }
 
   private def result(run: InvestmentScreenRun): InvestmentScreenResult =
-    val scoped              = scopedCards(run)
+    val tickers             = run.inputs.filter(inScope(_, run.request)).map(_.stock.security.ticker).toSet
+    val scoped              = run.scorecards.filter(c => tickers(c.ticker))
     val eligible            = scoped.filter(_.eligible)
     val assessed            = eligible.map(c => c -> failedCriteria(c, run.request))
     val matching            = assessed.collect { case (card, Nil) => card }

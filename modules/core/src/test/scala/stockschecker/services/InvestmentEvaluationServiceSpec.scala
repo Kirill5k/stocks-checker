@@ -5,6 +5,7 @@ import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.actions.Action
 import stockschecker.domain.*
+import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.*
 
@@ -16,13 +17,16 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
 
   private def memoryScreens(state: Ref[IO, List[InvestmentScreenRun]]): InvestmentScreenRepository[IO] =
     new InvestmentScreenRepository[IO]:
-      def save(run: InvestmentScreenRun): IO[Unit]                                      = state.update(_ :+ run)
-      def find(id: InvestmentScreenId): IO[Option[InvestmentScreenRun]]                 = state.get.map(_.find(_.id == id))
-      def header(id: InvestmentScreenId): IO[Option[InvestmentScreenRepository.Header]] = find(id).map(
-        _.map(r =>
-          InvestmentScreenRepository.Header(r.id, r.createdAt, r.rankingId, r.request, r.cohorts, InvestmentScreenRepository.summary(r))
+      def save(run: InvestmentScreenRun): IO[Unit]              = state.update(_ :+ run)
+      def find(id: InvestmentScreenId): IO[InvestmentScreenRun] =
+        state.get.flatMap(runs => IO.fromOption(runs.find(_.id == id))(AppError.EntityDoesNotExist("Investment screen", id.value)))
+      def header(id: InvestmentScreenId): IO[Option[InvestmentScreenRepository.Header]] = state.get
+        .map(_.find(_.id == id))
+        .map(
+          _.map(r =>
+            InvestmentScreenRepository.Header(r.id, r.createdAt, r.rankingId, r.request, r.cohorts, InvestmentScreenRepository.summary(r))
+          )
         )
-      )
       def list(limit: Int): IO[List[InvestmentScreenSummary]] = state.get.map(_.reverse.take(limit).map(InvestmentScreenRepository.summary))
       def ids: IO[List[InvestmentScreenId]]                   = state.get.map(_.map(_.id))
 

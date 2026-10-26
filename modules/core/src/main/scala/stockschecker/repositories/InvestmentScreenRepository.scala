@@ -16,11 +16,12 @@ import mongo4cats.operations.Update
 import mongo4cats.models.collection.FindOneAndUpdateOptions
 import com.mongodb.client.model.ReturnDocument
 import stockschecker.domain.*
+import stockschecker.domain.errors.AppError
 import java.time.Instant
 
 trait InvestmentScreenRepository[F[_]]:
   def save(run: InvestmentScreenRun): F[Unit]
-  def find(id: InvestmentScreenId): F[Option[InvestmentScreenRun]]
+  def find(id: InvestmentScreenId): F[InvestmentScreenRun]
   def header(id: InvestmentScreenId): F[Option[InvestmentScreenRepository.Header]]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
   def ids: F[List[InvestmentScreenId]]
@@ -58,15 +59,13 @@ object InvestmentScreenRepository extends MongoJsonCodecs:
           MonadThrow[F].raiseWhen(ranking.isEmpty)(new IllegalArgumentException("Completed immutable ranking is required")) >>
             headers.insertOne(Header(run.id, run.createdAt, run.rankingId, run.request, run.cohorts, summary(run))).void
         }
-      def header(id: InvestmentScreenId): F[Option[Header]]            = headers.find(Filter.idEq(id.value)).first
-      def find(id: InvestmentScreenId): F[Option[InvestmentScreenRun]] =
-        header(id).flatMap {
-          case None    => none[InvestmentScreenRun].pure[F]
-          case Some(h) =>
-            rankings
-              .find(h.rankingId)
-              .map(_.map(r => InvestmentScreenRun(h._id, h.createdAt, r.recipe, h.request, r.inputs, r.scorecards, h.cohorts, r.id)))
-        }
+      def header(id: InvestmentScreenId): F[Option[Header]]    = headers.find(Filter.idEq(id.value)).first
+      def find(id: InvestmentScreenId): F[InvestmentScreenRun] =
+        val notFound = AppError.EntityDoesNotExist("Investment screen", id.value)
+        for
+          h <- header(id).flatMap(_.liftTo[F](notFound))
+          r <- rankings.find(h.rankingId).flatMap(_.liftTo[F](notFound))
+        yield InvestmentScreenRun(h._id, h.createdAt, r.recipe, h.request, r.inputs, r.scorecards, h.cohorts, r.id)
       def list(limit: Int): F[List[InvestmentScreenSummary]] =
         headers.find.sort(Sort.desc("createdAt")).limit(limit).all.map(_.map(_.summary).toList)
       def ids: F[List[InvestmentScreenId]] = headers.find.sort(Sort.asc("createdAt")).all.map(_.map(_._id).toList)

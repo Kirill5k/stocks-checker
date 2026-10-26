@@ -7,6 +7,7 @@ import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.*
+import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import java.time.{Instant, LocalDate}
 
@@ -52,7 +53,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           stored    <- raw.find(Filter.idEq(run.id.value) && Filter.eq("summary.id", run.id.value)).first
         yield
           overwrite.isLeft mustBe true
-          saved mustBe Some(run)
+          saved mustBe run
           listed.map(_.id) mustBe List(run.id)
           stored must not be empty
       }
@@ -86,19 +87,32 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           allIds <- repo.ids
           listed <- repo.list(20)
         yield
-          saved mustBe ids.map(id => Some(run.copy(id = id)))
+          saved mustBe ids.map(id => run.copy(id = id))
           allIds.toSet mustBe ids.toSet
           listed.map(_.id).toSet mustBe ids.toSet
       }
-    "not expose an input batch without its completed screen header" in
+    "return an error when the screen header does not exist" in
       withEmbeddedMongoDatabase { db =>
+        val id = InvestmentScreenId("unfinished")
         for
           repo   <- InvestmentScreenRepository.make[IO](db)
-          saved  <- repo.find(InvestmentScreenId("unfinished"))
+          saved  <- repo.find(id).attempt
           listed <- repo.list(20)
         yield
-          saved mustBe None
+          saved mustBe Left(AppError.EntityDoesNotExist("Investment screen", id.value))
           listed mustBe Nil
+      }
+    "return an error when the referenced ranking does not exist" in
+      withEmbeddedMongoDatabase { db =>
+        for
+          repo    <- InvestmentScreenRepository.make[IO](db)
+          ranks   <- InvestmentRankingRepository.make[IO](db)
+          _       <- ranks.save(InvestmentRankingRun(run.rankingId, now, run.recipe, run.inputs, run.scorecards))
+          _       <- repo.save(run)
+          headers <- db.getCollection(InvestmentRankingRepository.CollectionName)
+          _       <- headers.deleteOne(Filter.idEq(run.rankingId))
+          saved   <- repo.find(run.id).attempt
+        yield saved mustBe Left(AppError.EntityDoesNotExist("Investment screen", run.id.value))
       }
     "save a single immutable evaluation for a screen and month" in
       withEmbeddedMongoDatabase { db =>
