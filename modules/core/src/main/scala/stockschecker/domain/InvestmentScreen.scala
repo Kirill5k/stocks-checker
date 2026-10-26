@@ -1,7 +1,17 @@
 package stockschecker.domain
 
 import io.circe.Codec
+import stockschecker.common.types.StringType
+import sttp.tapir.{Codec as TapirCodec, DecodeResult, Schema}
+
 import java.time.Instant
+
+opaque type InvestmentScreenId = String
+object InvestmentScreenId extends StringType[InvestmentScreenId] {
+  inline given TapirCodec.PlainCodec[InvestmentScreenId] =
+    TapirCodec.string.mapDecode[InvestmentScreenId](s => DecodeResult.Value(InvestmentScreenId(s)))(_.value)
+  given Schema[InvestmentScreenId] = Schema.string
+}
 
 final case class InvestmentScreenRequest(
     limit: Option[Int] = None,

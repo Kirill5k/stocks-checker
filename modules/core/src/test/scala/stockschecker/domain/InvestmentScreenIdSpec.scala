@@ -10,13 +10,12 @@ class InvestmentScreenIdSpec extends AnyWordSpec with Matchers {
   private val values = List("7a6f7470-6131-4b64-bd94-e822e3f504c9", "monthly:2026-10:quality-fair-value-v1")
 
   "InvestmentScreenId" should {
-    "retain the existing string JSON format for user and monthly screens" in {
+    "retain the existing string JSON format for user and monthly screens" in
       values.foreach { value =>
         val id = InvestmentScreenId(value)
         id.asJson mustBe Json.fromString(value)
         Json.fromString(value).as[InvestmentScreenId] mustBe Right(id)
       }
-    }
 
     "preserve screen IDs when decoding HTTP paths" in {
       val codec = summon[Codec.PlainCodec[InvestmentScreenId]]
