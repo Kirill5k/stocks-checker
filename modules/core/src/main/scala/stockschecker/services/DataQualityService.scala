@@ -5,24 +5,26 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.domain.*
-import stockschecker.repositories.Repositories
+import stockschecker.repositories.{DataQualityRepository, InvestmentRankingRepository, SecurityRepository}
 
 trait DataQualityService[F[_]]:
   def report: F[DataQualityReport]
 
 final private class LiveDataQualityService[F[_]](
-    private val repos: Repositories[F]
+    private val quality: DataQualityRepository[F],
+    private val securities: SecurityRepository[F],
+    private val rankings: InvestmentRankingRepository[F]
 )(using
     F: Async[F],
     C: Clock[F]
 ) extends DataQualityService[F] {
   override def report: F[DataQualityReport] =
     for
-      at         <- C.now
-      datasets   <- repos.dataQuality.all
-      securities <- repos.security.streamAll.compile.toList
-      ranking    <- repos.investmentRankings.latestHeader
-      exclusions = securities.flatMap(s => s.exclusionReason.map(r => ExcludedSecurity(s.ticker, r, s.listingStatus)))
+      at       <- C.now
+      datasets <- quality.all
+      excluded <- securities.findExcluded
+      ranking  <- rankings.latestHeader
+      exclusions = excluded.flatMap(s => s.exclusionReason.map(r => ExcludedSecurity(s.ticker, r, s.listingStatus)))
       coverage   = ranking
         .map { header =>
           header.summary.excludedByReason ++ Map("eligible" -> header.summary.eligibleCount, "universe" -> header.summary.universeCount)
@@ -39,5 +41,9 @@ final private class LiveDataQualityService[F[_]](
 }
 
 object DataQualityService:
-  def make[F[_]: {Async, Clock}](repos: Repositories[F]): F[DataQualityService[F]] =
-    Async[F].pure(LiveDataQualityService[F](repos))
+  def make[F[_]: {Async, Clock}](
+      quality: DataQualityRepository[F],
+      securities: SecurityRepository[F],
+      rankings: InvestmentRankingRepository[F]
+  ): F[DataQualityService[F]] =
+    Async[F].pure(LiveDataQualityService[F](quality, securities, rankings))

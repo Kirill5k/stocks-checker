@@ -24,6 +24,7 @@ trait SecurityRepository[F[_]]:
   def save(securities: List[Security]): F[Unit]
   def find(ticker: Ticker): F[Option[Security]]
   def findByExchange(exchange: Exchange): F[List[Security]]
+  def findExcluded: F[List[Security]]
   def streamAll: Stream[F, Security]
   def getAllTickers: F[List[Ticker]]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
@@ -76,6 +77,12 @@ final private class LiveSecurityRepository[F[_]](
   override def findByExchange(exchange: Exchange): F[List[Security]] =
     collection
       .find(Filter.eq(Field.Exchange, exchange))
+      .all
+      .mapList(_.toDomain)
+
+  override def findExcluded: F[List[Security]] =
+    collection
+      .find(Filter.isNull(Field.ExclusionReason).not)
       .all
       .mapList(_.toDomain)
 
@@ -170,6 +177,7 @@ object SecurityRepository extends MongoJsonCodecs:
     val Name                        = "name"
     val Kind                        = "kind"
     val IsActive                    = "isActive"
+    val ExclusionReason             = "exclusionReason"
     val CompanyProfileLastUpdatedAt = "companyProfileLastUpdatedAt"
     val CreatedAt                   = "createdAt"
     val UpdatedAt                   = "updatedAt"
@@ -185,6 +193,7 @@ object SecurityRepository extends MongoJsonCodecs:
       _ <- collection.createIndex(Index.ascending(Field.Exchange))
       _ <- collection.createIndex(Index.ascending(Field.Kind))
       _ <- collection.createIndex(Index.ascending(Field.IsActive))
+      _ <- collection.createIndex(Index.ascending(Field.ExclusionReason))
       _ <- collection.createIndex(Index.ascending(List(Field.Exchange, Field.Kind, Field.IsActive)))
       _ <- collection.createIndex(Index.ascending(Field.UpdatedAt))
       _ <- collection.createIndex(Index.ascending(Field.CompanyProfileLastUpdatedAt))

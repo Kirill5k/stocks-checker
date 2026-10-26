@@ -134,6 +134,41 @@ class SecurityRepositorySpec extends RepositorySpec {
         }
     }
 
+    "findExcluded" should {
+      "return only securities with an exclusion reason regardless of listing status" in {
+        val legacy   = AAPLSecurity.copy(isActive = false, exclusionReason = Some("legacy-excluded"))
+        val manual   = MSFTSecurity.copy(isActive = false, exclusionReason = Some("user-excluded"))
+        val excluded = AAPLSecurity.copy(ticker = Ticker("EXCLUDED"))
+        val delisted = AAPLSecurity.copy(ticker = Ticker("DELISTED"))
+        val restored = AAPLSecurity.copy(ticker = Ticker("RESTORED"))
+        val active   = AAPLSecurity.copy(ticker = Ticker("ACTIVE"))
+        val seed     = Map(SecurityRepository.CollectionName -> List(toDoc(legacy)))
+
+        withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo   <- SecurityRepository.make(db)
+            _      <- repo.save(List(MSFTSecurity, excluded, delisted, restored, active))
+            _      <- repo.deactivate(MSFT)
+            _      <- repo.deactivate(excluded.ticker)
+            _      <- repo.deactivate(restored.ticker)
+            _      <- repo.activate(restored.ticker)
+            _      <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity, restored, active))
+            result <- repo.findExcluded
+            _      <- repo.activate(AAPL)
+            _      <- repo.activate(MSFT)
+            _      <- repo.activate(excluded.ticker)
+            empty  <- repo.findExcluded
+          yield
+            result must contain theSameElementsAs List(
+              legacy,
+              manual,
+              excluded.copy(isActive = false, listingStatus = "delisted", exclusionReason = Some("user-excluded"))
+            )
+            empty mustBe List.empty[Security]
+        }
+      }
+    }
+
     "getAllTickers" should {
       "return tickers of all securities stored in db" in
         withEmbeddedMongoDatabase { db =>

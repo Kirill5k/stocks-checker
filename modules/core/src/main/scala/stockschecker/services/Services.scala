@@ -54,7 +54,7 @@ object Services:
         evaluations,
         recipe
       )
-      quality <- DataQualityService.make(repos)
+      quality <- DataQualityService.make(repos.dataQuality, repos.security, repos.investmentRankings)
     yield new Services[F]:
       override def security: SecurityService[F]                  = s
       override def companyProfile: CompanyProfileService[F]      = cp
