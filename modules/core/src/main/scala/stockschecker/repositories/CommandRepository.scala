@@ -13,7 +13,7 @@ import mongo4cats.database.MongoDatabase
 import stockschecker.actions.Action
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule, UpdateCommand}
-import stockschecker.domain.{Job, JobCommand, ScheduledOccurrence}
+import stockschecker.domain.{Job, JobCommand, JobId, ScheduledOccurrence}
 import kirill5k.common.cats.syntax.applicative.*
 import io.circe.Codec
 import mongo4cats.bson.ObjectId
@@ -29,8 +29,8 @@ trait CommandRepository[F[_]]:
   def setActive(id: CommandId, isActive: Boolean): F[Command]
   def initializeNextRun(cmd: Command, now: Instant): F[Option[Command]]
   def reserve(cmd: Command, now: Instant): F[Option[ScheduledOccurrence]]
-  def clearOutbox(id: CommandId, runId: String): F[Unit]
-  def completeRun(id: CommandId, runId: String): F[Option[Command]]
+  def clearOutbox(id: CommandId, runId: JobId): F[Unit]
+  def completeRun(id: CommandId, runId: JobId): F[Option[Command]]
 
 final private case class ScheduledCommandEntity(
     _id: ObjectId,
@@ -42,7 +42,7 @@ final private case class ScheduledCommandEntity(
     maxExecutions: Option[Int],
     version: Option[Long],
     nextRunAt: Option[Instant],
-    activeRunId: Option[String],
+    activeRunId: Option[JobId],
     outbox: Option[ScheduledOccurrence]
 ) derives Codec.AsObject {
   def toDomain: Command = Command(
@@ -139,7 +139,7 @@ final private class LiveCommandRepository[F[_]](
   override def reserve(cmd: Command, now: Instant): F[Option[ScheduledOccurrence]] =
     if (!cmd.canBeExecuted || cmd.activeRunId.nonEmpty || !cmd.nextRunAt.exists(!_.isAfter(now))) None.pure
     else {
-      val runId      = s"${cmd.id.value}:${cmd.revision}:${cmd.nextRunAt.get.toEpochMilli}"
+      val runId      = JobId(s"${cmd.id.value}:${cmd.revision}:${cmd.nextRunAt.get.toEpochMilli}")
       val occurrence = ScheduledOccurrence(Job(runId, cmd.action, now, now, Some(JobCommand(cmd.id, cmd.revision, runId))))
       val next       = if (cmd.maxExecutions.exists(_ <= cmd.executionCount + 1)) None else Some(cmd.schedule.nextExecutionTime(now))
       collection
@@ -148,7 +148,7 @@ final private class LiveCommandRepository[F[_]](
             Filter.isNull("activeRunId") && Filter.isNull("outbox") && Filter.lte("nextRunAt", now),
           Update
             .set("outbox", occurrence)
-            .set("activeRunId", runId)
+            .set("activeRunId", runId.value)
             .set(Field.executionCount, cmd.executionCount + 1)
             .set(Field.lastExecutedAt, now)
             .set("nextRunAt", next),
@@ -157,15 +157,18 @@ final private class LiveCommandRepository[F[_]](
         .map(_.flatMap(_.outbox))
     }
 
-  override def clearOutbox(id: CommandId, runId: String): F[Unit] =
+  override def clearOutbox(id: CommandId, runId: JobId): F[Unit] =
     collection
-      .updateOne(Filter.idEq(id.toObjectId) && Filter.eq("outbox.job.id", runId), Update.set("outbox", Option.empty[ScheduledOccurrence]))
+      .updateOne(
+        Filter.idEq(id.toObjectId) && Filter.eq("outbox.job.id", runId.value),
+        Update.set("outbox", Option.empty[ScheduledOccurrence])
+      )
       .void
 
-  override def completeRun(id: CommandId, runId: String): F[Option[Command]] =
+  override def completeRun(id: CommandId, runId: JobId): F[Option[Command]] =
     collection
       .findOneAndUpdate(
-        Filter.idEq(id.toObjectId) && Filter.eq("activeRunId", runId),
+        Filter.idEq(id.toObjectId) && Filter.eq("activeRunId", runId.value),
         Update.set("activeRunId", Option.empty[String]),
         FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
       )

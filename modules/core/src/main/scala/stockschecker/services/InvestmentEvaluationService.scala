@@ -32,15 +32,15 @@ final private class LiveInvestmentEvaluationService[F[_]](
   override def refreshHistory(ticker: Ticker, from: LocalDate, through: LocalDate): F[Unit] =
     priceHistory.history(ticker, from, through).void
 
-  private def priceJobId(ticker: Ticker, through: LocalDate): String =
+  private def priceJobId(ticker: Ticker, through: LocalDate): JobId =
     val key = s"evaluation:${ticker.value}:${through.minusYears(13)}:$through"
-    UUID.nameUUIDFromBytes(key.getBytes(StandardCharsets.UTF_8)).toString
+    JobId(UUID.nameUUIDFromBytes(key.getBytes(StandardCharsets.UTF_8)).toString)
 
-  private def pendingPriceJob(ticker: Ticker, through: LocalDate): F[Option[String]] =
+  private def pendingPriceJob(ticker: Ticker, through: LocalDate): F[Option[JobId]] =
     val id = priceJobId(ticker, through)
     jobs.find(id).map(_.filterNot(_.isTerminal).map(_ => id))
 
-  private def ensurePriceJob(ticker: Ticker, through: LocalDate, now: Instant): F[Option[String]] =
+  private def ensurePriceJob(ticker: Ticker, through: LocalDate, now: Instant): F[Option[JobId]] =
     // All screens share a ticker/cutoff job and its bounded repair budget.
     val id = priceJobId(ticker, through)
     jobs.find(id).flatMap {

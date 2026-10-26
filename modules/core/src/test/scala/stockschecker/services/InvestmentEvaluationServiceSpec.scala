@@ -80,9 +80,9 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       when(evaluations.findCapturePlan(run.id, "2026-10")).thenReturnSome(plan)
       when(evaluations.findMonthly(run.id, "2026-10")).thenReturnNone
       when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenReturnNone
-      when(jobs.find(any[String]))
-        .thenReturnSome(Job("failed", Action.RefreshEvaluationPrices(AAPL, from, through), now, now, state = Job.Failed))
-      when(jobs.retryTerminal(any[String], any[Instant])).thenReturnIO(true)
+      when(jobs.find(any[JobId]))
+        .thenReturnSome(Job(JobId("failed"), Action.RefreshEvaluationPrices(AAPL, from, through), now, now, state = Job.Failed))
+      when(jobs.retryTerminal(any[JobId], any[Instant])).thenReturnIO(true)
       val result = for
         state   <- Ref.of[IO, List[InvestmentScreenRun]](List(run))
         service <- InvestmentEvaluationService.make(
@@ -99,7 +99,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         report.settled mustBe Some(false)
         report.dataThrough mustBe Some(through)
         saved mustBe 0
-        verify(jobs, times(2)).retryTerminal(any[String], any[Instant])
+        verify(jobs, times(2)).retryTerminal(any[JobId], any[Instant])
         verify(evaluations, never).saveMonthly(any[InvestmentEvaluation])
         verify(prices, never).history(any[Ticker], any[LocalDate], any[LocalDate])
         succeed
@@ -195,7 +195,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         IO.pure(invocation.getArgument[EvaluationCapturePlan](0))
       )
       when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenReturnNone
-      when(jobs.find(any[String])).thenReturnNone
+      when(jobs.find(any[JobId])).thenReturnNone
       when(jobs.enqueue(any[Job])).thenReturnUnit
       val result = for
         state   <- Ref.of[IO, List[InvestmentScreenRun]](screens)
@@ -236,7 +236,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       when(evaluations.findMonthly(run.id, "2026-10")).thenReturnNone
       when(evaluations.findCapturePlan(run.id, "2026-10")).thenReturnNone
       when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenReturnNone
-      when(jobs.find(any[String])).thenReturnNone
+      when(jobs.find(any[JobId])).thenReturnNone
       val result = for
         state   <- Ref.of[IO, List[InvestmentScreenRun]](List(run))
         service <- InvestmentEvaluationService.make(
@@ -253,7 +253,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         verify(evaluations, never).getOrCreateCapturePlan(any[EvaluationCapturePlan])
         verify(evaluations, never).saveMonthly(any[InvestmentEvaluation])
         verify(jobs, never).enqueue(any[Job])
-        verify(jobs, never).retryTerminal(any[String], any[Instant])
+        verify(jobs, never).retryTerminal(any[JobId], any[Instant])
         verify(prices, never).history(any[Ticker], any[LocalDate], any[LocalDate])
         succeed
       }
@@ -282,9 +282,9 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         when(evaluations.getOrCreateCapturePlan(any[EvaluationCapturePlan])).thenReturnIO(plan)
         if exhausted then {
           when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenReturnNone
-          when(jobs.find(any[String]))
-            .thenReturnSome(Job("failed", Action.RefreshEvaluationPrices(AAPL, from, through), now, now, state = Job.Failed))
-          when(jobs.retryTerminal(any[String], any[Instant])).thenReturnIO(false)
+          when(jobs.find(any[JobId]))
+            .thenReturnSome(Job(JobId("failed"), Action.RefreshEvaluationPrices(AAPL, from, through), now, now, state = Job.Failed))
+          when(jobs.retryTerminal(any[JobId], any[Instant])).thenReturnIO(false)
         } else {
           val series = EvaluationPriceSeries(
             AAPL,
@@ -325,7 +325,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
           verify(prices, times(2)).cached(any[Ticker], any[LocalDate], any[LocalDate])
           if exhausted then {
             report.horizons.flatMap(_.issues).mkString must include("repair attempts exhausted")
-            verify(jobs, times(2)).retryTerminal(any[String], any[Instant])
+            verify(jobs, times(2)).retryTerminal(any[JobId], any[Instant])
           } else verifyNoInteractions(jobs)
           succeed
       }

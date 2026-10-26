@@ -7,7 +7,6 @@ import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.InvestmentScreenRepository
 import java.time.{LocalDate, ZoneOffset}
-import java.util.UUID
 
 trait InvestmentScreenService[F[_]]:
   def create(request: InvestmentScreenRequest): F[InvestmentScreenResult]
@@ -63,7 +62,7 @@ final private class LiveInvestmentScreenService[F[_]](
     for
       _       <- validate(request)
       ranking <- rankings.latest
-      id      <- Sync[F].delay(InvestmentScreenId(UUID.randomUUID().toString))
+      id      <- Sync[F].delay(InvestmentScreenId.gen)
       saved   <- saveScreen(id, request, ranking)
     yield saved
 

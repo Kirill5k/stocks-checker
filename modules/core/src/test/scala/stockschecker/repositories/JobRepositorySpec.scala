@@ -16,6 +16,7 @@ import stockschecker.domain.{
   InvestmentScreenId,
   Job,
   JobCommand,
+  JobId,
   JobPlan,
   Schedule,
   Ticker,
@@ -37,7 +38,7 @@ class JobRepositorySpec extends RepositorySpec {
   private val action            = Action.DeactivateSecurity(AAPL)
   private val evaluationThrough = LocalDate.parse("2026-01-01")
   private val evaluationAction  = Action.RefreshEvaluationPrices(AAPL, LocalDate.parse("2013-01-01"), evaluationThrough)
-  private def awaitTerminal(repo: JobRepository[IO], id: String): IO[Job] =
+  private def awaitTerminal(repo: JobRepository[IO], id: JobId): IO[Job] =
     repo
       .find(id)
       .flatMap {
@@ -52,16 +53,16 @@ class JobRepositorySpec extends RepositorySpec {
       val later = Instant.now().plusSeconds(10.days.toSeconds)
       for {
         jobs          <- JobRepository.make[IO](db)
-        _             <- jobs.enqueue(Job("bounded", evaluationAction, ts, ts, state = Job.Failed, completedAt = Some(ts)))
-        first         <- jobs.retryTerminal("bounded", later)
+        _             <- jobs.enqueue(Job(JobId("bounded"), evaluationAction, ts, ts, state = Job.Failed, completedAt = Some(ts)))
+        first         <- jobs.retryTerminal(JobId("bounded"), later)
         firstAttempt  <- jobs.claim(later, 2.minutes).map(_.get)
         _             <- jobs.finish(firstAttempt, Job.Failed)
         restarted     <- JobRepository.make[IO](db)
-        second        <- (restarted.retryTerminal("bounded", later), restarted.retryTerminal("bounded", later)).parTupled
+        second        <- (restarted.retryTerminal(JobId("bounded"), later), restarted.retryTerminal(JobId("bounded"), later)).parTupled
         secondAttempt <- restarted.claim(later, 2.minutes).map(_.get)
         _             <- restarted.finish(secondAttempt, Job.Failed)
-        exhausted     <- restarted.retryTerminal("bounded", later)
-        finalJob      <- restarted.find("bounded").map(_.get)
+        exhausted     <- restarted.retryTerminal(JobId("bounded"), later)
+        finalJob      <- restarted.find(JobId("bounded")).map(_.get)
       } yield {
         first mustBe true
         firstAttempt.restartCount mustBe Some(1)
@@ -80,7 +81,7 @@ class JobRepositorySpec extends RepositorySpec {
         evaluations <- InvestmentEvaluationRepository.make[IO](db)
         _           <- jobs.enqueue(
           Job(
-            "needed",
+            JobId("needed"),
             evaluationAction,
             expiredAt,
             expiredAt,
@@ -91,11 +92,11 @@ class JobRepositorySpec extends RepositorySpec {
         )
         _ <- evaluations.getOrCreateCapturePlan(EvaluationCapturePlan(InvestmentScreenId("screen"), "2026-02", evaluationThrough, ts))
         _ <- jobs.pruneCompleted(ts)
-        protectedJob <- jobs.find("needed")
+        protectedJob <- jobs.find(JobId("needed"))
         plans        <- db.getCollection(InvestmentEvaluationRepository.PlanCollectionName)
         _            <- plans.deleteMany(Filter.empty)
         _            <- jobs.pruneCompleted(ts)
-        expired      <- jobs.find("needed")
+        expired      <- jobs.find(JobId("needed"))
       } yield {
         protectedJob.flatMap(_.restartCount) mustBe Some(Job.MaxEvaluationRestarts)
         expired mustBe None
@@ -106,18 +107,18 @@ class JobRepositorySpec extends RepositorySpec {
       for {
         jobs <- JobRepository.make[IO](db)
         _    <- List(
-          Job("parent/0", action, ts, ts, state = Job.Succeeded),
-          Job("parent/1", action, ts, ts, state = Job.Failed),
-          Job("parent/2", action, ts, ts, state = Job.Paused)
+          Job(JobId("parent/0"), action, ts, ts, state = Job.Succeeded),
+          Job(JobId("parent/1"), action, ts, ts, state = Job.Failed),
+          Job(JobId("parent/2"), action, ts, ts, state = Job.Paused)
         ).traverse_(jobs.enqueue)
-        summary  <- jobs.summarize(List("parent/0", "parent/1", "parent/2", "parent/missing"))
-        terminal <- jobs.terminalIds(List("parent/0", "parent/1", "parent/2", "parent/missing"))
+        summary  <- jobs.summarize(List("parent/0", "parent/1", "parent/2", "parent/missing").map(JobId(_)))
+        terminal <- jobs.terminalIds(List("parent/0", "parent/1", "parent/2", "parent/missing").map(JobId(_)))
       } yield {
         summary.total mustBe 3
         summary.terminal mustBe 2
         summary.usable mustBe 1
         summary.count(Job.Paused) mustBe 1
-        terminal mustBe Set("parent/0", "parent/1")
+        terminal mustBe Set(JobId("parent/0"), JobId("parent/1"))
       }
     }
 
@@ -126,16 +127,16 @@ class JobRepositorySpec extends RepositorySpec {
       for {
         jobs <- JobRepository.make[IO](db)
         _    <- List(
-          Job("z", action, ts, ts),
-          Job("a", action, ts, ts),
-          Job("first", action, ts.minusSeconds(1), ts),
-          Job("evaluation", evaluation, ts.minusSeconds(60), ts),
-          Job("future", action, ts.plusSeconds(60), ts)
+          Job(JobId("z"), action, ts, ts),
+          Job(JobId("a"), action, ts, ts),
+          Job(JobId("first"), action, ts.minusSeconds(1), ts),
+          Job(JobId("evaluation"), evaluation, ts.minusSeconds(60), ts),
+          Job(JobId("future"), action, ts.plusSeconds(60), ts)
         ).traverse_(jobs.enqueue)
         claimed <- List.fill(4)(()).traverse(_ => jobs.claim(ts, 2.minutes))
         none    <- jobs.claim(ts, 2.minutes)
       } yield {
-        claimed.flatten.map(_.id) mustBe List("first", "a", "z", "evaluation")
+        claimed.flatten.map(_.id) mustBe List("first", "a", "z", "evaluation").map(JobId(_))
         none mustBe None
       }
     }
@@ -143,13 +144,13 @@ class JobRepositorySpec extends RepositorySpec {
     "back off waiting parents without consuming execution retries" in withEmbeddedMongoDatabase { db =>
       for {
         jobs      <- JobRepository.make[IO](db)
-        _         <- jobs.enqueue(Job("parent", action, ts, ts))
+        _         <- jobs.enqueue(Job(JobId("parent"), action, ts, ts))
         first     <- jobs.claim(ts, 2.minutes).map(_.get)
-        _         <- jobs.waitForChildren(first, List("parent/0"), ts)
-        waiting   <- jobs.find("parent").map(_.get)
+        _         <- jobs.waitForChildren(first, List(JobId("parent/0")), ts)
+        waiting   <- jobs.find(JobId("parent")).map(_.get)
         second    <- jobs.claim(ts.plusSeconds(1), 2.minutes).map(_.get)
         _         <- jobs.waitForChildren(second, second.children, ts.plusSeconds(1))
-        backedOff <- jobs.find("parent").map(_.get)
+        backedOff <- jobs.find(JobId("parent")).map(_.get)
       } yield {
         waiting.availableAt mustBe ts.plusSeconds(1)
         backedOff.availableAt mustBe ts.plusSeconds(3)
@@ -163,17 +164,25 @@ class JobRepositorySpec extends RepositorySpec {
       for {
         jobs <- JobRepository.make[IO](db)
         _    <- List(
-          Job("waiting", action, ts, expiredAt, children = List("waiting/0"), state = Job.Waiting),
-          Job("waiting/0", action, expiredAt, expiredAt, state = Job.Succeeded, completedAt = Some(expiredAt)),
-          Job("finished", action, expiredAt, expiredAt, children = List("finished/0"), state = Job.Partial, completedAt = Some(expiredAt)),
-          Job("finished/0", action, expiredAt, expiredAt, state = Job.Failed, completedAt = Some(expiredAt)),
-          Job("recent", action, ts, ts, state = Job.Succeeded, completedAt = Some(ts))
+          Job(JobId("waiting"), action, ts, expiredAt, children = List(JobId("waiting/0")), state = Job.Waiting),
+          Job(JobId("waiting/0"), action, expiredAt, expiredAt, state = Job.Succeeded, completedAt = Some(expiredAt)),
+          Job(
+            JobId("finished"),
+            action,
+            expiredAt,
+            expiredAt,
+            children = List(JobId("finished/0")),
+            state = Job.Partial,
+            completedAt = Some(expiredAt)
+          ),
+          Job(JobId("finished/0"), action, expiredAt, expiredAt, state = Job.Failed, completedAt = Some(expiredAt)),
+          Job(JobId("recent"), action, ts, ts, state = Job.Succeeded, completedAt = Some(ts))
         ).traverse_(jobs.enqueue)
         _            <- jobs.pruneCompleted(ts)
-        kept         <- jobs.find("waiting/0")
-        removedRoot  <- jobs.find("finished")
-        removedChild <- jobs.find("finished/0")
-        recent       <- jobs.find("recent")
+        kept         <- jobs.find(JobId("waiting/0"))
+        removedRoot  <- jobs.find(JobId("finished"))
+        removedChild <- jobs.find(JobId("finished/0"))
+        recent       <- jobs.find(JobId("recent"))
       } yield {
         kept must not be empty
         removedRoot mustBe None
@@ -184,13 +193,13 @@ class JobRepositorySpec extends RepositorySpec {
 
     "retry a terminal evaluation once with a daily cooldown and clear its retention clock" in withEmbeddedMongoDatabase { db =>
       for {
-        jobs     <- JobRepository.make[IO](db)
-        _        <- jobs.enqueue(Job("evaluation", evaluationAction, ts, ts, state = Job.Failed, retries = 3, completedAt = Some(ts)))
-        _        <- jobs.enqueue(Job("planned", action, ts, ts, state = Job.Failed, plan = Some(JobPlan(List(action), false))))
-        _        <- jobs.enqueue(Job("parent/0", action, ts, ts, state = Job.Failed))
-        rejected <- List("planned", "parent/0").traverse(jobs.retryTerminal(_, ts))
-        retries  <- (jobs.retryTerminal("evaluation", ts), jobs.retryTerminal("evaluation", ts)).parTupled
-        queued   <- jobs.find("evaluation").map(_.get)
+        jobs <- JobRepository.make[IO](db)
+        _    <- jobs.enqueue(Job(JobId("evaluation"), evaluationAction, ts, ts, state = Job.Failed, retries = 3, completedAt = Some(ts)))
+        _    <- jobs.enqueue(Job(JobId("planned"), action, ts, ts, state = Job.Failed, plan = Some(JobPlan(List(action), false))))
+        _    <- jobs.enqueue(Job(JobId("parent/0"), action, ts, ts, state = Job.Failed))
+        rejected <- List("planned", "parent/0").map(JobId(_)).traverse(jobs.retryTerminal(_, ts))
+        retries  <- (jobs.retryTerminal(JobId("evaluation"), ts), jobs.retryTerminal(JobId("evaluation"), ts)).parTupled
+        queued   <- jobs.find(JobId("evaluation")).map(_.get)
         early    <- jobs.claim(ts.plusSeconds(1), 2.minutes)
         due      <- jobs.claim(ts.plusSeconds(1.day.toSeconds), 2.minutes)
       } yield {
@@ -202,22 +211,22 @@ class JobRepositorySpec extends RepositorySpec {
         queued.restartCount mustBe Some(1)
         queued.availableAt mustBe ts.plusSeconds(1.day.toSeconds)
         early mustBe None
-        due.map(_.id) mustBe Some("evaluation")
+        due.map(_.id) mustBe Some(JobId("evaluation"))
       }
     }
     "enqueue idempotently, claim once, recover expired leases and fence stale owners" in withEmbeddedMongoDatabase { db =>
       val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       for {
         jobs   <- JobRepository.make[IO](db)
-        _      <- jobs.enqueue(Job("same", action, now, now))
-        _      <- jobs.enqueue(Job("same", Action.DeactivateSecurity(MSFT), now, now))
+        _      <- jobs.enqueue(Job(JobId("same"), action, now, now))
+        _      <- jobs.enqueue(Job(JobId("same"), Action.DeactivateSecurity(MSFT), now, now))
         claims <- (jobs.claim(now, 2.minutes), jobs.claim(now, 2.minutes)).parTupled
         first = List(claims._1, claims._2).flatten.head
         recovered <- jobs.claim(now.plusSeconds(121), 2.minutes).map(_.get)
         _         <- jobs.finish(first, Job.Succeeded)
-        fenced    <- jobs.find("same").map(_.get)
+        fenced    <- jobs.find(JobId("same")).map(_.get)
         _         <- jobs.finish(recovered, Job.Succeeded)
-        completed <- jobs.find("same").map(_.get)
+        completed <- jobs.find(JobId("same")).map(_.get)
       } yield {
         List(claims._1, claims._2).flatten.size mustBe 1
         first.action mustBe action
@@ -260,11 +269,11 @@ class JobRepositorySpec extends RepositorySpec {
       val commandId = FetchLatestSecuritiesCommand.id
       for {
         jobs  <- JobRepository.make[IO](db)
-        _     <- jobs.enqueue(Job("old", action, now, now, Some(JobCommand(commandId, 0, "old"))))
-        _     <- jobs.enqueue(Job("new", action, now, now, Some(JobCommand(commandId, 2, "new"))))
+        _     <- jobs.enqueue(Job(JobId("old"), action, now, now, Some(JobCommand(commandId, 0, JobId("old")))))
+        _     <- jobs.enqueue(Job(JobId("new"), action, now, now, Some(JobCommand(commandId, 2, JobId("new")))))
         _     <- jobs.cancelObsolete(commandId, 1)
-        old   <- jobs.find("old").map(_.get)
-        newer <- jobs.find("new").map(_.get)
+        old   <- jobs.find(JobId("old")).map(_.get)
+        newer <- jobs.find(JobId("new")).map(_.get)
       } yield {
         old.state mustBe Job.Cancelled
         newer.state mustBe Job.Pending
@@ -304,12 +313,12 @@ class JobRepositorySpec extends RepositorySpec {
       when(security.deactivate(AAPL)).thenReturn(IO.unit)
       for {
         jobs     <- JobRepository.make[IO](db)
-        _        <- (1 to 16).toList.traverse_(n => jobs.enqueue(Job(s"timer-$n", action, now.plusSeconds(86400), now)))
-        _        <- jobs.enqueue(Job("ready", action, now, now))
+        _        <- (1 to 16).toList.traverse_(n => jobs.enqueue(Job(JobId(s"timer-$n"), action, now.plusSeconds(86400), now)))
+        _        <- jobs.enqueue(Job(JobId("ready"), action, now, now))
         executor <- ActionExecutor.make(jobs, services, ActionExecutorConfig(16))
         _        <- executor.run.take(1).compile.drain.timeout(3.seconds)
-        ready    <- jobs.find("ready").map(_.get)
-        timers   <- jobs.summarize((1 to 16).toList.map(n => s"timer-$n"))
+        ready    <- jobs.find(JobId("ready")).map(_.get)
+        timers   <- jobs.summarize((1 to 16).toList.map(n => JobId(s"timer-$n")))
       } yield {
         ready.state mustBe Job.Succeeded
         timers.count(Job.Pending) mustBe 16
@@ -358,12 +367,12 @@ class JobRepositorySpec extends RepositorySpec {
       when(screens.refreshResearch).thenReturn(IO.raiseError(new java.io.IOException("research storage unavailable")))
       for {
         jobs      <- JobRepository.make[IO](db)
-        _         <- jobs.enqueue(Job("research-exhausted", Action.RefreshInvestmentResearch, now, now, retries = 3))
-        _         <- jobs.enqueue(Job("research-retry", Action.RefreshInvestmentResearch, now, now, retries = 2))
+        _         <- jobs.enqueue(Job(JobId("research-exhausted"), Action.RefreshInvestmentResearch, now, now, retries = 3))
+        _         <- jobs.enqueue(Job(JobId("research-retry"), Action.RefreshInvestmentResearch, now, now, retries = 2))
         executor  <- ActionExecutor.make(jobs, services, ActionExecutorConfig(1))
         _         <- executor.run.take(2).compile.drain.timeout(3.seconds)
-        exhausted <- jobs.find("research-exhausted").map(_.get)
-        retry     <- jobs.find("research-retry").map(_.get)
+        exhausted <- jobs.find(JobId("research-exhausted")).map(_.get)
+        retry     <- jobs.find(JobId("research-retry")).map(_.get)
       } yield {
         exhausted.state mustBe Job.Failed
         exhausted.retries mustBe 3
@@ -384,10 +393,10 @@ class JobRepositorySpec extends RepositorySpec {
       for {
         jobs     <- JobRepository.make[IO](db)
         now      <- IO.realTimeInstant
-        _        <- jobs.enqueue(Job("fanout", Action.UpdateCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)), now, now))
+        _        <- jobs.enqueue(Job(JobId("fanout"), Action.UpdateCompanyProfiles(NonEmptyList.fromListUnsafe(tickers)), now, now))
         executor <- ActionExecutor.make(jobs, services, ActionExecutorConfig(1))
-        result   <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, "fanout"))
-        children <- jobs.summarize((0 until 130).toList.map(n => s"fanout/$n"))
+        result   <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, JobId("fanout")))
+        children <- jobs.summarize((0 until 130).toList.map(n => JobId(s"fanout/$n")))
       } yield {
         result.state mustBe Job.Succeeded
         children.count(Job.Succeeded) mustBe 130
@@ -409,12 +418,12 @@ class JobRepositorySpec extends RepositorySpec {
         jobs <- JobRepository.make[IO](db)
         now  <- IO.realTimeInstant
         _    <- jobs.enqueue(
-          Job("sequence", Action.Sequence(NonEmptyList.of(Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), action)), now, now)
+          Job(JobId("sequence"), Action.Sequence(NonEmptyList.of(Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), action)), now, now)
         )
         executor <- ActionExecutor.make(jobs, services, ActionExecutorConfig(3))
         result   <- executor.run.compile.drain.background.use { _ =>
           started.get.timeout(3.seconds) >> second.get.flatMap { early =>
-            release.complete(()) >> awaitTerminal(jobs, "sequence").tupleLeft(early)
+            release.complete(()) >> awaitTerminal(jobs, JobId("sequence")).tupleLeft(early)
           }
         }
         ran <- second.get
@@ -434,14 +443,14 @@ class JobRepositorySpec extends RepositorySpec {
       when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.HttpClient("Finnhub", 503, "unavailable")))
       for {
         jobs      <- JobRepository.make[IO](db)
-        _         <- jobs.enqueue(Job("cooldown", Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), now, now, retries = 2))
-        _         <- jobs.enqueue(Job("exhausted", Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 3))
-        _         <- jobs.enqueue(Job("retry", Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 2))
+        _         <- jobs.enqueue(Job(JobId("cooldown"), Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), now, now, retries = 2))
+        _         <- jobs.enqueue(Job(JobId("exhausted"), Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 3))
+        _         <- jobs.enqueue(Job(JobId("retry"), Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 2))
         executor  <- ActionExecutor.make(jobs, services, ActionExecutorConfig(1))
         _         <- executor.run.take(3).compile.drain.timeout(3.seconds)
-        cooldown  <- jobs.find("cooldown").map(_.get)
-        exhausted <- jobs.find("exhausted").map(_.get)
-        retry     <- jobs.find("retry").map(_.get)
+        cooldown  <- jobs.find(JobId("cooldown")).map(_.get)
+        exhausted <- jobs.find(JobId("exhausted")).map(_.get)
+        retry     <- jobs.find(JobId("retry")).map(_.get)
       } yield {
         cooldown.state mustBe Job.Pending
         cooldown.availableAt mustBe now.plusSeconds(300)
@@ -472,7 +481,7 @@ class JobRepositorySpec extends RepositorySpec {
         ready      <- commands.initializeNextRun(command, now).map(_.get)
         occurrence <- commands.reserve(ready, now).map(_.get)
         parent   = occurrence.job
-        childIds = List(s"${parent.id}/0", s"${parent.id}/1")
+        childIds = List(JobId(s"${parent.id.value}/0"), JobId(s"${parent.id.value}/1"))
         _ <- jobs.enqueue(parent.copy(children = childIds, state = Job.Waiting, availableAt = now.plusSeconds(1)))
         _ <- jobs.enqueue(
           Job(
@@ -516,10 +525,15 @@ class JobRepositorySpec extends RepositorySpec {
         jobs <- JobRepository.make[IO](db)
         now  <- IO.realTimeInstant
         _    <- jobs.enqueue(
-          Job("partial", Action.Sequence(NonEmptyList.of(Action.UpdateCompanyProfiles(NonEmptyList.of(AAPL, MSFT)), action)), now, now)
+          Job(
+            JobId("partial"),
+            Action.Sequence(NonEmptyList.of(Action.UpdateCompanyProfiles(NonEmptyList.of(AAPL, MSFT)), action)),
+            now,
+            now
+          )
         )
         executor  <- ActionExecutor.make(jobs, services, ActionExecutorConfig(4))
-        result    <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, "partial"))
+        result    <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, JobId("partial")))
         continued <- ran.get
       } yield {
         result.state mustBe Job.Partial

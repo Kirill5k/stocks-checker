@@ -2,20 +2,32 @@ package stockschecker.domain
 
 import io.circe.{Codec, Decoder, Encoder}
 import stockschecker.actions.Action
+import stockschecker.common.types.StringType
+import sttp.tapir.{Codec as TapirCodec, DecodeResult, Schema}
 
 import java.time.Instant
+import java.util.UUID
 
-final case class JobCommand(commandId: CommandId, version: Long, runId: String) derives Codec.AsObject
+opaque type JobId = String
+object JobId extends StringType[JobId] {
+  def gen: JobId = JobId(UUID.randomUUID().toString)
+
+  inline given TapirCodec.PlainCodec[JobId] =
+    TapirCodec.string.mapDecode[JobId](s => DecodeResult.Value(JobId(s)))(_.value)
+  given Schema[JobId] = Schema.string
+}
+
+final case class JobCommand(commandId: CommandId, version: Long, runId: JobId) derives Codec.AsObject
 final case class JobPlan(actions: List[Action], sequential: Boolean) derives Codec.AsObject
 
 final case class Job(
-    id: String,
+    id: JobId,
     action: Action,
     availableAt: Instant,
     createdAt: Instant,
     command: Option[JobCommand] = None,
-    dependsOn: List[String] = Nil,
-    children: List[String] = Nil,
+    dependsOn: List[JobId] = Nil,
+    children: List[JobId] = Nil,
     state: JobState = Job.Pending,
     retries: Int = 0,
     leaseToken: Option[String] = None,

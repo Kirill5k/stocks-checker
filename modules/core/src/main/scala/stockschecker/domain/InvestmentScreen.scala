@@ -5,9 +5,12 @@ import stockschecker.common.types.StringType
 import sttp.tapir.{Codec as TapirCodec, DecodeResult, Schema}
 
 import java.time.Instant
+import java.util.UUID
 
 opaque type InvestmentScreenId = String
 object InvestmentScreenId extends StringType[InvestmentScreenId] {
+  def gen: InvestmentScreenId = InvestmentScreenId(UUID.randomUUID().toString)
+
   inline given TapirCodec.PlainCodec[InvestmentScreenId] =
     TapirCodec.string.mapDecode[InvestmentScreenId](s => DecodeResult.Value(InvestmentScreenId(s)))(_.value)
   given Schema[InvestmentScreenId] = Schema.string

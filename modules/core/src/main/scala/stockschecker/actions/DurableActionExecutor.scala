@@ -7,7 +7,7 @@ import fs2.Stream
 import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
 import stockschecker.common.config.ActionExecutorConfig
-import stockschecker.domain.{Job, JobPlan, ProviderFailure}
+import stockschecker.domain.{Job, JobId, JobPlan, ProviderFailure}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.JobRepository
 import stockschecker.services.Services
@@ -94,8 +94,8 @@ final private[actions] class DurableActionExecutor[F[_]](
     else
       clock.now.flatMap { now =>
         val children = actions.zipWithIndex.map { case (action, index) =>
-          val dependencies = if (sequential && index > 0) List(s"${job.id}/${index - 1}") else Nil
-          Job(s"${job.id}/$index", action, now, now, job.command, dependencies)
+          val dependencies = if (sequential && index > 0) List(JobId(s"${job.id.value}/${index - 1}")) else Nil
+          Job(JobId(s"${job.id.value}/$index"), action, now, now, job.command, dependencies)
         }
         // Freeze a query's result before materialization: a crash/retry must not map the same child IDs to a different universe.
         (if (job.plan.nonEmpty) F.pure(true) else jobs.savePlan(job, JobPlan(actions, sequential))).flatMap { owned =>

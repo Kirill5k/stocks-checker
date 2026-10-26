@@ -10,7 +10,7 @@ import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{FindOneAndUpdateOptions, UpdateOptions}
 import mongo4cats.operations.{Accumulator, Aggregate, Filter, Index, Projection, Sort, Update}
 import stockschecker.actions.Action
-import stockschecker.domain.{CommandId, Job, JobPlan, JobState, JobStatusSummary}
+import stockschecker.domain.{CommandId, Job, JobId, JobPlan, JobState, JobStatusSummary}
 
 import java.time.Instant
 import java.util.UUID
@@ -20,18 +20,18 @@ import scala.jdk.CollectionConverters.*
 
 trait JobRepository[F[_]] {
   def enqueue(job: Job): F[Unit]
-  def find(id: String): F[Option[Job]]
-  def summarize(ids: List[String]): F[JobStatusSummary]
-  def terminalIds(ids: List[String]): F[Set[String]]
+  def find(id: JobId): F[Option[Job]]
+  def summarize(ids: List[JobId]): F[JobStatusSummary]
+  def terminalIds(ids: List[JobId]): F[Set[JobId]]
   def claim(now: Instant, lease: FiniteDuration): F[Option[Job]]
   def renew(job: Job, now: Instant, lease: FiniteDuration): F[Boolean]
   def finish(job: Job, state: JobState, error: Option[String] = None): F[Unit]
   def savePlan(job: Job, plan: JobPlan): F[Boolean]
-  def waitForChildren(job: Job, children: List[String], now: Instant): F[Unit]
+  def waitForChildren(job: Job, children: List[JobId], now: Instant): F[Unit]
   def defer(job: Job, until: Instant, error: Option[String], countRetry: Boolean): F[Unit]
   def pause(job: Job, provider: String, error: String): F[Unit]
   def resumePaused(provider: String, now: Instant): F[Unit]
-  def retryTerminal(id: String, now: Instant): F[Boolean]
+  def retryTerminal(id: JobId, now: Instant): F[Boolean]
   def cancelObsolete(commandId: CommandId, currentVersion: Long): F[Unit]
   def pruneCompleted(now: Instant): F[Unit]
 }
@@ -42,9 +42,9 @@ object JobRepository extends MongoJsonCodecs {
   private val ClaimIndexFields = List("job.state", "priority", "job.availableAt", "job.createdAt", "_id")
   // The API codec encodes Instants as JSON strings; Mongo claims and updates use BSON dates.
   private given Codec.AsObject[Job] = Codec.AsObject.derived[Job]
-  final private case class Entity(_id: String, job: Job) derives Codec.AsObject
+  final private case class Entity(_id: JobId, job: Job) derives Codec.AsObject
   final private case class StateCount(_id: JobState, count: Long) derives Codec.AsObject
-  final private case class Id(_id: String) derives Codec.AsObject
+  final private case class Id(_id: JobId) derives Codec.AsObject
 
   def make[F[_]: Async](db: MongoDatabase[F]): F[JobRepository[F]] =
     for {
@@ -64,7 +64,7 @@ object JobRepository extends MongoJsonCodecs {
 
   final private class LiveJobRepository[F[_]: Async](collection: MongoCollection[F, Entity]) extends JobRepository[F] {
     private def owned(job: Job): Filter =
-      Filter.idEq(job.id) && Filter.eq("job.state", Job.Running.value) && Filter.eq("job.leaseToken", job.leaseToken)
+      Filter.idEq(job.id.value) && Filter.eq("job.state", Job.Running.value) && Filter.eq("job.leaseToken", job.leaseToken)
 
     private def release: Update = Update.set("job.leaseToken", Option.empty[String]).set("job.leaseUntil", Option.empty[Instant])
     private val terminal        = Filter.in("job.state", Job.terminalStates.map(_.value))
@@ -72,7 +72,7 @@ object JobRepository extends MongoJsonCodecs {
     override def enqueue(job: Job): F[Unit] =
       collection
         .updateOne(
-          Filter.idEq(job.id),
+          Filter.idEq(job.id.value),
           Update
             .setOnInsert("job", job)
             .setOnInsert(
@@ -86,27 +86,27 @@ object JobRepository extends MongoJsonCodecs {
         )
         .void
 
-    override def find(id: String): F[Option[Job]] = collection.find(Filter.idEq(id)).first.map(_.map(_.job))
+    override def find(id: JobId): F[Option[Job]] = collection.find(Filter.idEq(id.value)).first.map(_.map(_.job))
 
-    override def summarize(ids: List[String]): F[JobStatusSummary] =
+    override def summarize(ids: List[JobId]): F[JobStatusSummary] =
       if (ids.isEmpty) JobStatusSummary(Map.empty).pure[F]
       else
         collection
           .aggregate[StateCount](
             Aggregate
-              .matchBy(Filter.in("_id", ids))
+              .matchBy(Filter.in("_id", ids.map(_.value)))
               .group("$job.state", Accumulator.sum("count", 1))
           )
           .all
           .map(rows => JobStatusSummary(rows.map(row => row._id -> row.count).toMap))
 
-    override def terminalIds(ids: List[String]): F[Set[String]] =
-      if (ids.isEmpty) Set.empty[String].pure[F]
+    override def terminalIds(ids: List[JobId]): F[Set[JobId]] =
+      if (ids.isEmpty) Set.empty[JobId].pure[F]
       else
         collection
           .aggregate[Id](
             Aggregate
-              .matchBy(Filter.in("_id", ids) && terminal)
+              .matchBy(Filter.in("_id", ids.map(_.value)) && terminal)
               .project(Projection.include("_id"))
           )
           .all
@@ -139,13 +139,13 @@ object JobRepository extends MongoJsonCodecs {
     override def savePlan(job: Job, plan: JobPlan): F[Boolean] =
       collection.updateOne(owned(job), Update.set("job.plan", plan)).map(_.getMatchedCount == 1)
 
-    override def waitForChildren(job: Job, children: List[String], now: Instant): F[Unit] =
+    override def waitForChildren(job: Job, children: List[JobId], now: Instant): F[Unit] =
       collection
         .updateOne(
           owned(job),
           release
             .set("job.state", Job.Waiting.value)
-            .set("job.children", children)
+            .set("job.children", children.map(_.value))
             .set("job.availableAt", now.plusSeconds(job.nextPollDelaySeconds))
             .set("job.waitCount", job.waitCount.getOrElse(0) + 1)
         )
@@ -177,16 +177,16 @@ object JobRepository extends MongoJsonCodecs {
         )
         .void
 
-    override def retryTerminal(id: String, now: Instant): F[Boolean] =
+    override def retryTerminal(id: JobId, now: Instant): F[Boolean] =
       find(id).flatMap {
         case Some(job)
-            if job.isTerminal && job.children.isEmpty && job.plan.isEmpty && !job.id.contains("/") &&
+            if job.isTerminal && job.children.isEmpty && job.plan.isEmpty && !job.id.value.contains("/") &&
               job.action.isInstanceOf[Action.RefreshEvaluationPrices] && job.restartCount.getOrElse(0) < Job.MaxEvaluationRestarts =>
           val retryAt          = job.completedAt.fold(now)(_.plusSeconds(1.day.toSeconds))
           val sameRestartCount = job.restartCount.fold(Filter.isNull("job.restartCount"))(count => Filter.eq("job.restartCount", count))
           collection
             .updateOne(
-              Filter.idEq(id) && Filter.eq("job.state", job.state.value) && Filter
+              Filter.idEq(id.value) && Filter.eq("job.state", job.state.value) && Filter
                 .eq("job.completedAt", job.completedAt) && sameRestartCount,
               release
                 .set("job.state", Job.Pending.value)
@@ -229,8 +229,8 @@ object JobRepository extends MongoJsonCodecs {
         .evalMap { root =>
           // Keep the root as a recovery marker until its descendants have gone. Only standalone
           // leaf jobs can be retried, so a terminal fan-out cannot be revived during this cleanup.
-          collection.deleteMany(Filter.regex("_id", s"^${Pattern.quote(root._id)}/")).void >>
-            collection.deleteOne(Filter.idEq(root._id) && expired).void
+          collection.deleteMany(Filter.regex("_id", s"^${Pattern.quote(root._id.value)}/")).void >>
+            collection.deleteOne(Filter.idEq(root._id.value) && expired).void
         }
         .compile
         .drain

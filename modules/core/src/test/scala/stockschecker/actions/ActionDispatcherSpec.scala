@@ -25,7 +25,7 @@ class ActionDispatcherSpec extends IOWordSpec {
         captured.getValue.action mustBe action
         captured.getValue.availableAt mustBe ts
         captured.getValue.createdAt mustBe ts
-        captured.getValue.id must not be empty
+        captured.getValue.id.value must not be empty
       }
     }
   }

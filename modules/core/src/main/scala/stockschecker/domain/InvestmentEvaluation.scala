@@ -80,7 +80,7 @@ final case class InvestmentEvaluation(
     horizons: List[HorizonEvaluation],
     sources: List[String],
     priceEvidence: List[EvaluationPriceEvidence] = Nil,
-    pendingDataJobs: List[String] = Nil,
+    pendingDataJobs: List[JobId] = Nil,
     dataThrough: Option[LocalDate] = None,
     captureMonth: Option[String] = None,
     // A settled monthly capture stops fetching; it may still contain unaudited or missing data. None identifies legacy reports.

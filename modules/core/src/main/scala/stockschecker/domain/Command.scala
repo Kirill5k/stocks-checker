@@ -35,7 +35,7 @@ final case class Command(
     maxExecutions: Option[Int],
     version: Option[Long] = None,
     nextRunAt: Option[Instant] = None,
-    activeRunId: Option[String] = None,
+    activeRunId: Option[JobId] = None,
     outbox: Option[ScheduledOccurrence] = None
 ) derives Codec.AsObject {
   def revision: Long                                           = version.getOrElse(0L)
