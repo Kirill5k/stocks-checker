@@ -27,21 +27,46 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
   )
 
   "Price history repository" should {
-    "preserve immutable vintages and find only histories covering the requested starting date" in
+    "preserve immutable vintages and find only histories covering the requested date range" in
       withEmbeddedMongoDatabase { db =>
         for
           repo    <- PriceHistoryRepository.make[IO](db)
           _       <- repo.save(original)
           _       <- repo.save(original.copy(currency = "EUR"))
           latest  <- repo.latest(ticker, PriceAdjustment.SplitsAndDividends)
-          covered <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from.plusDays(1))
-          before  <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from.minusDays(1))
+          covered <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, DateRange(from, through))
+          before  <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, DateRange(from.minusDays(1), through))
+          after   <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, DateRange(from, through.plusDays(1)))
         yield {
           latest mustBe Some(original)
           covered mustBe Some(original)
           before mustBe None
+          after mustBe None
         }
       }
+
+    "select an older fully covering snapshot when newer snapshots omit either end of the requested range" in
+      withEmbeddedMongoDatabase { db =>
+        val laterStart = original.copy(
+          id = "later-start",
+          fetchedAt = original.fetchedAt.plusSeconds(1),
+          requestedRange = DateRange(from.plusDays(1), through)
+        )
+        val earlierEnd = original.copy(
+          id = "earlier-end",
+          fetchedAt = original.fetchedAt.plusSeconds(2),
+          requestedRange = DateRange(from, through.minusDays(1))
+        )
+        for
+          repo    <- PriceHistoryRepository.make[IO](db)
+          _       <- List(original, laterStart, earlierEnd).traverse_(repo.save)
+          latest  <- repo.latest(ticker, PriceAdjustment.SplitsAndDividends)
+          covered <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, DateRange(from, through))
+        yield
+          latest mustBe Some(earlierEnd)
+          covered mustBe Some(original)
+      }
+
     "bound retained vintages without evicting broader history needed by other screens" in
       withEmbeddedMongoDatabase { db =>
         val broad   = original.copy(id = "broad", requestedRange = DateRange(from.minusYears(13), through))
@@ -62,7 +87,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
           splitRetained <- repo.latest(ticker, PriceAdjustment.Splits)
           otherRetained <- repo.latest(other.ticker, PriceAdjustment.SplitsAndDividends)
           latest        <- repo.latest(ticker, PriceAdjustment.SplitsAndDividends)
-          covered       <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from.minusYears(10))
+          covered       <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, DateRange(from.minusYears(10), through))
         yield
           retained.size mustBe 4
           rawRetained mustBe Some(raw)
@@ -114,7 +139,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
             val saved  = seeded.copy(id = s"enum-$label", fetchedAt = original.fetchedAt.plusSeconds(1))
             for
               existing <- repo.latest(ticker, adjustment)
-              covering <- repo.latestCovering(ticker, adjustment, from)
+              covering <- repo.latestCovering(ticker, adjustment, DateRange(from, through))
               _        <- repo.save(saved)
               latest   <- repo.latest(ticker, adjustment)
               raw      <- collection

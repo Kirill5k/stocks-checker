@@ -37,7 +37,7 @@ final private class LivePriceService[F[_]](
       // Retain the existing ten-year return horizon while risk measures use a fixed five-year window.
       totalRange = DateRange(through.minusYears(13), through)
       quoteRange = DateRange(through.minusDays(14), through)
-      totalCached <- history.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, totalRange.from)
+      totalCached <- history.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, totalRange)
       total       <- totalCached
         .filter(reusable(ticker, PriceAdjustment.SplitsAndDividends, totalRange, now))
         .map(F.pure)

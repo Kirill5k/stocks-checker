@@ -13,6 +13,7 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
   private val ticker   = Ticker("AAA")
   private val from     = LocalDate.parse("2025-01-01")
   private val through  = LocalDate.parse("2025-02-01")
+  private val range    = DateRange(from, through)
   private val bar      = PriceCandle(from.plusDays(1), 100, 100, 100, 100, 1L)
   private val snapshot = PriceHistorySnapshot(
     "price-vintage-1",
@@ -29,9 +30,9 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
     "reuse a retained complete vintage and include its provenance ID" in {
       val repo   = mock[PriceHistoryRepository[IO]]
       val client = mock[MarketDataClient[IO]]
-      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(snapshot))
+      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(snapshot))
       val history = EvaluationPriceHistory.make(client, repo)
-      history.cached(ticker, from, through).asserting { result =>
+      history.cached(ticker, range).asserting { result =>
         result.get.snapshotIds mustBe List(snapshot.id)
         result.get.fetchedAt mustBe snapshot.fetchedAt
         result.get.audited mustBe true
@@ -44,7 +45,7 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
     "refresh an old vintage on explicit retry and share the full analytics range across screens" in {
       val repo   = mock[PriceHistoryRepository[IO]]
       val client = mock[MarketDataClient[IO]]
-      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(snapshot))
+      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(snapshot))
       when(repo.save(any[PriceHistorySnapshot])).thenReturnUnit
       (for
         now <- IO.realTimeInstant
@@ -55,7 +56,7 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
           refreshed
         )
         history = EvaluationPriceHistory.make(client, repo)
-        result <- history.history(ticker, from, through)
+        result <- history.history(ticker, range)
       yield (result, refreshed)).asserting { case (result, refreshed) =>
         result.snapshotIds mustBe List("refreshed")
         result.closes mustBe List(EvaluationClose(bar.date, bar.close))
@@ -74,13 +75,14 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
       val client = mock[MarketDataClient[IO]]
       (for
         now <- IO.realTimeInstant
-        today   = LocalDate.ofInstant(now, ZoneOffset.UTC)
-        shared  = snapshot.copy(fetchedAt = now, requestedRange = DateRange(today.minusYears(13), today))
-        _       = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(shared))
-        _       = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from.plusDays(10))).thenReturnIO(Some(shared))
+        today  = LocalDate.ofInstant(now, ZoneOffset.UTC)
+        shared = snapshot.copy(fetchedAt = now, requestedRange = DateRange(today.minusYears(13), today))
+        _      = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(shared))
+        _      = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range.copy(from = from.plusDays(10))))
+          .thenReturnIO(Some(shared))
         history = EvaluationPriceHistory.make(client, repo)
-        first  <- history.history(ticker, from, through)
-        second <- history.history(ticker, from.plusDays(10), through)
+        first  <- history.history(ticker, range)
+        second <- history.history(ticker, range.copy(from = from.plusDays(10)))
       yield (first, second)).asserting { case (first, second) =>
         first.snapshotIds mustBe second.snapshotIds
         verifyNoInteractions(client)
@@ -89,16 +91,17 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
     }
 
     "keep an incomplete vintage available when a subsequent refresh fails" in {
-      val repo   = mock[PriceHistoryRepository[IO]]
-      val client = mock[MarketDataClient[IO]]
-      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(snapshot))
-      val later   = through.plusMonths(1)
+      val repo       = mock[PriceHistoryRepository[IO]]
+      val client     = mock[MarketDataClient[IO]]
+      val later      = through.plusMonths(1)
+      val laterRange = DateRange(from, later)
+      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, laterRange)).thenReturnIO(Some(snapshot))
       val failure = AppError.HttpClient("TwelveData", 404, "unavailable")
       when(client.getDailyPriceHistory(any[Ticker], any[DateRange], any[PriceAdjustment])).thenRaiseError(failure)
       val history = EvaluationPriceHistory.make(client, repo)
       (for
-        cache   <- history.cached(ticker, from, later)
-        refresh <- history.history(ticker, from, later).attempt
+        cache   <- history.cached(ticker, laterRange)
+        refresh <- history.history(ticker, laterRange).attempt
       yield (cache, refresh)).asserting { case (cache, refresh) =>
         cache mustBe None
         refresh mustBe Left(failure)
@@ -119,8 +122,8 @@ class EvaluationPriceHistorySpec extends IOWordSpec {
       ).traverse_ { case (invalid, issue) =>
         val repo   = mock[PriceHistoryRepository[IO]]
         val client = mock[MarketDataClient[IO]]
-        when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)).thenReturnIO(Some(invalid))
-        EvaluationPriceHistory.make(client, repo).cached(ticker, from, through).map { result =>
+        when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(invalid))
+        EvaluationPriceHistory.make(client, repo).cached(ticker, range).map { result =>
           val series = result.get
           series.audited mustBe false
           series.issues must contain(issue)

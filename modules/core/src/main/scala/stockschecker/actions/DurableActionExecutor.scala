@@ -10,7 +10,7 @@ import fs2.Stream
 import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
 import stockschecker.common.config.ActionExecutorConfig
-import stockschecker.domain.{Job, JobId, JobPlan, ProviderFailure}
+import stockschecker.domain.{DateRange, Job, JobId, JobPlan, ProviderFailure}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.JobRepository
 import stockschecker.services.Services
@@ -132,7 +132,7 @@ final private[actions] class DurableActionExecutor[F[_]](
     case Action.UpdateFinancialMetrics(tickers) => expand(job, tickers.toList.map(t => Action.UpdateFinancialMetrics(NonEmptyList.one(t))))
     case Action.RefreshInvestmentResearch       => done(job)(services.investmentScreens.refreshResearch)
     case Action.RefreshEvaluationPrices(ticker, from, through) =>
-      done(job)(services.investmentScreens.refreshHistory(ticker, from, through))
+      done(job)(services.investmentScreens.refreshHistory(ticker, DateRange(from, through)))
     case Action.DeactivateSecurity(ticker)       => done(job)(services.security.deactivate(ticker))
     case Action.DeactivateCompanyProfile(ticker) => done(job)(services.companyProfile.deactivate(ticker))
   }

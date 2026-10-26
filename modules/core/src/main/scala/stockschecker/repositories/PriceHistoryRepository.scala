@@ -11,13 +11,12 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort, Update}
 import mongo4cats.models.collection.UpdateOptions
-import stockschecker.domain.{PriceAdjustment, PriceHistorySnapshot, Ticker}
-import java.time.LocalDate
+import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
 
 trait PriceHistoryRepository[F[_]]:
   def save(snapshot: PriceHistorySnapshot): F[Unit]
   def latest(ticker: Ticker, adjustment: PriceAdjustment): F[Option[PriceHistorySnapshot]]
-  def latestCovering(ticker: Ticker, adjustment: PriceAdjustment, from: LocalDate): F[Option[PriceHistorySnapshot]]
+  def latestCovering(ticker: Ticker, adjustment: PriceAdjustment, range: DateRange): F[Option[PriceHistorySnapshot]]
 
 object PriceHistoryRepository extends MongoJsonCodecs {
   final private case class Record(_id: String, ticker: Ticker, adjustment: PriceAdjustment, data: PriceHistorySnapshot)
@@ -88,9 +87,12 @@ object PriceHistoryRepository extends MongoJsonCodecs {
         .first
         .map(_.map(_.data))
 
-    override def latestCovering(ticker: Ticker, adjustment: PriceAdjustment, from: LocalDate): F[Option[PriceHistorySnapshot]] =
+    override def latestCovering(ticker: Ticker, adjustment: PriceAdjustment, range: DateRange): F[Option[PriceHistorySnapshot]] =
       collection
-        .find(Filter.eq("ticker", ticker) && Filter.eq("adjustment", adjustment) && Filter.lte("data.requestedRange.from", from.toString))
+        .find(
+          Filter.eq("ticker", ticker) && Filter.eq("adjustment", adjustment) &&
+            Filter.lte("data.requestedRange.from", range.from.toString) && Filter.gte("data.requestedRange.through", range.through.toString)
+        )
         .sort(Sort.desc("data.fetchedAt"))
         .first
         .map(_.map(_.data))

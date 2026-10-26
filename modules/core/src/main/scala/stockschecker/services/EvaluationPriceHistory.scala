@@ -11,8 +11,8 @@ import java.time.{LocalDate, ZoneOffset}
 
 /** A daily, total-return history with source provenance and validation issues. */
 trait EvaluationPriceHistory[F[_]]:
-  def history(ticker: Ticker, from: LocalDate, through: LocalDate): F[EvaluationPriceSeries]
-  def cached(ticker: Ticker, from: LocalDate, through: LocalDate): F[Option[EvaluationPriceSeries]]
+  def history(ticker: Ticker, range: DateRange): F[EvaluationPriceSeries]
+  def cached(ticker: Ticker, range: DateRange): F[Option[EvaluationPriceSeries]]
 
 final private class LiveEvaluationPriceHistory[F[_]](
     private val client: MarketDataClient[F],
@@ -20,10 +20,12 @@ final private class LiveEvaluationPriceHistory[F[_]](
 )(using
     F: Temporal[F]
 ) extends EvaluationPriceHistory[F] {
-  private def coversCompletedSessions(snapshot: PriceHistorySnapshot, through: LocalDate): Boolean =
-    !snapshot.requestedRange.through.isBefore(through) &&
-      !snapshot.fetchedAt.isBefore(through.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant)
-  private def toSeries(snapshot: PriceHistorySnapshot, from: LocalDate, through: LocalDate): EvaluationPriceSeries = {
+
+  private def coversCompletedSessions(snapshot: PriceHistorySnapshot, range: DateRange): Boolean =
+    !snapshot.requestedRange.through.isBefore(range.through) &&
+      !snapshot.fetchedAt.isBefore(range.through.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant)
+
+  private def toSeries(snapshot: PriceHistorySnapshot, range: DateRange): EvaluationPriceSeries =
     val issues = List(
       Option.when(snapshot.currency != "USD")("unsupported evaluation currency"),
       Option.when(snapshot.adjustment != PriceAdjustment.SplitsAndDividends)("total-return adjustments unavailable"),
@@ -31,7 +33,7 @@ final private class LiveEvaluationPriceHistory[F[_]](
     ).flatten
     EvaluationPriceSeries(
       snapshot.ticker,
-      snapshot.candles.filter(c => !c.date.isBefore(from) && !c.date.isAfter(through)).map(c => EvaluationClose(c.date, c.close)),
+      snapshot.candles.filter(c => range.contains(c.date)).map(c => EvaluationClose(c.date, c.close)),
       snapshot.provider,
       snapshot.fetchedAt,
       issues.isEmpty,
@@ -40,30 +42,29 @@ final private class LiveEvaluationPriceHistory[F[_]](
       issues,
       snapshotIds = List(snapshot.id)
     )
-  }
 
-  override def cached(ticker: Ticker, from: LocalDate, through: LocalDate): F[Option[EvaluationPriceSeries]] =
+  override def cached(ticker: Ticker, range: DateRange): F[Option[EvaluationPriceSeries]] =
     repository
-      .latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)
-      .map(_.filter(coversCompletedSessions(_, through)).map(toSeries(_, from, through)))
+      .latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)
+      .map(_.filter(coversCompletedSessions(_, range)).map(toSeries(_, range)))
 
-  override def history(ticker: Ticker, from: LocalDate, through: LocalDate): F[EvaluationPriceSeries] =
+  override def history(ticker: Ticker, range: DateRange): F[EvaluationPriceSeries] =
     for
       now <- Temporal[F].realTimeInstant
       today = LocalDate.ofInstant(now, ZoneOffset.UTC)
       // Fetch the shared analytics horizon once, so every screen creation date and
       // completed monthly cutoff can reuse the same unmerged adjustment vintage.
-      sharedFrom    = if (from.isBefore(today.minusYears(13))) from else today.minusYears(13)
-      sharedThrough = if (through.isAfter(today)) through else today
-      range         = DateRange(sharedFrom, sharedThrough)
-      stored <- repository.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, from)
+      sharedFrom    = if (range.from.isBefore(today.minusYears(13))) range.from else today.minusYears(13)
+      sharedThrough = if (range.through.isAfter(today)) range.through else today
+      sharedRange   = DateRange(sharedFrom, sharedThrough)
+      stored <- repository.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)
       // Explicit jobs can refresh an incomplete vintage the next day. Other readers use cached(),
       // which preserves complete historical captures without an age limit.
       snapshot <- stored
-        .filter(s => coversCompletedSessions(s, through) && !s.fetchedAt.isAfter(now) && s.fetchedAt.isAfter(now.minusSeconds(86400)))
+        .filter(s => coversCompletedSessions(s, range) && !s.fetchedAt.isAfter(now) && s.fetchedAt.isAfter(now.minusSeconds(86400)))
         .map(_.pure[F])
-        .getOrElse(client.getDailyPriceHistory(ticker, range, PriceAdjustment.SplitsAndDividends).flatTap(repository.save))
-    yield toSeries(snapshot, from, through)
+        .getOrElse(client.getDailyPriceHistory(ticker, sharedRange, PriceAdjustment.SplitsAndDividends).flatTap(repository.save))
+    yield toSeries(snapshot, range)
 }
 
 object EvaluationPriceHistory:

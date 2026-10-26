@@ -9,7 +9,7 @@ import kirill5k.common.cats.Clock
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.InvestmentScreenRepository
-import java.time.{LocalDate, ZoneOffset}
+import java.time.ZoneOffset
 
 trait InvestmentScreenService[F[_]]:
   def create(request: InvestmentScreenRequest): F[InvestmentScreenResult]
@@ -19,7 +19,7 @@ trait InvestmentScreenService[F[_]]:
   def refreshResearch: F[Unit]
   def generateScheduledScreen: F[Option[InvestmentScreenSummary]]
   def captureMonthlyEvaluations: F[Int]
-  def refreshHistory(ticker: Ticker, from: LocalDate, through: LocalDate): F[Unit]
+  def refreshHistory(ticker: Ticker, range: DateRange): F[Unit]
 
 final private class LiveInvestmentScreenService[F[_]](
     private val screens: InvestmentScreenRepository[F],
@@ -75,8 +75,8 @@ final private class LiveInvestmentScreenService[F[_]](
 
   override def evaluate(id: InvestmentScreenId): F[InvestmentEvaluation] = evaluations.evaluate(id)
 
-  override def refreshHistory(ticker: Ticker, from: LocalDate, through: LocalDate): F[Unit] =
-    evaluations.refreshHistory(ticker, from, through)
+  override def refreshHistory(ticker: Ticker, range: DateRange): F[Unit] =
+    evaluations.refreshHistory(ticker, range)
 
   override def captureMonthlyEvaluations: F[Int] = evaluations.captureMonthlyEvaluations
 

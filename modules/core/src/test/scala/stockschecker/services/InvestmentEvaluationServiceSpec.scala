@@ -79,7 +79,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       when(evaluations.getOrCreateCapturePlan(any[EvaluationCapturePlan])).thenReturnIO(plan)
       when(evaluations.findCapturePlan(run.id, "2026-10")).thenReturnSome(plan)
       when(evaluations.findMonthly(run.id, "2026-10")).thenReturnNone
-      when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenReturnNone
+      when(prices.cached(any[Ticker], any[DateRange])).thenReturnNone
       when(jobs.find(any[JobId]))
         .thenReturnSome(Job(JobId("failed"), Action.RefreshEvaluationPrices(AAPL, from, through), now, now, state = Job.Failed))
       when(jobs.retryTerminal(any[JobId], any[Instant])).thenReturnIO(true)
@@ -101,7 +101,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         saved mustBe 0
         verify(jobs, times(2)).retryTerminal(any[JobId], any[Instant])
         verify(evaluations, never).saveMonthly(any[InvestmentEvaluation])
-        verify(prices, never).history(any[Ticker], any[LocalDate], any[LocalDate])
+        verify(prices, never).history(any[Ticker], any[DateRange])
         succeed
       }
     }
@@ -144,8 +144,9 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[InvestmentScreenId])
       when(evaluations.findMonthly(run.id, "2026-09")).thenReturnSome(incomplete)
       when(evaluations.saveMonthly(any[InvestmentEvaluation])).thenReturnUnit
-      when(prices.cached(AAPL, from, through)).thenReturnSome(series)
-      when(prices.cached(InvestmentEvaluator.Benchmark, from, through)).thenReturnSome(series.copy(ticker = InvestmentEvaluator.Benchmark))
+      when(prices.cached(AAPL, DateRange(from, through))).thenReturnSome(series)
+      when(prices.cached(InvestmentEvaluator.Benchmark, DateRange(from, through)))
+        .thenReturnSome(series.copy(ticker = InvestmentEvaluator.Benchmark))
       val result = for
         service <- InvestmentEvaluationService.make(
           screens,
@@ -194,7 +195,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       when(evaluations.getOrCreateCapturePlan(any[EvaluationCapturePlan])).thenAnswer(invocation =>
         IO.pure(invocation.getArgument[EvaluationCapturePlan](0))
       )
-      when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenReturnNone
+      when(prices.cached(any[Ticker], any[DateRange])).thenReturnNone
       when(jobs.find(any[JobId])).thenReturnNone
       when(jobs.enqueue(any[Job])).thenReturnUnit
       val result = for
@@ -235,7 +236,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       val jobs        = mock[JobRepository[IO]]
       when(evaluations.findMonthly(run.id, "2026-10")).thenReturnNone
       when(evaluations.findCapturePlan(run.id, "2026-10")).thenReturnNone
-      when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenReturnNone
+      when(prices.cached(any[Ticker], any[DateRange])).thenReturnNone
       when(jobs.find(any[JobId])).thenReturnNone
       val result = for
         state   <- Ref.of[IO, List[InvestmentScreenRun]](List(run))
@@ -254,7 +255,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         verify(evaluations, never).saveMonthly(any[InvestmentEvaluation])
         verify(jobs, never).enqueue(any[Job])
         verify(jobs, never).retryTerminal(any[JobId], any[Instant])
-        verify(prices, never).history(any[Ticker], any[LocalDate], any[LocalDate])
+        verify(prices, never).history(any[Ticker], any[DateRange])
         succeed
       }
     }
@@ -281,7 +282,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[InvestmentScreenId])
         when(evaluations.getOrCreateCapturePlan(any[EvaluationCapturePlan])).thenReturnIO(plan)
         if exhausted then {
-          when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenReturnNone
+          when(prices.cached(any[Ticker], any[DateRange])).thenReturnNone
           when(jobs.find(any[JobId]))
             .thenReturnSome(Job(JobId("failed"), Action.RefreshEvaluationPrices(AAPL, from, through), now, now, state = Job.Failed))
           when(jobs.retryTerminal(any[JobId], any[Instant])).thenReturnIO(false)
@@ -295,7 +296,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
             "split-and-dividend",
             DateRange(from, through)
           )
-          when(prices.cached(any[Ticker], any[LocalDate], any[LocalDate])).thenAnswer(invocation =>
+          when(prices.cached(any[Ticker], any[DateRange])).thenAnswer(invocation =>
             IO.pure(Some(series.copy(ticker = invocation.getArgument[Ticker](0))))
           )
         }
@@ -322,7 +323,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
           report.pendingDataJobs mustBe Nil
           InvestmentEvaluationRepository.complete(report) mustBe false
           verify(evaluations).saveMonthly(any[InvestmentEvaluation])
-          verify(prices, times(2)).cached(any[Ticker], any[LocalDate], any[LocalDate])
+          verify(prices, times(2)).cached(any[Ticker], any[DateRange])
           if exhausted then {
             report.horizons.flatMap(_.issues).mkString must include("repair attempts exhausted")
             verify(jobs, times(2)).retryTerminal(any[JobId], any[Instant])

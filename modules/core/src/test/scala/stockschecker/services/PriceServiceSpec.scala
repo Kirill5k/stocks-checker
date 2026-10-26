@@ -19,7 +19,8 @@ class PriceServiceSpec extends IOWordSpec {
   ) {
     def service: IO[PriceService[IO]] = PriceService.make(repo, latest, client, profiles, history)
     def cache(adjusted: PriceHistorySnapshot, quoted: PriceHistorySnapshot): Unit = {
-      when(history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, adjusted.requestedRange.through.minusYears(13)))
+      val range = DateRange(adjusted.requestedRange.through.minusYears(13), adjusted.requestedRange.through)
+      when(history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, range))
         .thenReturnIO(Some(adjusted))
       when(history.latest(AAPL, PriceAdjustment.Unadjusted)).thenReturnIO(Some(quoted))
       ()
@@ -171,7 +172,7 @@ class PriceServiceSpec extends IOWordSpec {
         now <- IO.realTimeInstant
         full = snapshot(now, PriceAdjustment.SplitsAndDividends)
         _    = when(d.history.latest(any[Ticker], any[PriceAdjustment])).thenReturnIO(None)
-        _    = when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, full.requestedRange.from)).thenReturnIO(None)
+        _    = when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, full.requestedRange)).thenReturnIO(None)
         _    = when(
           d.client.getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
         ).thenReturnIO(full)

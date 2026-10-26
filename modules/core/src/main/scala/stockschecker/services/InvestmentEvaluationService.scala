@@ -19,7 +19,7 @@ import java.util.UUID
 trait InvestmentEvaluationService[F[_]]:
   def evaluate(id: InvestmentScreenId): F[InvestmentEvaluation]
   def captureMonthlyEvaluations: F[Int]
-  def refreshHistory(ticker: Ticker, from: LocalDate, through: LocalDate): F[Unit]
+  def refreshHistory(ticker: Ticker, range: DateRange): F[Unit]
 
 final private class LiveInvestmentEvaluationService[F[_]](
     private val screens: InvestmentScreenRepository[F],
@@ -33,8 +33,8 @@ final private class LiveInvestmentEvaluationService[F[_]](
   private def loadHeader(id: InvestmentScreenId): F[InvestmentScreenRepository.Header] =
     screens.header(id).flatMap(Sync[F].fromOption(_, AppError.EntityDoesNotExist("Investment screen", id.value)))
 
-  override def refreshHistory(ticker: Ticker, from: LocalDate, through: LocalDate): F[Unit] =
-    priceHistory.history(ticker, from, through).void
+  override def refreshHistory(ticker: Ticker, range: DateRange): F[Unit] =
+    priceHistory.history(ticker, range).void
 
   private def priceJobId(ticker: Ticker, through: LocalDate): JobId =
     val key = s"evaluation:${ticker.value}:${through.minusYears(13)}:$through"
@@ -63,15 +63,17 @@ final private class LiveInvestmentEvaluationService[F[_]](
       plan: EvaluationCapturePlan,
       capture: Boolean
   ): F[InvestmentEvaluation] =
-    val from    = run.createdAt.atZone(ZoneOffset.UTC).toLocalDate
+    val range   = DateRange(run.createdAt.atZone(ZoneOffset.UTC).toLocalDate, plan.through)
     val tickers = (InvestmentEvaluator.Benchmark :: run.cohorts.flatMap(_.tickers)).distinct
     for
-      gathered <- tickers.traverse(ticker => priceHistory.cached(ticker, from, plan.through).map(ticker -> _))
+      gathered <- tickers.traverse(ticker => priceHistory.cached(ticker, range).map(ticker -> _))
       histories = gathered.collect { case (ticker, Some(series)) => ticker -> series }.toMap
       report    = InvestmentEvaluator.evaluate(run._id, run.createdAt, now, run.cohorts, histories, Some(plan.through))
       absent    = gathered.collect { case (ticker, None) => ticker }
       // Retry gaps in an otherwise audited vintage too: a successful request can still omit a session.
-      missing         = report.horizons.flatMap(_.cohorts.flatMap(_.missing)).filter(ticker => histories.get(ticker).exists(_.audited))
+      missing = report.horizons
+        .flatMap(_.cohorts.flatMap(_.missing))
+        .filter(ticker => histories.get(ticker).exists(_.audited))
       missingCalendar = Option
         .when(
           report.horizons.exists(h => h.entryDate.isEmpty || (h.status == "incomplete" && h.exitDate.isEmpty)) &&
