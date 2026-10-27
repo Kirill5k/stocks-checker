@@ -33,12 +33,10 @@ final case class Command(
     lastExecutedAt: Option[Instant],
     executionCount: Int,
     maxExecutions: Option[Int],
-    version: Option[Long] = None,
+    version: Long = 0L,
     nextRunAt: Option[Instant] = None,
-    activeRunId: Option[JobId] = None,
-    outbox: Option[ScheduledOccurrence] = None
+    activeRunId: Option[JobId] = None
 ) derives Codec.AsObject {
-  def revision: Long                                           = version.getOrElse(0L)
   def durationUntilNextExecution(now: Instant): FiniteDuration =
     lastExecutedAt
       .map(schedule.nextExecutionTime)

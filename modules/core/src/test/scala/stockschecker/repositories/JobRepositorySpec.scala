@@ -4,7 +4,6 @@ import cats.effect.IO
 import cats.syntax.foldable.*
 import cats.syntax.parallel.*
 import cats.syntax.traverse.*
-import mongo4cats.operations.Filter
 import stockschecker.actions.{Action, ActionPriority}
 import stockschecker.domain.*
 import stockschecker.fixtures.*
@@ -21,31 +20,26 @@ class JobRepositorySpec extends RepositorySpec {
   private def enqueue(jobs: JobRepository[IO])(job: Job): IO[Unit] = jobs.enqueue(job, ActionPriority.forAction(job.action))
 
   "Durable jobs" should {
-    "retain evaluation attempt counts while a capture needs its cutoff, then prune after it settles" in withEmbeddedMongoDatabase { db =>
+    "retain protected completed roots until the caller releases them" in withEmbeddedMongoDatabase { db =>
       val expiredAt = ts.minusSeconds(31.days.toSeconds)
       for {
-        jobs         <- JobRepository.make[IO](db)
-        capturePlans <- EvaluationCapturePlanRepository.make[IO](db)
-        _            <- enqueue(jobs)(
+        jobs <- JobRepository.make[IO](db)
+        _    <- enqueue(jobs)(
           Job(
             JobId("needed"),
             evaluationAction,
             expiredAt,
             expiredAt,
             state = Job.Failed,
-            completedAt = Some(expiredAt),
-            restartCount = Some(2)
+            completedAt = Some(expiredAt)
           )
         )
-        _            <- capturePlans.getOrCreate(EvaluationCapturePlan(InvestmentScreenId("screen"), "2026-02", evaluationThrough, ts))
-        _            <- jobs.pruneCompleted(ts)
+        _            <- jobs.pruneCompleted(ts, Set(JobId("needed")))
         protectedJob <- jobs.find(JobId("needed"))
-        plans        <- db.getCollection(EvaluationCapturePlanRepository.CollectionName)
-        _            <- plans.deleteMany(Filter.empty)
-        _            <- jobs.pruneCompleted(ts)
+        _            <- jobs.pruneCompleted(ts, Set.empty)
         expired      <- jobs.find(JobId("needed"))
       } yield {
-        protectedJob.flatMap(_.restartCount) mustBe Some(2)
+        protectedJob.map(_.state) mustBe Some(Job.Failed)
         expired mustBe None
       }
     }
@@ -58,14 +52,12 @@ class JobRepositorySpec extends RepositorySpec {
           Job(JobId("parent/1"), action, ts, ts, state = Job.Failed),
           Job(JobId("parent/2"), action, ts, ts, state = Job.Paused)
         ).traverse_(enqueue(jobs))
-        summary  <- jobs.summarize(List("parent/0", "parent/1", "parent/2", "parent/missing").map(JobId(_)))
-        terminal <- jobs.terminalIds(List("parent/0", "parent/1", "parent/2", "parent/missing").map(JobId(_)))
+        summary <- jobs.summarize(List("parent/0", "parent/1", "parent/2", "parent/missing").map(JobId(_)))
       } yield {
         summary.total mustBe 3
         summary.terminal mustBe 2
         summary.usable mustBe 1
         summary.count(Job.Paused) mustBe 1
-        terminal mustBe Set(JobId("parent/0"), JobId("parent/1"))
       }
     }
 
@@ -100,9 +92,9 @@ class JobRepositorySpec extends RepositorySpec {
         backedOff <- jobs.find(JobId("parent")).map(_.get)
       } yield {
         waiting.availableAt mustBe ts.plusSeconds(1)
-        waiting.waitCount mustBe Some(1)
+        waiting.waitCount mustBe 1
         backedOff.availableAt mustBe ts.plusSeconds(3)
-        backedOff.waitCount mustBe Some(2)
+        backedOff.waitCount mustBe 2
         backedOff.retries mustBe 0
       }
     }
@@ -126,7 +118,7 @@ class JobRepositorySpec extends RepositorySpec {
           Job(JobId("finished/0"), action, expiredAt, expiredAt, state = Job.Failed, completedAt = Some(expiredAt)),
           Job(JobId("recent"), action, ts, ts, state = Job.Succeeded, completedAt = Some(ts))
         ).traverse_(enqueue(jobs))
-        _            <- jobs.pruneCompleted(ts)
+        _            <- jobs.pruneCompleted(ts, Set.empty)
         kept         <- jobs.find(JobId("waiting/0"))
         removedRoot  <- jobs.find(JobId("finished"))
         removedChild <- jobs.find(JobId("finished/0"))
@@ -174,36 +166,6 @@ class JobRepositorySpec extends RepositorySpec {
       } yield {
         old.state mustBe Job.Cancelled
         newer.state mustBe Job.Pending
-      }
-    }
-
-    "restart a terminal root only once from the expected persisted state" in withEmbeddedMongoDatabase { db =>
-      val expected    = Job(JobId("restart"), action, ts, ts, state = Job.Failed, retries = 3, completedAt = Some(ts))
-      val availableAt = ts.plusSeconds(60)
-      val guarded     = List(
-        expected.copy(id = JobId("planned"), plan = Some(JobPlan(List(action), false))),
-        expected.copy(id = JobId("parent"), children = List(JobId("parent/0"))),
-        expected.copy(id = JobId("parent/0")),
-        expected.copy(id = JobId("pending"), state = Job.Pending)
-      )
-      for {
-        jobs            <- JobRepository.make[IO](db)
-        _               <- (expected :: guarded).traverse_(enqueue(jobs))
-        rejected        <- guarded.traverse(jobs.restart(_, availableAt))
-        wrongCompletion <- jobs.restart(expected.copy(completedAt = Some(ts.minusSeconds(1))), availableAt)
-        wrongCount      <- jobs.restart(expected.copy(restartCount = Some(1)), availableAt)
-        attempts        <- (jobs.restart(expected, availableAt), jobs.restart(expected, availableAt)).parTupled
-        restarted       <- jobs.find(expected.id).map(_.get)
-      } yield {
-        rejected mustBe List(false, false, false, false)
-        wrongCompletion mustBe false
-        wrongCount mustBe false
-        List(attempts._1, attempts._2).count(identity) mustBe 1
-        restarted.state mustBe Job.Pending
-        restarted.availableAt mustBe availableAt
-        restarted.restartCount mustBe Some(1)
-        restarted.retries mustBe 0
-        restarted.completedAt mustBe None
       }
     }
 

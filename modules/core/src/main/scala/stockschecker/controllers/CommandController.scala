@@ -5,9 +5,11 @@ import io.circe.Codec
 import org.http4s.HttpRoutes
 import stockschecker.actions.Action
 import stockschecker.common.config.ApiConfig
-import stockschecker.controllers.CommandController.CreateCommandResponse
+import stockschecker.controllers.CommandController.{CommandView, CreateCommandResponse}
 import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule, UpdateCommand}
 import stockschecker.services.CommandService
+import java.time.Instant
+
 import sttp.model.StatusCode
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
@@ -21,7 +23,7 @@ final private class CommandController[F[_]: Async](
 
   private val getAllCommands = secured(CommandController.getAllCommandsEndpoint)
     .serverLogic { _ => _ =>
-      service.getAll.asResponse
+      service.getAll.mapToResponse(_.map(CommandView.from))
     }
 
   private val createCommand = secured(CommandController.createCommandEndpoint)
@@ -45,7 +47,7 @@ final private class CommandController[F[_]: Async](
       { case (cid, req) =>
         service
           .update(UpdateCommand(cid, req.isActive, req.action, req.schedule, req.maxExecutions))
-          .asResponse
+          .mapToResponse(CommandView.from)
       }
     }
 
@@ -79,9 +81,31 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .map((s: String) => CommandId(s))(_.value)
     .name("command-id")
 
+  final private case class CommandView(
+      id: CommandId,
+      isActive: Boolean,
+      action: Action,
+      schedule: Schedule,
+      lastExecutedAt: Option[Instant],
+      executionCount: Int,
+      maxExecutions: Option[Int]
+  ) derives Codec.AsObject
+
+  private object CommandView:
+    def from(command: Command): CommandView =
+      CommandView(
+        command.id,
+        command.isActive,
+        command.action,
+        command.schedule,
+        command.lastExecutedAt,
+        command.executionCount,
+        command.maxExecutions
+      )
+
   private val getAllCommandsEndpoint = Controller.secureEndpoint.get
     .in(basePath)
-    .out(jsonBody[List[Command]])
+    .out(jsonBody[List[CommandView]])
     .description("Get all commands")
 
   final private case class CreateCommandRequest(
@@ -120,7 +144,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
   private val updateCommandEndpoint = Controller.secureEndpoint.put
     .in(commandIdPath)
     .in(jsonBody[UpdateCommandRequest])
-    .out(jsonBody[Command])
+    .out(jsonBody[CommandView])
     .description("Update an existing command")
 
   private val executeManuallyCommandEndpoint = Controller.secureEndpoint.post

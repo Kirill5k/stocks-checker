@@ -1,4 +1,4 @@
-package stockschecker.utils
+package stockschecker.domain.investment
 
 import stockschecker.domain.*
 
@@ -16,10 +16,10 @@ class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
     EvaluationPriceSeries(
       ticker,
       dates.zip(prices).map((date, price) => EvaluationClose(date, BigDecimal(price))),
-      "audited-test",
+      Provider.TwelveData,
       now,
       true,
-      "split-and-dividend",
+      PriceAdjustment.SplitsAndDividends,
       DateRange(dates.head, dates.last)
     )
   private val vti = series(InvestmentEvaluator.Benchmark, List(1, 100, 110, 120, 130))
@@ -28,7 +28,7 @@ class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
       InvestmentScreenId("run"),
       formed,
       now,
-      List(InvestmentCohort("investment", cohort)),
+      List(InvestmentCohort(CohortName.Investment, cohort)),
       histories + (InvestmentEvaluator.Benchmark -> vti)
     )
 
@@ -36,31 +36,31 @@ class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
     "finish settled horizons at their observed exit or the end of the allowed exit window" in {
       val target  = LocalDate.parse("2025-01-02")
       val entry   = Some(LocalDate.parse("2020-01-02"))
-      val horizon = HorizonEvaluation(5, "incomplete", entry, target, None, Nil, Nil)
-      val report  = evaluate(List(tickerA), Map.empty).copy(horizons = List(horizon), settled = Some(true))
+      val horizon = HorizonEvaluation(5, EvaluationStatus.Incomplete, entry, target, None, Nil, Nil)
+      val report  = evaluate(List(tickerA), Map.empty).copy(horizons = List(horizon), settled = true)
 
-      InvestmentEvaluator.isFinished(report.copy(dataThrough = Some(target.plusDays(6)))) mustBe false
-      InvestmentEvaluator.isFinished(report.copy(dataThrough = Some(target.plusDays(7)))) mustBe true
+      report.copy(dataThrough = Some(target.plusDays(6))).isFinished mustBe false
+      report.copy(dataThrough = Some(target.plusDays(7))).isFinished mustBe true
 
       val missingEntry = report.copy(horizons = List(horizon.copy(entryDate = None)))
-      InvestmentEvaluator.isFinished(missingEntry.copy(dataThrough = Some(target.plusDays(13)))) mustBe false
-      InvestmentEvaluator.isFinished(missingEntry.copy(dataThrough = Some(target.plusDays(14)))) mustBe true
+      missingEntry.copy(dataThrough = Some(target.plusDays(13))).isFinished mustBe false
+      missingEntry.copy(dataThrough = Some(target.plusDays(14))).isFinished mustBe true
 
       val observedExit = report.copy(horizons = List(horizon.copy(exitDate = Some(target.plusDays(2)))))
-      InvestmentEvaluator.isFinished(observedExit.copy(dataThrough = Some(target.plusDays(1)))) mustBe false
-      InvestmentEvaluator.isFinished(observedExit.copy(dataThrough = Some(target.plusDays(2)))) mustBe true
+      observedExit.copy(dataThrough = Some(target.plusDays(1))).isFinished mustBe false
+      observedExit.copy(dataThrough = Some(target.plusDays(2))).isFinished mustBe true
 
       val finished = report.copy(dataThrough = Some(target.plusDays(7)))
-      InvestmentEvaluator.isFinished(finished.copy(settled = Some(false))) mustBe false
-      InvestmentEvaluator.isFinished(finished.copy(horizons = Nil)) mustBe false
-      InvestmentEvaluator.isFinished(finished.copy(dataThrough = None)) mustBe false
-      InvestmentEvaluator.isFinished(finished.copy(horizons = List(horizon, horizon.copy(targetDate = target.plusYears(1))))) mustBe false
+      finished.copy(settled = false).isFinished mustBe false
+      finished.copy(horizons = Nil).isFinished mustBe false
+      finished.copy(dataThrough = None).isFinished mustBe false
+      finished.copy(horizons = List(horizon, horizon.copy(targetDate = target.plusYears(1)))).isFinished mustBe false
     }
 
     "enter on the next session and calculate weighted wealth, drawdown, benchmark excess and costs" in {
       val report  = evaluate(List(tickerA), Map(tickerA -> series(tickerA, List(1000, 100, 50, 150, 200))))
       val horizon = report.horizons.head
-      val result  = horizon.cohorts.find(_.name == "investment").get
+      val result  = horizon.cohorts.find(_.name == CohortName.Investment).get
       horizon.entryDate mustBe Some(LocalDate.parse("2020-01-02"))
       result.totalReturnPercent mustBe Some(BigDecimal(50))
       result.maxDrawdownPercent mustBe Some(BigDecimal(50))
@@ -73,33 +73,33 @@ class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
         List(tickerA, b),
         Map(tickerA -> series(tickerA, List(100, 100, 100, 150, 200)), b -> series(b, List(100, 100, 100, 50, 50)))
       )
-      report.horizons.head.cohorts.find(_.name == "investment").get.totalReturnPercent mustBe Some(BigDecimal(0))
+      report.horizons.head.cohorts.find(_.name == CohortName.Investment).get.totalReturnPercent mustBe Some(BigDecimal(0))
     }
     "mark tickerA portfolio incomplete rather than dropping tickerA missing constituent" in {
       val report = evaluate(List(tickerA, b), Map(tickerA -> series(tickerA, List(100, 100, 100, 150, 200))))
-      val result = report.horizons.head.cohorts.find(_.name == "investment").get
-      result.status mustBe "incomplete"
+      val result = report.horizons.head.cohorts.find(_.name == CohortName.Investment).get
+      result.status mustBe EvaluationStatus.Incomplete
       result.missing mustBe List(b)
       result.totalReturnPercent mustBe None
       result.constituents mustBe List(tickerA, b)
     }
     "keep future horizons pending without inventing historical returns" in {
       val report =
-        InvestmentEvaluator.evaluate(InvestmentScreenId("new"), now, now, List(InvestmentCohort("investment", List(tickerA))), Map.empty)
-      report.horizons.map(_.status) mustBe List("pending", "pending")
+        InvestmentEvaluator.evaluate(InvestmentScreenId("new"), now, now, List(InvestmentCohort(CohortName.Investment, List(tickerA))), Map.empty)
+      report.horizons.map(_.status) mustBe List(EvaluationStatus.Pending, EvaluationStatus.Pending)
       report.horizons.flatMap(_.cohorts).forall(_.totalReturnPercent.isEmpty) mustBe true
-      report.horizons.head.cohorts.find(_.name == "investment").get.constituents mustBe List(tickerA)
+      report.horizons.head.cohorts.find(_.name == CohortName.Investment).get.constituents mustBe List(tickerA)
     }
     "reject price-only, unaudited and incomplete daily data" in {
-      val priceOnly = series(tickerA, List(100, 100, 100, 150, 200)).copy(adjustment = "split", audited = false)
-      val result    = evaluate(List(tickerA), Map(tickerA -> priceOnly)).horizons.head.cohorts.find(_.name == "investment").get
-      result.status mustBe "incomplete"
+      val priceOnly = series(tickerA, List(100, 100, 100, 150, 200)).copy(adjustment = PriceAdjustment.Splits, audited = false)
+      val result    = evaluate(List(tickerA), Map(tickerA -> priceOnly)).horizons.head.cohorts.find(_.name == CohortName.Investment).get
+      result.status mustBe EvaluationStatus.Incomplete
       result.issues.head must include("unaudited")
       result.issues.head must include("adjustments")
     }
     "refuse missing intermediate sessions even if entry and exit exist" in {
       val gap =
         series(tickerA, List(100, 100, 100, 150, 200)).copy(closes = List(EvaluationClose(dates(1), 100), EvaluationClose(dates(3), 150)))
-      evaluate(List(tickerA), Map(tickerA -> gap)).horizons.head.cohorts.find(_.name == "investment").get.status mustBe "incomplete"
+      evaluate(List(tickerA), Map(tickerA -> gap)).horizons.head.cohorts.find(_.name == CohortName.Investment).get.status mustBe EvaluationStatus.Incomplete
     }
   }

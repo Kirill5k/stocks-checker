@@ -1,7 +1,7 @@
 package stockschecker.repositories
 
 import cats.data.NonEmptyList
-import stockschecker.utils.PriceAnalyticsCalculator
+import stockschecker.domain.PriceAnalyticsCalculator
 import cats.effect.IO
 import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, PriceCandle}
 import stockschecker.fixtures.*

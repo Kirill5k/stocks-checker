@@ -1,5 +1,6 @@
 package stockschecker.repositories
 
+import stockschecker.domain.Provider
 import cats.effect.Async
 import cats.syntax.applicative.*
 import cats.syntax.flatMap.*
@@ -24,18 +25,17 @@ trait JobRepository[F[_]] {
   def enqueue(job: Job, priority: Int): F[Unit]
   def find(id: JobId): F[Option[Job]]
   def summarize(ids: List[JobId]): F[JobStatusSummary]
-  def terminalIds(ids: List[JobId]): F[Set[JobId]]
+  def pendingIds(ids: List[JobId]): F[Set[JobId]]
   def claim(now: Instant, lease: FiniteDuration): F[Option[Job]]
   def renew(job: Job, now: Instant, lease: FiniteDuration): F[Boolean]
   def finish(job: Job, state: JobState, error: Option[String] = None): F[Unit]
   def savePlan(job: Job, plan: JobPlan): F[Boolean]
   def waitForChildren(job: Job, children: List[JobId], availableAt: Instant): F[Unit]
   def defer(job: Job, until: Instant, error: Option[String], countRetry: Boolean): F[Unit]
-  def pause(job: Job, provider: String, error: String): F[Unit]
-  def resumePaused(provider: String, now: Instant): F[Unit]
-  def restart(expected: Job, availableAt: Instant): F[Boolean]
+  def pause(job: Job, provider: Provider, error: String): F[Unit]
+  def resumePaused(provider: Provider, now: Instant): F[Unit]
   def cancelObsolete(commandId: CommandId, currentVersion: Long): F[Unit]
-  def pruneCompleted(now: Instant): F[Unit]
+  def pruneCompleted(now: Instant, protectedIds: Set[JobId]): F[Unit]
 }
 
 final private class LiveJobRepository[F[_]](
@@ -43,22 +43,22 @@ final private class LiveJobRepository[F[_]](
 )(using
     F: Async[F]
 ) extends JobRepository[F] {
-  import JobRepository.{ClaimIndexFields, Retention}
+  import JobRepository.{ClaimIndexFields, Field, Retention}
 
   private def owned(job: Job): Filter =
-    Filter.idEq(job.id.value) && Filter.eq("job.state", Job.Running.value) && Filter.eq("job.leaseToken", job.leaseToken)
+    Filter.idEq(job.id.value) && Filter.eq(Field.state, Job.Running.value) && Filter.eq(Field.leaseToken, job.leaseToken)
 
-  private def release: Update = Update.set("job.leaseToken", Option.empty[String]).set("job.leaseUntil", Option.empty[Instant])
+  private def release: Update = Update.set(Field.leaseToken, Option.empty[String]).set(Field.leaseUntil, Option.empty[Instant])
 
-  private val terminal = Filter.in("job.state", Job.terminalStates.map(_.value))
+  private val terminal = Filter.in(Field.state, Job.terminalStates.map(_.value))
 
   override def enqueue(job: Job, priority: Int): F[Unit] =
     collection
       .updateOne(
         Filter.idEq(job.id.value),
         Update
-          .setOnInsert("job", job)
-          .setOnInsert("priority", priority),
+          .setOnInsert(Field.job, job)
+          .setOnInsert(Field.priority, priority),
         UpdateOptions(upsert = true)
       )
       .void
@@ -71,35 +71,35 @@ final private class LiveJobRepository[F[_]](
       collection
         .aggregate[JobStateCount](
           Aggregate
-            .matchBy(Filter.in("_id", ids.map(_.value)))
-            .group("$job.state", Accumulator.sum("count", 1))
+            .matchBy(Filter.in(Field.id, ids.map(_.value)))
+            .group("$" + Field.state, Accumulator.sum(Field.count, 1))
         )
         .all
         .map(rows => JobStatusSummary(rows.map(row => row._id -> row.count).toMap))
 
-  override def terminalIds(ids: List[JobId]): F[Set[JobId]] =
-    if (ids.isEmpty) Set.empty[JobId].pure[F]
+  override def pendingIds(ids: List[JobId]): F[Set[JobId]] =
+    if ids.isEmpty then Set.empty[JobId].pure[F]
     else
       collection
         .aggregate[JobIdEntity](
           Aggregate
-            .matchBy(Filter.in("_id", ids.map(_.value)) && terminal)
-            .project(Projection.include("_id"))
+            .matchBy(Filter.in(Field.id, ids.map(_.value)) && Filter.nin(Field.state, Job.terminalStates.map(_.value)))
+            .project(Projection.include(Field.id))
         )
         .all
         .map(_.map(_._id).toSet)
 
   override def claim(now: Instant, lease: FiniteDuration): F[Option[Job]] =
     Async[F].delay(UUID.randomUUID().toString).flatMap { token =>
-      val ready   = Filter.in("job.state", List(Job.Pending.value, Job.Waiting.value)) && Filter.lte("job.availableAt", now)
-      val expired = Filter.eq("job.state", Job.Running.value) && Filter.lte("job.leaseUntil", now)
+      val ready   = Filter.in(Field.state, List(Job.Pending.value, Job.Waiting.value)) && Filter.lte(Field.availableAt, now)
+      val expired = Filter.eq(Field.state, Job.Running.value) && Filter.lte(Field.leaseUntil, now)
       collection
         .findOneAndUpdate(
           ready || expired,
-          Update.set("job.state", Job.Running.value).set("job.leaseToken", token).set("job.leaseUntil", now.plusMillis(lease.toMillis)),
+          Update.set(Field.state, Job.Running.value).set(Field.leaseToken, token).set(Field.leaseUntil, now.plusMillis(lease.toMillis)),
           FindOneAndUpdateOptions(
             returnDocument = ReturnDocument.AFTER,
-            sort = Some(Sort.asc("priority", "job.availableAt", "job.createdAt", "_id"))
+            sort = Some(Sort.asc(Field.priority, Field.availableAt, Field.createdAt, Field.id))
             // Without this hint Mongo may choose the lease index and sort the entire ready backlog.
             // The ordered index merges the three state scans and stops after the first eligible job.
           ).hint(Indexes.ascending(ClaimIndexFields.asJava))
@@ -108,23 +108,23 @@ final private class LiveJobRepository[F[_]](
     }
 
   override def renew(job: Job, now: Instant, lease: FiniteDuration): F[Boolean] =
-    collection.updateOne(owned(job), Update.set("job.leaseUntil", now.plusMillis(lease.toMillis))).map(_.getMatchedCount == 1)
+    collection.updateOne(owned(job), Update.set(Field.leaseUntil, now.plusMillis(lease.toMillis))).map(_.getMatchedCount == 1)
 
   override def finish(job: Job, state: JobState, error: Option[String]): F[Unit] =
-    collection.updateOne(owned(job), release.set("job.state", state.value).set("job.error", error).currentDate("job.completedAt")).void
+    collection.updateOne(owned(job), release.set(Field.state, state.value).set(Field.error, error).currentDate(Field.completedAt)).void
 
   override def savePlan(job: Job, plan: JobPlan): F[Boolean] =
-    collection.updateOne(owned(job), Update.set("job.plan", plan)).map(_.getMatchedCount == 1)
+    collection.updateOne(owned(job), Update.set(Field.plan, plan)).map(_.getMatchedCount == 1)
 
   override def waitForChildren(job: Job, children: List[JobId], availableAt: Instant): F[Unit] =
     collection
       .updateOne(
         owned(job),
         release
-          .set("job.state", Job.Waiting.value)
-          .set("job.children", children.map(_.value))
-          .set("job.availableAt", availableAt)
-          .set("job.waitCount", job.waitCount.getOrElse(0) + 1)
+          .set(Field.state, Job.Waiting.value)
+          .set(Field.children, children.map(_.value))
+          .set(Field.availableAt, availableAt)
+          .set(Field.waitCount, job.waitCount + 1)
       )
       .void
 
@@ -133,75 +133,51 @@ final private class LiveJobRepository[F[_]](
       .updateOne(
         owned(job),
         release
-          .set("job.state", Job.Pending.value)
-          .set("job.availableAt", until)
-          .set("job.error", error)
-          .set("job.retries", job.retries + (if (countRetry) 1 else 0))
-          .set("job.waitCount", job.waitCount.getOrElse(0) + 1)
+          .set(Field.state, Job.Pending.value)
+          .set(Field.availableAt, until)
+          .set(Field.error, error)
+          .set(Field.retries, job.retries + (if (countRetry) 1 else 0))
+          .set(Field.waitCount, job.waitCount + 1)
       )
       .void
 
-  override def pause(job: Job, provider: String, error: String): F[Unit] =
+  override def pause(job: Job, provider: Provider, error: String): F[Unit] =
     collection
-      .updateOne(owned(job), release.set("job.state", Job.Paused.value).set("job.pausedProvider", provider).set("job.error", error))
+      .updateOne(owned(job), release.set(Field.state, Job.Paused.value).set(Field.pausedProvider, provider.print).set(Field.error, error))
       .void
 
-  override def resumePaused(provider: String, now: Instant): F[Unit] =
+  override def resumePaused(provider: Provider, now: Instant): F[Unit] =
     collection
       .updateMany(
-        Filter.eq("job.state", Job.Paused.value) && Filter.eq("job.pausedProvider", provider),
-        Update.set("job.state", Job.Pending.value).set("job.availableAt", now).set("job.pausedProvider", Option.empty[String])
+        Filter.eq(Field.state, Job.Paused.value) && Filter.eq(Field.pausedProvider, provider.print),
+        Update.set(Field.state, Job.Pending.value).set(Field.availableAt, now).set(Field.pausedProvider, Option.empty[Provider])
       )
       .void
-
-  override def restart(expected: Job, availableAt: Instant): F[Boolean] =
-    if !expected.isTerminal || expected.children.nonEmpty || expected.plan.nonEmpty || expected.id.value.contains("/") then false.pure[F]
-    else
-      val sameRestartCount = expected.restartCount.fold(Filter.isNull("job.restartCount"))(count => Filter.eq("job.restartCount", count))
-      collection
-        .updateOne(
-          Filter.idEq(expected.id.value) && Filter.eq("job.state", expected.state.value) &&
-            Filter.eq("job.completedAt", expected.completedAt) && sameRestartCount,
-          release
-            .set("job.state", Job.Pending.value)
-            .set("job.availableAt", availableAt)
-            .set("job.retries", 0)
-            .set("job.restartCount", expected.restartCount.getOrElse(0) + 1)
-            .set("job.error", Option.empty[String])
-            .set("job.completedAt", Option.empty[Instant])
-        )
-        .map(_.getMatchedCount == 1)
 
   override def cancelObsolete(commandId: CommandId, currentVersion: Long): F[Unit] =
     collection
       .updateMany(
-        Filter.eq("job.command.commandId", commandId.value) && Filter.lt("job.command.version", currentVersion) &&
-          Filter.in("job.state", List(Job.Pending.value, Job.Waiting.value, Job.Paused.value)),
-        release.set("job.state", Job.Cancelled.value).set("job.error", "Command changed or deactivated").currentDate("job.completedAt")
+        Filter.eq(Field.commandId, commandId.value) && Filter.lt(Field.commandVersion, currentVersion) &&
+          Filter.in(Field.state, List(Job.Pending.value, Job.Waiting.value, Job.Paused.value)),
+        release.set(Field.state, Job.Cancelled.value).set(Field.error, "Command changed or deactivated").currentDate(Field.completedAt)
       )
       .void
 
-  override def pruneCompleted(now: Instant): F[Unit] = {
-    val expired = terminal && Filter.lte("job.completedAt", now.minusSeconds(Retention.toSeconds))
+  override def pruneCompleted(now: Instant, protectedIds: Set[JobId]): F[Unit] = {
+    val expired = terminal && Filter.lte(Field.completedAt, now.minusSeconds(Retention.toSeconds))
     // Fan-out IDs are rooted at '<root>/<index>'. Retain every child until its root has finished,
     // even when a provider budget leaves that root waiting for weeks.
     collection
       .aggregate[JobIdEntity](
         Aggregate
-          .matchBy(expired && Filter.regex("_id", "^[^/]+$"))
-          .lookup(CommandRepository.CollectionName, "_id", "activeRunId", "activeCommands")
-          .matchBy(Filter.notExists("activeCommands.0"))
-          // A capture can wait on other tickers for longer than the job retention window.
-          // Keep this cutoff's attempt counters until all capture plans using it are settled.
-          .lookup(EvaluationCapturePlanRepository.CollectionName, "job.action.through", "plan.through", "activeCaptures")
-          .matchBy(Filter.notExists("activeCaptures.0"))
-          .project(Projection.include("_id"))
+          .matchBy(expired && Filter.regex(Field.id, "^[^/]+$"))
+          .matchBy(Filter.nin(Field.id, protectedIds.toList.map(_.value)))
+          .project(Projection.include(Field.id))
       )
       .stream
       .evalMap { root =>
-        // Keep the root as a recovery marker until its descendants have gone. Only standalone
-        // leaf jobs can be retried, so a terminal fan-out cannot be revived during this cleanup.
-        collection.deleteMany(Filter.regex("_id", s"^${Pattern.quote(root._id.value)}/")).void >>
+        // Keep the root as a recovery marker until its descendants have gone.
+        collection.deleteMany(Filter.regex(Field.id, s"^${Pattern.quote(root._id.value)}/")).void >>
           collection.deleteOne(Filter.idEq(root._id.value) && expired).void
       }
       .compile
@@ -210,9 +186,30 @@ final private class LiveJobRepository[F[_]](
 }
 
 object JobRepository extends MongoJsonCodecs {
-  val CollectionName                         = "jobs"
+  val CollectionName = "jobs"
+
+  object Field:
+    val id             = "_id"
+    val job            = "job"
+    val priority       = "priority"
+    val state          = "job.state"
+    val leaseToken     = "job.leaseToken"
+    val leaseUntil     = "job.leaseUntil"
+    val availableAt    = "job.availableAt"
+    val createdAt      = "job.createdAt"
+    val completedAt    = "job.completedAt"
+    val error          = "job.error"
+    val plan           = "job.plan"
+    val children       = "job.children"
+    val waitCount      = "job.waitCount"
+    val retries        = "job.retries"
+    val pausedProvider = "job.pausedProvider"
+    val commandId      = "job.command.commandId"
+    val commandVersion = "job.command.version"
+    val count          = "count"
+
   val Retention                              = 30.days
-  private[repositories] val ClaimIndexFields = List("job.state", "priority", "job.availableAt", "job.createdAt", "_id")
+  private[repositories] val ClaimIndexFields = List(Field.state, Field.priority, Field.availableAt, Field.createdAt, Field.id)
   // The API codec encodes Instants as JSON strings; Mongo claims and updates use BSON dates.
   private given Codec.AsObject[Job] = Codec.AsObject.derived[Job]
 
@@ -220,17 +217,15 @@ object JobRepository extends MongoJsonCodecs {
     for {
       collection <- db.getCollectionWithCodec[JobEntity](CollectionName)
       _          <- collection.createIndex(Index.ascending(ClaimIndexFields))
-      _          <- collection.createIndex(Index.ascending(List("job.state", "job.leaseUntil")))
-      _          <- collection.createIndex(Index.ascending("job.command.commandId"))
-      _          <- collection.createIndex(Index.ascending(List("job.state", "job.completedAt")))
-      _          <- collection.updateMany(Filter.isNull("priority"), Update.set("priority", 0))
-      _          <- collection.updateMany(Filter.eq("job.action.kind", "refresh-evaluation-prices"), Update.set("priority", 1))
-      // Start the retention clock for outcomes written before completion timestamps were introduced.
-      _ <- collection.updateMany(
-        Filter.in("job.state", Job.terminalStates.map(_.value)) && Filter.isNull("job.completedAt"),
-        Update.currentDate("job.completedAt")
-      )
+      _          <- collection.createIndex(Index.ascending(List(Field.state, Field.leaseUntil)))
+      _          <- collection.createIndex(Index.ascending(Field.commandId))
+      _          <- collection.createIndex(Index.ascending(List(Field.state, Field.completedAt)))
     } yield new LiveJobRepository(
-      collection.withAddedCodec[Job].withAddedCodec[JobPlan].withAddedCodec[JobStateCount].withAddedCodec[JobIdEntity]
+      collection
+        .withAddedCodec[Provider]
+        .withAddedCodec[Job]
+        .withAddedCodec[JobPlan]
+        .withAddedCodec[JobStateCount]
+        .withAddedCodec[JobIdEntity]
     )
 }

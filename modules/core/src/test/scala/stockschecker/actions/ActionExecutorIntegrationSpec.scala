@@ -44,7 +44,9 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
   private def makeExecutor(jobs: JobRepository[IO], services: Services[IO], config: ActionExecutorConfig): IO[ActionExecutor[IO]] =
     ActionHandler
       .make(services)
-      .flatMap(handler => ActionExecutor.make(jobs, handler, command => services.command.isCurrent(command), config))
+      .flatMap(handler =>
+        ActionExecutor.make(jobs, handler, command => services.command.isCurrent(command), IO.pure(Set.empty[JobId]), config)
+      )
 
   "An action executor" should {
     "run ready work with sixteen future schedules and no free timer workers" in withEmbeddedMongoDatabase { db =>
@@ -79,18 +81,18 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         _ = when(screens.generateScheduledScreen).thenReturn(runs.update(_ + 1).as(None))
         jobs           <- JobRepository.make[IO](db)
         commands       <- CommandRepository.make[IO](db)
-        dispatcher     <- ActionDispatcher.durable(jobs)
-        commandService <- CommandService.make(commands, dispatcher, jobs)
+        dispatcher     <- ActionDispatcher.make(jobs)
+        commandService <- CommandService.make(commands, dispatcher)
         _ = when(services.command).thenReturn(commandService)
         command <- commandService.create(CreateCommand(Action.RefreshInvestmentResearch, Schedule.Periodic(1.hour), Some(1)))
-        _       <- CommandScheduler.tick(commands, jobs)
+        _       <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
         queued  <- commands.find(command.id)
         runId = queued.activeRunId.get
         executor  <- makeExecutor(jobs, services, ActionExecutorConfig(1))
         _         <- executor.run.take(1).compile.drain.timeout(3.seconds)
         result    <- jobs.find(runId).map(_.get)
         count     <- runs.get
-        _         <- CommandScheduler.tick(commands, jobs)
+        _         <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
         completed <- commands.find(command.id)
       } yield {
         count mustBe 1
@@ -99,7 +101,6 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         result.command.map(_.commandId) mustBe Some(command.id)
         completed.executionCount mustBe 1
         completed.activeRunId mustBe None
-        completed.outbox mustBe None
         completed.canBeExecuted mustBe false
       }
     }
@@ -187,8 +188,9 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       val profiles = mock(classOf[CompanyProfileService[IO]])
       val now      = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       when(services.companyProfile).thenReturn(profiles)
-      when(profiles.get(AAPL, true)).thenReturn(IO.raiseError(AppError.ProviderDeferred("Finnhub", now.plusSeconds(300), "cooldown")))
-      when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.HttpClient("Finnhub", 503, "unavailable")))
+      when(profiles.get(AAPL, true))
+        .thenReturn(IO.raiseError(AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(300), "cooldown")))
+      when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.HttpClient(Provider.Finnhub.print, 503, "unavailable")))
       for {
         jobs      <- JobRepository.make[IO](db)
         _         <- enqueue(jobs)(Job(JobId("cooldown"), Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), now, now, retries = 2))
@@ -215,12 +217,12 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       val services = mock(classOf[Services[IO]])
       val profiles = mock(classOf[CompanyProfileService[IO]])
       when(services.companyProfile).thenReturn(profiles)
-      when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.DataUnavailable("Finnhub", MSFT, "missing session")))
+      when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.DataUnavailable(Provider.Finnhub, MSFT, "missing session")))
       for {
         jobs           <- JobRepository.make[IO](db)
         commands       <- CommandRepository.make[IO](db)
-        dispatcher     <- ActionDispatcher.durable(jobs)
-        commandService <- CommandService.make(commands, dispatcher, jobs)
+        dispatcher     <- ActionDispatcher.make(jobs)
+        commandService <- CommandService.make(commands, dispatcher)
         _ = when(services.command).thenReturn(commandService)
         now     <- IO.realTimeInstant
         command <- commands.create(
@@ -228,7 +230,13 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         )
         ready      <- commands.initializeNextRun(command, now).map(_.get)
         occurrence <- commands.reserve(ready, now).map(_.get)
-        parent   = occurrence.job
+        parent = Job(
+          occurrence.activeRunId.get,
+          occurrence.action,
+          now,
+          now,
+          Some(JobCommand(occurrence.id, occurrence.version, occurrence.activeRunId.get))
+        )
         childIds = List(JobId(s"${parent.id.value}/0"), JobId(s"${parent.id.value}/1"))
         _ <- enqueue(jobs)(parent.copy(children = childIds, state = Job.Waiting, availableAt = now.plusSeconds(1)))
         _ <- enqueue(jobs)(
@@ -247,14 +255,13 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         executor  <- makeExecutor(jobs, services, ActionExecutorConfig(1))
         result    <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, parent.id))
         failed    <- jobs.find(childIds.last).map(_.get)
-        _         <- CommandScheduler.tick(commands, jobs)
+        _         <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
         completed <- commands.find(command.id)
       } yield {
         failed.state mustBe Job.Failed
         failed.retries mustBe 3
         result.state mustBe Job.Partial
         completed.activeRunId mustBe None
-        completed.outbox mustBe None
         completed.executionCount mustBe 1
       }
     }
@@ -314,7 +321,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
               .raiseUnless(action == second)(new IllegalStateException("Frozen work was recomputed"))
               .as(ActionResult.Completed)
         }
-        executor   <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), ActionExecutorConfig(1))
+        executor   <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), IO.pure(Set.empty[JobId]), ActionExecutorConfig(1))
         result     <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, parent.id))
         executed   <- calls.get
         firstChild <- jobs.find(JobId("interrupted/0")).map(_.get)

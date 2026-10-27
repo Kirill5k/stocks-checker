@@ -1,5 +1,6 @@
 package stockschecker.services
 
+import stockschecker.domain.Provider
 import cats.effect.IO
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.MarketDataClient
@@ -10,7 +11,19 @@ import stockschecker.fixtures.*
 
 class FinancialMetricsServiceSpec extends IOWordSpec {
   private val snapshot =
-    FinancialSnapshot("vintage", AAPL, "Finnhub", ts, Map.empty, Nil, Nil, "{}", "hash", FinancialSnapshot.FinnhubMappingVersion, Nil)
+    FinancialSnapshot(
+      "vintage",
+      AAPL,
+      Provider.Finnhub,
+      ts,
+      Map.empty,
+      Nil,
+      Nil,
+      "{}",
+      "hash",
+      FinancialSnapshot.FinnhubMappingVersion,
+      Nil
+    )
 
   "FinancialMetricsService" should {
     "persist financial evidence before publishing metrics and record the update directly" in {
@@ -20,7 +33,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
       when(repo.save(anyList[FinancialMetrics])).thenReturnUnit
       when(profiles.updateFinancialMetricsLastUpdated(anyList[Ticker])).thenReturnUnit
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history)
+        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
         result  <- service.find(AAPL, true)
       yield result).asserting { result =>
         result mustBe AAPLFinancialMetrics
@@ -37,7 +50,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
       when(client.getFinancialData(AAPL)).thenReturnSome(FinancialData(AAPLFinancialMetrics, snapshot))
       when(history.save(snapshot)).thenRaiseError(error)
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history)
+        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
         result  <- service.find(AAPL, true)
       yield result).attempt.asserting { result =>
         result mustBe Left(error)
@@ -48,10 +61,10 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
 
     "propagate provider deferrals without recording an update" in {
       val (repo, client, profiles, history) = mocks
-      val deferred                          = AppError.ProviderDeferred("Finnhub", ts.plusSeconds(60), "rate-limited")
+      val deferred                          = AppError.ProviderDeferred(Provider.Finnhub, ts.plusSeconds(60), "rate-limited")
       when(client.getFinancialData(AAPL)).thenRaiseError(deferred)
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history)
+        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
         result  <- service.find(AAPL, true)
       yield result).attempt.asserting { result =>
         result mustBe Left(deferred)
@@ -64,7 +77,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
       val (repo, client, profiles, history) = mocks
       when(repo.find(AAPL)).thenReturnSome(AAPLFinancialMetrics)
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history)
+        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
         result  <- service.find(AAPL, false)
       yield result).asserting { result =>
         result mustBe AAPLFinancialMetrics
@@ -77,7 +90,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
       val (repo, client, profiles, history) = mocks
       when(client.getFinancialData(AAPL)).thenReturnNone
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history)
+        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
         result  <- service.find(AAPL, true)
       yield result).attempt.asserting { result =>
         result mustBe Left(AppError.FinancialMetricsNotFound(AAPL))

@@ -1,5 +1,6 @@
 package stockschecker.controllers
 
+import stockschecker.domain.ListingStatus
 import cats.effect.kernel.Async
 import io.circe.Codec as CirceCodec
 import org.http4s.HttpRoutes
@@ -226,7 +227,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       exchange: Exchange,
       kind: SecurityKind,
       isActive: Boolean,
-      listingStatus: String,
+      listingStatus: ListingStatus,
       exclusionReason: Option[String]
   ) derives CirceCodec.AsObject
 
@@ -258,7 +259,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       performanceSummary: StockPricePerformanceSummaryView,
       metrics: StockAnalysisMetrics,
       scores: StockAnalysisScores,
-      basis: Option[PriceAnalyticsBasis],
+      basis: PriceAnalyticsBasis,
       lastUpdatedAt: Option[Instant]
   ) derives CirceCodec.AsObject
 
@@ -326,7 +327,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
   private val activateStockEndpoint = Controller.secureEndpoint.put
     .in(stockByTickerPath / "activate")
     .out(statusCode(StatusCode.NoContent))
-    .description("Clear user or legacy exclusion; listing and provider availability remain independent")
+    .description("Clear user exclusion; listing and provider availability remain independent")
 
   def make[F[_]: Async](stockService: StockService[F], config: ApiConfig): F[Controller[F]] =
     Async[F].pure(StockController[F](stockService, ApiKeyRequirement.Required(config.key)))

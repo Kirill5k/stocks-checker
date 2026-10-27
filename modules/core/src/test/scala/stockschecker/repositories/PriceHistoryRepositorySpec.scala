@@ -19,7 +19,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
     "price-vintage-1",
     ticker,
     List(bar),
-    "TwelveData",
+    Provider.TwelveData,
     "USD",
     PriceAdjustment.SplitsAndDividends,
     Instant.parse("2025-02-02T12:00:00Z"),

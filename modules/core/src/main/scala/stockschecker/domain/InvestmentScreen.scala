@@ -33,7 +33,13 @@ final case class InvestmentScreenRequest(
     minGrowth: Option[BigDecimal] = None,
     minResilience: Option[BigDecimal] = None,
     recipeVersion: Option[String] = None
-) derives Codec.AsObject
+) derives Codec.AsObject:
+  def validate(recipe: InvestmentRecipe): Either[String, Unit] =
+    val thresholds = List(minScore, minQuality, minValue, minGrowth, minResilience).flatten
+    if limit.exists(n => n < InvestmentRecipe.MinimumLimit || n > InvestmentRecipe.MaximumLimit) || thresholds.exists(n => n < 0 || n > 100)
+    then Left("limit must be between 1 and 100; score thresholds must be between 0 and 100")
+    else if recipeVersion.exists(_ != recipe.version) then Left(s"Unknown recipeVersion; supported version: ${recipe.version}")
+    else Right(())
 
 final case class InvestmentRankingSummary(
     universeCount: Int,
@@ -42,56 +48,22 @@ final case class InvestmentRankingSummary(
 ) derives Codec.AsObject
 
 object InvestmentRankingSummary:
-  def from(run: InvestmentRankingRun): InvestmentRankingSummary =
+  def from(entries: List[InvestmentRankingEntry]): InvestmentRankingSummary =
     InvestmentRankingSummary(
-      run.inputs.size,
-      run.scorecards.count(_.eligible),
-      run.scorecards.flatMap(_.exclusions).groupMapReduce(identity)(_ => 1)(_ + _)
+      entries.size,
+      entries.count(_.scorecard.eligible),
+      entries.flatMap(_.scorecard.exclusions).groupMapReduce(identity)(_ => 1)(_ + _)
     )
 
-final case class InvestmentRankingHeader(
+final case class InvestmentRanking(
     id: InvestmentRankingId,
     createdAt: Instant,
     recipe: InvestmentRecipe,
     summary: InvestmentRankingSummary
 )
 
-object InvestmentRankingHeader:
-  def from(run: InvestmentRankingRun): InvestmentRankingHeader =
-    InvestmentRankingHeader(run.id, run.createdAt, run.recipe, InvestmentRankingSummary.from(run))
-
-final case class InvestmentRankingMetadata(
-    id: InvestmentRankingId,
-    createdAt: Instant,
-    recipe: InvestmentRecipe,
-    summary: Option[InvestmentRankingSummary]
-):
-  def resolved(summary: InvestmentRankingSummary): InvestmentRankingHeader =
-    InvestmentRankingHeader(id, createdAt, recipe, summary)
-
-final case class InvestmentRankingInputs(inputs: List[InvestmentCandidate], scorecards: List[InvestmentScorecard])
-
-final case class InvestmentRankingRun(
-    id: InvestmentRankingId,
-    createdAt: Instant,
-    recipe: InvestmentRecipe,
-    inputs: List[InvestmentCandidate],
-    scorecards: List[InvestmentScorecard]
-) derives Codec.AsObject
-
-/** The entire scoring universe is retained before display filters or limits. Persisted inputs contain stock metadata and compact financial
-  * diagnostics; scorecards preserve the observations actually used by the recipe.
-  */
-final case class InvestmentScreenRun(
-    id: InvestmentScreenId,
-    createdAt: Instant,
-    recipe: InvestmentRecipe,
-    request: InvestmentScreenRequest,
-    inputs: List[InvestmentCandidate],
-    scorecards: List[InvestmentScorecard],
-    cohorts: List[InvestmentCohort],
-    rankingId: InvestmentRankingId = InvestmentRankingId("")
-) derives Codec.AsObject
+/** Persisted candidates retain compact diagnostics; scorecards preserve the observations used by the recipe. */
+final case class InvestmentRankingEntry(candidate: InvestmentCandidate, scorecard: InvestmentScorecard)
 
 final case class InvestmentScreenSummary(
     id: InvestmentScreenId,
@@ -103,19 +75,7 @@ final case class InvestmentScreenSummary(
     excludedByReason: Map[String, Int]
 ) derives Codec.AsObject
 
-object InvestmentScreenSummary:
-  def from(run: InvestmentScreenRun): InvestmentScreenSummary =
-    InvestmentScreenSummary(
-      run.id,
-      run.createdAt,
-      run.recipe.version,
-      run.inputs.size,
-      run.scorecards.count(_.eligible),
-      run.cohorts.find(_.name == "investment").fold(0)(_.tickers.size),
-      run.scorecards.flatMap(_.exclusions).groupMapReduce(identity)(_ => 1)(_ + _)
-    )
-
-final case class InvestmentScreenHeader(
+final case class InvestmentScreen(
     id: InvestmentScreenId,
     createdAt: Instant,
     rankingId: InvestmentRankingId,
@@ -124,9 +84,30 @@ final case class InvestmentScreenHeader(
     summary: InvestmentScreenSummary
 )
 
-object InvestmentScreenHeader:
-  def from(run: InvestmentScreenRun): InvestmentScreenHeader =
-    InvestmentScreenHeader(run.id, run.createdAt, run.rankingId, run.request, run.cohorts, InvestmentScreenSummary.from(run))
+object InvestmentScreen:
+  def create(
+      id: InvestmentScreenId,
+      createdAt: Instant,
+      ranking: InvestmentRanking,
+      request: InvestmentScreenRequest,
+      cohorts: List[InvestmentCohort]
+  ): InvestmentScreen =
+    InvestmentScreen(
+      id,
+      createdAt,
+      ranking.id,
+      request,
+      cohorts,
+      InvestmentScreenSummary(
+        id,
+        createdAt,
+        ranking.recipe.version,
+        ranking.summary.universeCount,
+        ranking.summary.eligibleCount,
+        cohorts.find(_.name == CohortName.Investment).fold(0)(_.tickers.size),
+        ranking.summary.excludedByReason
+      )
+    )
 
 final case class InvestmentNearMiss(scorecard: InvestmentScorecard, failedRule: String) derives Codec.AsObject
 final case class InvestmentScreenResult(

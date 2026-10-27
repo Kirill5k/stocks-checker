@@ -3,7 +3,7 @@ package stockschecker.common
 import io.circe.{Decoder, Encoder, KeyDecoder, KeyEncoder}
 import mongo4cats.bson.ObjectId
 import stockschecker.domain.errors.AppError
-import sttp.tapir.{Codec, DecodeResult}
+import sttp.tapir.{Codec, DecodeResult, Schema, Validator}
 
 import scala.reflect.ClassTag
 
@@ -14,6 +14,9 @@ object types {
     def printUpperCase[E](e: E): String = e.toString.toUpperCase
 
   transparent trait EnumType[E: ClassTag](private val enums: () => Array[E], private val unwrap: E => String = EnumType.printKebabCase(_)):
+    given Schema[E]                             = Schema.string[E].validate(Validator.enumeration(enums().toList, e => Some(unwrap(e))))
+    inline given [V: Schema]: Schema[Map[E, V]] = Schema.schemaForMap[E, V](unwrap)
+
     given Encoder[E]    = Encoder[String].contramap(unwrap(_))
     given Decoder[E]    = Decoder[String].emap(from)
     given KeyEncoder[E] = (e: E) => unwrap(e)

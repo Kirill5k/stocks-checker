@@ -2,11 +2,23 @@ package stockschecker.domain
 
 import io.circe.Codec
 import java.time.{Instant, LocalDate}
+import scala.concurrent.duration.*
 
-final case class InvestmentCandidate(stock: Stock, financialSnapshot: Option[FinancialSnapshot]) derives Codec.AsObject
+final case class InvestmentCandidate(stock: Stock, financialSnapshot: Option[FinancialSnapshot]) derives Codec.AsObject:
+  def compact: InvestmentCandidate =
+    copy(financialSnapshot =
+      financialSnapshot.map(snapshot =>
+        snapshot.copy(
+          metrics = snapshot.metrics.filter { case (metric, _) => Set("peTTM", "pfcfShareTTM", "epsTTM")(metric) },
+          annual = Nil,
+          quarterly = Nil,
+          rawPayload = ""
+        )
+      )
+    )
 
 final case class InvestmentEvidence(
-    provider: String,
+    provider: Provider,
     observedAt: Instant,
     mappingVersion: String,
     payloadHash: String,
@@ -30,13 +42,35 @@ final case class InvestmentRecipe(
     maxAnnualAgeDays: Int = 550,
     maxPriceAgeDays: Int = 7,
     maxQuarterlyAgeDays: Int = 180
-) derives Codec.AsObject
+) derives Codec.AsObject:
+  def weights: Map[Pillar, BigDecimal] = Map(
+    Pillar.Quality    -> qualityWeight,
+    Pillar.Value      -> valueWeight,
+    Pillar.Growth     -> growthWeight,
+    Pillar.Resilience -> resilienceWeight
+  )
+
+  def validate: Either[String, Unit] =
+    if !weights.values.forall(_ >= 0) || weights.values.sum != 1 then Left("Investment weights must be nonnegative and sum to one")
+    else if minIndustryPeers < 2 || minSectorPeers < 2 then Left("Peer cohorts require at least two companies")
+    else if List(maxSnapshotAgeDays, maxAnnualAgeDays, maxPriceAgeDays, maxQuarterlyAgeDays).exists(_ <= 0) then
+      Left("Freshness limits must be positive")
+    else Right(())
+
+object InvestmentRecipe:
+  val RankingMaxAge         = 2.days
+  val RankingRetention      = 30.days
+  val MinimumEligibleStocks = 20
+  val CohortSize            = 20
+  val NearMissLimit         = 10
+  val MinimumLimit          = 1
+  val MaximumLimit          = 100
 
 final case class InvestmentScorecard(
     ticker: Ticker,
     eligible: Boolean,
     score: Option[BigDecimal],
-    pillars: Map[String, BigDecimal],
+    pillars: Map[Pillar, BigDecimal],
     features: Map[String, BigDecimal],
     exclusions: List[String],
     warnings: List[String],
@@ -48,5 +82,5 @@ final case class InvestmentScorecard(
     evidence: Option[InvestmentEvidence] = None,
     strengths: List[String] = Nil,
     weaknesses: List[String] = Nil,
-    contributions: Map[String, BigDecimal] = Map.empty
+    contributions: Map[Pillar, BigDecimal] = Map.empty
 ) derives Codec.AsObject

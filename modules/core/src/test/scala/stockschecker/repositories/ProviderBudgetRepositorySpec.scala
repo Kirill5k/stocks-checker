@@ -1,5 +1,6 @@
 package stockschecker.repositories
 
+import stockschecker.domain.Provider
 import kirill5k.common.cats.Clock
 import cats.effect.{IO, Ref}
 import cats.syntax.parallel.*
@@ -24,15 +25,15 @@ class ProviderBudgetRepositorySpec extends RepositorySpec {
         calls      <- Ref.of[IO, Int](0)
         now        <- IO.realTimeInstant
         until   = now.plusSeconds(600).truncatedTo(ChronoUnit.MILLIS)
-        request = calls.update(_ + 1) >> IO.raiseError[Unit](AppError.ProviderDeferred("shared", until, "Retry-After"))
+        request = calls.update(_ + 1) >> IO.raiseError[Unit](AppError.ProviderDeferred(Provider.Finnhub, until, "Retry-After"))
         attempts <- (
-          first.run("shared", ProviderLimits(1, 0, 2))(request).attempt,
-          second.run("shared", ProviderLimits(1, 0, 2))(request).attempt
+          first.run(Provider.Finnhub, ProviderLimits(1, 0, 2))(request).attempt,
+          second.run(Provider.Finnhub, ProviderLimits(1, 0, 2))(request).attempt
         ).parTupled
         issued        <- calls.get
         restartedRepo <- ProviderBudgetRepository.make[IO](db)
         restarted     <- ProviderAccess.make[IO](restartedRepo)
-        refused       <- restarted.run("shared", ProviderLimits(1, 0, 2))(calls.update(_ + 1)).attempt
+        refused       <- restarted.run(Provider.Finnhub, ProviderLimits(1, 0, 2))(calls.update(_ + 1)).attempt
         after         <- calls.get
       } yield {
         attempts._1.isLeft mustBe true
@@ -47,15 +48,15 @@ class ProviderBudgetRepositorySpec extends RepositorySpec {
       for {
         original      <- ProviderBudgetRepository.make[IO](db)
         first         <- ProviderAccess.make[IO](original)
-        _             <- first.run("daily", ProviderLimits(60000, 1, 1))(IO.unit)
+        _             <- first.run(Provider.Finnhub, ProviderLimits(60000, 1, 1))(IO.unit)
         _             <- IO.sleep(5.millis)
         restartedRepo <- ProviderBudgetRepository.make[IO](db)
         restarted     <- ProviderAccess.make[IO](restartedRepo)
         now           <- IO.realTimeInstant
-        second        <- restarted.run("daily", ProviderLimits(60000, 1, 1))(IO.unit).attempt
+        second        <- restarted.run(Provider.Finnhub, ProviderLimits(60000, 1, 1))(IO.unit).attempt
         reset = now.atZone(ZoneOffset.UTC).toLocalDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant
-        tomorrow  <- restartedRepo.reserve("daily", reset, 1L, 1)
-        exhausted <- restartedRepo.reserve("daily", reset.plusSeconds(1), 1L, 1)
+        tomorrow  <- restartedRepo.reserve(Provider.Finnhub, reset, 1L, 1)
+        exhausted <- restartedRepo.reserve(Provider.Finnhub, reset.plusSeconds(1), 1L, 1)
       } yield {
         second.left.toOption.collect { case e: AppError.ProviderDeferred => e.retryAt } mustBe Some(reset)
         tomorrow mustBe None
@@ -68,9 +69,9 @@ class ProviderBudgetRepositorySpec extends RepositorySpec {
       for {
         one     <- ProviderBudgetRepository.make[IO](db)
         two     <- ProviderBudgetRepository.make[IO](db)
-        _       <- (one.cooldown("Finnhub", now.plusSeconds(600)), two.cooldown("Finnhub", now.plusSeconds(60))).parTupled
-        refused <- one.reserve("Finnhub", now, 1L, 100)
-        other   <- two.reserve("TwelveData", now, 1L, 100)
+        _       <- (one.cooldown(Provider.Finnhub, now.plusSeconds(600)), two.cooldown(Provider.Finnhub, now.plusSeconds(60))).parTupled
+        refused <- one.reserve(Provider.Finnhub, now, 1L, 100)
+        other   <- two.reserve(Provider.TwelveData, now, 1L, 100)
       } yield {
         refused mustBe Some(now.plusSeconds(600))
         other mustBe None
@@ -82,12 +83,12 @@ class ProviderBudgetRepositorySpec extends RepositorySpec {
       for {
         repository          <- ProviderBudgetRepository.make[IO](db)
         first               <- ProviderAccess.make[IO](repository)
-        _                   <- first.run("TwelveData", limits, Some("credential-one"))(IO.unit)
+        _                   <- first.run(Provider.TwelveData, limits, Some("credential-one"))(IO.unit)
         restartedRepository <- ProviderBudgetRepository.make[IO](db)
         restarted           <- ProviderAccess.make[IO](restartedRepository)
-        firstKey            <- restarted.run("TwelveData", limits, Some("credential-one"))(IO.unit).attempt
-        secondKey           <- restarted.run("TwelveData", limits, Some("credential-two"))(IO.pure(2))
-        otherProvider       <- restarted.run("Finnhub", limits, Some("credential-one"))(IO.pure(3))
+        firstKey            <- restarted.run(Provider.TwelveData, limits, Some("credential-one"))(IO.unit).attempt
+        secondKey           <- restarted.run(Provider.TwelveData, limits, Some("credential-two"))(IO.pure(2))
+        otherProvider       <- restarted.run(Provider.Finnhub, limits, Some("credential-one"))(IO.pure(3))
       } yield {
         firstKey.left.toOption.get mustBe a[AppError.ProviderDeferred]
         secondKey mustBe 2
@@ -95,51 +96,5 @@ class ProviderBudgetRepositorySpec extends RepositorySpec {
       }
     }
 
-    "inherit legacy daily usage only when creating an account budget" in withEmbeddedMongoDatabase { db =>
-      val now   = Instant.parse("2026-01-01T10:00:00Z")
-      val reset = Instant.parse("2026-01-02T00:00:00Z")
-      for {
-        repository  <- ProviderBudgetRepository.make[IO](db)
-        legacyFirst <- repository.reserve("TwelveData", now, 1L, 3)
-        firstKey    <- repository.reserve("TwelveData", now.plusSeconds(1), 1L, 3, Some("first"))
-        _           <- repository.reserve("TwelveData", now.plusSeconds(2), 1L, 3)
-        _           <- repository.reserve("TwelveData", now.plusSeconds(3), 1L, 3)
-        restarted   <- ProviderBudgetRepository.make[IO](db)
-        existingKey <- restarted.reserve("TwelveData", now.plusSeconds(4), 1L, 3, Some("first"))
-        exhausted   <- restarted.reserve("TwelveData", now.plusSeconds(5), 1L, 3, Some("first"))
-        newKey      <- restarted.reserve("TwelveData", now.plusSeconds(5), 1L, 3, Some("second"))
-        nextDay     <- restarted.reserve("TwelveData", reset, 1L, 3, Some("first"))
-      } yield {
-        legacyFirst mustBe None
-        firstKey mustBe None
-        existingKey mustBe None
-        exhausted mustBe Some(reset)
-        newKey mustBe Some(reset)
-        nextDay mustBe None
-      }
-    }
-
-    "inherit legacy cooldowns without overwriting an existing account's cooldown" in withEmbeddedMongoDatabase { db =>
-      val now = Instant.parse("2026-01-01T10:00:00Z")
-      for {
-        repository    <- ProviderBudgetRepository.make[IO](db)
-        _             <- repository.cooldown("TwelveData", now.plusSeconds(600))
-        inherited     <- repository.reserve("TwelveData", now, 1L, 0, Some("first"))
-        _             <- repository.cooldown("TwelveData", now.plusSeconds(1800))
-        restarted     <- ProviderBudgetRepository.make[IO](db)
-        unchanged     <- restarted.reserve("TwelveData", now, 1L, 0, Some("first"))
-        _             <- restarted.cooldown("TwelveData", now.plusSeconds(1200), Some("first"))
-        extended      <- restarted.reserve("TwelveData", now, 1L, 0, Some("first"))
-        _             <- restarted.cooldown("TwelveData", now.plusSeconds(1200), Some("second"))
-        newKey        <- restarted.reserve("TwelveData", now, 1L, 0, Some("second"))
-        otherProvider <- restarted.reserve("Finnhub", now, 1L, 0, Some("first"))
-      } yield {
-        inherited mustBe Some(now.plusSeconds(600))
-        unchanged mustBe inherited
-        extended mustBe Some(now.plusSeconds(1200))
-        newKey mustBe Some(now.plusSeconds(1800))
-        otherProvider mustBe None
-      }
-    }
   }
 }

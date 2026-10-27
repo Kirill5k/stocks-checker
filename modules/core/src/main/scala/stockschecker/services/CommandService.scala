@@ -3,13 +3,12 @@ package stockschecker.services
 import cats.effect.kernel.Temporal
 import cats.syntax.either.*
 import cats.syntax.flatMap.*
-import cats.syntax.foldable.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
-import stockschecker.actions.{Action, ActionDispatcher}
+import stockschecker.actions.ActionDispatcher
 import stockschecker.domain.{Command, CommandId, CreateCommand, JobCommand, Schedule, UpdateCommand}
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{CommandRepository, JobRepository}
+import stockschecker.repositories.CommandRepository
 
 import scala.util.Try
 
@@ -23,17 +22,11 @@ trait CommandService[F[_]]:
 
 final private class LiveCommandService[F[_]](
     private val actionDispatcher: ActionDispatcher[F],
-    private val repo: CommandRepository[F],
-    private val jobs: JobRepository[F]
+    private val repo: CommandRepository[F]
 )(using
     F: Temporal[F],
     C: Clock[F]
 ) extends CommandService[F] {
-
-  private def validateAction(action: Action): F[Unit] = action match
-    case Action.LegacyRetired     => F.raiseError(AppError.FailedValidation("This scheduling or audit action has been retired"))
-    case Action.Sequence(actions) => actions.traverse_(validateAction)
-    case _                        => F.unit
 
   private def validate(schedule: Schedule, maxExecutions: Option[Int]): F[Unit] =
     F.raiseWhen(maxExecutions.exists(_ <= 0) || (schedule match {
@@ -48,31 +41,31 @@ final private class LiveCommandService[F[_]](
 
   override def create(cc: CreateCommand): F[Command] =
     for
-      _           <- validateAction(cc.action) >> validate(cc.schedule, cc.maxExecutions)
+      _           <- validate(cc.schedule, cc.maxExecutions)
       now         <- C.now
       cmd         <- repo.create(cc)
       initialized <- repo.initializeNextRun(cmd, now)
     yield initialized.getOrElse(cmd)
 
   override def executeManually(cid: CommandId): F[Unit] =
-    repo.find(cid).flatMap(cmd => validateAction(cmd.action) >> actionDispatcher.dispatch(cmd.action))
+    repo.find(cid).flatMap(cmd => actionDispatcher.dispatch(cmd.action))
 
   override def getAll: F[List[Command]] = repo.all
 
   private def refresh(command: Command): F[Unit] =
-    jobs.cancelObsolete(command.id, command.revision) >>
+    actionDispatcher.cancelObsolete(command.id, command.version) >>
       C.now.flatMap(repo.initializeNextRun(command, _)).void
 
   override def activate(cid: CommandId, isActive: Boolean): F[Unit] =
     repo.setActive(cid, isActive).flatMap(refresh)
 
   override def update(uc: UpdateCommand): F[Command] =
-    validateAction(uc.action) >> validate(uc.schedule, uc.maxExecutions) >> repo.update(uc).flatTap(refresh)
+    validate(uc.schedule, uc.maxExecutions) >> repo.update(uc).flatTap(refresh)
 
   override def isCurrent(command: JobCommand): F[Boolean] =
-    repo.find(command.commandId).map(c => c.isActive && c.revision == command.version)
+    repo.find(command.commandId).map(c => c.isActive && c.version == command.version)
 }
 
 object CommandService:
-  def make[F[_]: {Temporal, Clock}](repo: CommandRepository[F], ad: ActionDispatcher[F], jobs: JobRepository[F]): F[CommandService[F]] =
-    Temporal[F].pure(LiveCommandService[F](ad, repo, jobs))
+  def make[F[_]: {Temporal, Clock}](repo: CommandRepository[F], ad: ActionDispatcher[F]): F[CommandService[F]] =
+    Temporal[F].pure(LiveCommandService[F](ad, repo))

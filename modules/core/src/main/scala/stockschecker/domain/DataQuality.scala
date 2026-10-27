@@ -5,9 +5,9 @@ import java.time.Instant
 
 final case class DatasetAvailability(
     ticker: Ticker,
-    provider: String,
+    provider: Provider,
     dataset: String,
-    status: String,
+    status: DatasetStatus,
     lastAttemptAt: Instant,
     lastSuccessAt: Option[Instant],
     failure: Option[String]
@@ -16,14 +16,14 @@ final case class DatasetAvailability(
 final case class ExcludedSecurity(
     ticker: Ticker,
     reason: String,
-    listingStatus: String
+    listingStatus: ListingStatus
 ) derives Codec.AsObject
 
 final case class DataQualityReport(
     generatedAt: Instant,
     datasets: List[DatasetAvailability],
     exclusions: List[ExcludedSecurity],
-    countsByStatus: Map[String, Int],
+    countsByStatus: Map[DatasetStatus, Int],
     rankingCoverage: Map[String, Int],
     rankingAsOf: Option[Instant] = None
 ) derives Codec.AsObject

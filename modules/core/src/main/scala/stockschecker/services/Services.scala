@@ -5,7 +5,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
-import stockschecker.actions.{ActionDispatcher, EvaluationPriceJobs}
+import stockschecker.actions.ActionDispatcher
 import stockschecker.clients.Clients
 import stockschecker.repositories.Repositories
 import stockschecker.common.config.InvestmentConfig
@@ -29,43 +29,40 @@ object Services:
       ad: ActionDispatcher[F],
       investmentConfig: InvestmentConfig
   ): F[Services[F]] =
+    val recipe = InvestmentRecipe(
+      maxSnapshotAgeDays = investmentConfig.snapshotFreshnessDays,
+      maxAnnualAgeDays = investmentConfig.annualFreshnessDays,
+      maxPriceAgeDays = investmentConfig.priceFreshnessDays,
+      maxQuarterlyAgeDays = investmentConfig.quarterlyFreshnessDays
+    )
     for
-      s       <- SecurityService.make(repos.security, clients.marketData)
-      cp      <- CompanyProfileService.make(repos.companyProfile, clients.marketData, repos.security)
-      history <- PriceHistoryService.make(clients.marketData, repos.priceHistory)
-      p       <- PriceService.make(repos.priceAnalytics, repos.latestPrice, repos.companyProfile, history)
-      c       <- CommandService.make(repos.command, ad, repos.jobs)
-      st      <- StockService.make(repos.stock, ad, repos.security, repos.companyProfile)
-      fm      <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, repos.companyProfile, repos.financialHistory)
-      recipe = InvestmentRecipe(
-        maxSnapshotAgeDays = investmentConfig.snapshotFreshnessDays,
-        maxAnnualAgeDays = investmentConfig.annualFreshnessDays,
-        maxPriceAgeDays = investmentConfig.priceFreshnessDays,
-        maxQuarterlyAgeDays = investmentConfig.quarterlyFreshnessDays
-      )
+      _        <- Async[F].fromEither(recipe.validate.left.map(stockschecker.domain.errors.AppError.FailedValidation(_)))
       rankings <- InvestmentRankingService.make(
         repos.stock,
         repos.financialHistory,
         repos.investmentRankings,
-        repos.investmentRankingInputs,
         repos.investmentScreens,
         recipe
       )
-      evaluationPrices <- EvaluationPriceHistory.make(history)
-      evaluationJobs   <- EvaluationPriceJobs.make(repos.jobs)
-      evaluations      <- InvestmentEvaluationService.make(
+      quality <- DataQualityService.make(repos.dataQuality, repos.security, rankings)
+      s       <- SecurityService.make(repos.security, clients.marketData)
+      cp      <- CompanyProfileService.make(repos.companyProfile, clients.marketData, repos.security, quality)
+      history <- PriceHistoryService.make(clients.marketData, repos.priceHistory, quality)
+      p       <- PriceService.make(repos.priceAnalytics, repos.latestPrice, repos.companyProfile, history)
+      c       <- CommandService.make(repos.command, ad)
+      st      <- StockService.make(repos.stock, repos.security, repos.companyProfile)
+      fm <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, repos.companyProfile, repos.financialHistory, quality)
+      evaluations <- InvestmentEvaluationService.make(
         repos.investmentScreens,
         repos.investmentEvaluations,
-        repos.evaluationCapturePlans,
-        evaluationPrices,
-        evaluationJobs
+        history,
+        ad
       )
       investment <- InvestmentScreenService.make(
         repos.investmentScreens,
         rankings,
         recipe
       )
-      quality <- DataQualityService.make(repos.dataQuality, repos.security, rankings)
     yield new Services[F]:
       override def security: SecurityService[F]                          = s
       override def companyProfile: CompanyProfileService[F]              = cp

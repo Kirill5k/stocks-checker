@@ -16,29 +16,29 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
   "An InvestmentScreenRepository" should {
     "round trip screen metadata and reject overwriting a published screen" in
       withEmbeddedMongoDatabase { db =>
-        val expected = InvestmentScreenHeader.from(screenRun)
+        val expected = screen
         for
           repo      <- InvestmentScreenRepository.make[IO](db)
           _         <- repo.save(expected)
           overwrite <- repo.save(expected.copy(cohorts = Nil)).attempt
-          saved     <- repo.find(screenRun.id)
-          header    <- repo.header(screenRun.id)
+          saved     <- repo.find(screen.id)
+          header    <- repo.get(screen.id)
           listed    <- repo.list(20)
           rankings  <- repo.rankingIds
           raw       <- db.getCollection(InvestmentScreenRepository.CollectionName)
           stored    <- raw
             .find(
-              Filter.idEq(screenRun.id.value) && Filter.eq("summary.id", screenRun.id.value) && Filter
-                .eq("rankingId", screenRun.rankingId.value)
+              Filter.idEq(screen.id.value) && Filter.eq("summary.id", screen.id.value) && Filter
+                .eq("rankingId", screen.rankingId.value)
             )
             .first
         yield
           overwrite.isLeft mustBe true
           saved mustBe expected
-          header.map(_.id) mustBe Some(screenRun.id)
-          header.map(_.rankingId) mustBe Some(screenRun.rankingId)
-          listed.map(_.id) mustBe List(screenRun.id)
-          rankings mustBe Set(screenRun.rankingId)
+          header.map(_.id) mustBe Some(screen.id)
+          header.map(_.rankingId) mustBe Some(screen.rankingId)
+          listed.map(_.id) mustBe List(screen.id)
+          rankings mustBe Set(screen.rankingId)
           stored must not be empty
       }
     "read existing UUID and monthly screen IDs stored as BSON strings" in
@@ -51,13 +51,13 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
             Document(
               "_id"       := id.value,
               "createdAt" := now,
-              "rankingId" := screenRun.rankingId.value,
+              "rankingId" := screen.rankingId.value,
               "request"   := Document(),
               "cohorts"   := List(Document("name" := "investment", "tickers" := List(AAPL.value))),
               "summary"   := Document(
                 "id"               := id.value,
                 "createdAt"        := now.toString,
-                "modelVersion"     := screenRun.recipe.version,
+                "modelVersion"     := ranking.recipe.version,
                 "universeCount"    := 1,
                 "eligibleCount"    := 1,
                 "selectedCount"    := 1,
@@ -69,7 +69,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
           allIds <- repo.ids
           listed <- repo.list(20)
         yield
-          saved mustBe ids.map(id => InvestmentScreenHeader.from(screenRun.copy(id = id)))
+          saved mustBe ids.map(id => screen.copy(id = id, summary = screen.summary.copy(id = id)))
           allIds.toSet mustBe ids.toSet
           listed.map(_.id).toSet mustBe ids.toSet
       }
@@ -86,11 +86,11 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
       }
     "read screen metadata independently of ranking storage" in
       withEmbeddedMongoDatabase { db =>
-        val expected = InvestmentScreenHeader.from(screenRun)
+        val expected = screen
         for
           repo  <- InvestmentScreenRepository.make[IO](db)
           _     <- repo.save(expected)
-          saved <- repo.find(screenRun.id)
+          saved <- repo.find(screen.id)
         yield saved mustBe expected
       }
   }

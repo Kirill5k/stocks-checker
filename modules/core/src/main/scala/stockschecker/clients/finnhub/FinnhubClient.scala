@@ -1,12 +1,13 @@
 package stockschecker.clients.finnhub
 
+import stockschecker.domain.Provider
 import cats.effect.Async
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import fs2.Stream
 import io.circe.{Codec, JsonObject}
 import io.circe.fs2.{byteArrayParser, decoder}
-import stockschecker.clients.{DatasetAvailabilityObserver, ProviderAccess}
+import stockschecker.clients.{ProviderAccess, ProviderErrors}
 import kirill5k.common.cats.Clock
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
@@ -28,21 +29,20 @@ trait FinnhubClient[F[_]]:
 final private class LiveFinnhubClient[F[_]](
     private val config: FinnhubClientConfig,
     private val backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-    private val access: ProviderAccess[F],
-    private val availability: DatasetAvailabilityObserver[F]
+    private val access: ProviderAccess[F]
 )(using
     F: Async[F],
     C: Clock[F]
 ) extends FinnhubClient[F] {
 
   override def getFinancialData(ticker: Ticker): F[Option[FinancialData]] =
-    availability.observed(ticker, "Finnhub", "financials")(access.run("Finnhub", config.limits)(fetchFinancialData(ticker)))(_.nonEmpty)
+    access.run(Provider.Finnhub, config.limits)(fetchFinancialData(ticker))
 
   override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] =
-    availability.observed(ticker, "Finnhub", "profile")(access.run("Finnhub", config.limits)(fetchCompanyProfile(ticker)))(_.nonEmpty)
+    access.run(Provider.Finnhub, config.limits)(fetchCompanyProfile(ticker))
 
   override def getListedSecurities(exchange: Exchange): Stream[F, Security] =
-    Stream.eval(access.run("Finnhub", config.limits)(fetchListedSecurities(exchange).compile.toList)).flatMap(Stream.emits)
+    Stream.eval(access.run(Provider.Finnhub, config.limits)(fetchListedSecurities(exchange).compile.toList)).flatMap(Stream.emits)
 
   private def fetchFinancialData(ticker: Ticker): F[Option[FinancialData]] = {
     val request = emptyRequest
@@ -65,15 +65,15 @@ final private class LiveFinnhubClient[F[_]](
           F.raiseError(AppError.JsonParsingFailure(response.body.toString, s"Error decoding financials for $ticker: ${error.getMessage}"))
         case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.NotFound =>
           F.pure(None)
-        case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.TooManyRequests =>
-          deferred(response.header("Retry-After"))
-        case Left(ResponseException.UnexpectedStatusCode(_, meta))
-            if meta.code == StatusCode.Unauthorized || meta.code == StatusCode.Forbidden =>
-          F.raiseError(AppError.ProviderConfiguration("Finnhub", s"HTTP ${meta.code.code}: financial metrics access denied"))
-        case Left(err) =>
-          F.raiseError(
-            AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving basic financials for $ticker: ${err.getMessage}")
-          )
+        case Left(_) =>
+          ProviderErrors
+            .fromStatus[F](
+              Provider.Finnhub,
+              response.code.code,
+              response.header("Retry-After"),
+              s"Error retrieving basic financials for $ticker"
+            )
+            .flatMap(F.raiseError)
     }
   }
 
@@ -93,15 +93,15 @@ final private class LiveFinnhubClient[F[_]](
               F.pure(Some(profile.toDomain))
             case Left(err) =>
               F.raiseError(AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile for $ticker: ${err.getMessage}"))
-        case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.TooManyRequests =>
-          deferred(response.header("Retry-After"))
-        case Left(ResponseException.UnexpectedStatusCode(_, meta))
-            if meta.code == StatusCode.Unauthorized || meta.code == StatusCode.Forbidden =>
-          F.raiseError(AppError.ProviderConfiguration("Finnhub", s"HTTP ${meta.code.code}: company profile access denied"))
-        case Left(err) =>
-          F.raiseError(
-            AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving company profile for $ticker: ${err.getMessage}")
-          )
+        case Left(_) =>
+          ProviderErrors
+            .fromStatus[F](
+              Provider.Finnhub,
+              response.code.code,
+              response.header("Retry-After"),
+              s"Error retrieving company profile for $ticker"
+            )
+            .flatMap(F.raiseError)
     }
   }
 
@@ -121,17 +121,14 @@ final private class LiveFinnhubClient[F[_]](
             .through(byteArrayParser[F])
             .through(decoder[F, FinnhubClient.StockSymbol])
             .map(_.toDomain(exchange))
-        case Left(_) if response.code == StatusCode.TooManyRequests => Stream.eval(deferred(response.header("Retry-After")))
-        case Left(_) if response.code == StatusCode.Unauthorized || response.code == StatusCode.Forbidden =>
-          Stream.raiseError(AppError.ProviderConfiguration("Finnhub", s"HTTP ${response.code.code}: security listing access denied"))
-        case Left(err) => Stream.raiseError(AppError.HttpClient("Finnhub", response.code.code, s"Error retrieving traded stocks: $err"))
+        case Left(_) =>
+          Stream.eval(
+            ProviderErrors
+              .fromStatus[F](Provider.Finnhub, response.code.code, response.header("Retry-After"), "Error retrieving traded stocks")
+              .flatMap(F.raiseError)
+          )
     yield data
   }
-
-  private def deferred[A](retryAfter: Option[String]): F[A] =
-    C.now.flatMap { now =>
-      F.raiseError(AppError.ProviderDeferred("Finnhub", stockschecker.clients.RetryAfter.deadline(retryAfter, now), "rate-limited"))
-    }
 
   private def mapExchangeToFinnhubCode(exchange: Exchange): String = exchange match
     case Exchange.NASDAQ => "US"
@@ -234,8 +231,7 @@ object FinnhubClient {
   def make[F[_]: {Async, Clock}](
       config: FinnhubClientConfig,
       backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-      access: ProviderAccess[F],
-      availability: DatasetAvailabilityObserver[F]
+      access: ProviderAccess[F]
   ): F[FinnhubClient[F]] =
-    access.validateLimits("Finnhub", config.limits).as(LiveFinnhubClient[F](config, backend, access, availability))
+    access.validateLimits(Provider.Finnhub, config.limits).as(LiveFinnhubClient[F](config, backend, access))
 }

@@ -1,5 +1,6 @@
 package stockschecker
 
+import stockschecker.domain.ListingStatus
 import io.circe.Codec as CirceCodec
 import stockschecker.common.types.{EnumType, StringType}
 import sttp.tapir.{Codec, DecodeResult, Schema}
@@ -50,7 +51,7 @@ package object domain {
       kind: SecurityKind,
       isActive: Boolean = true,
       companyProfileLastUpdatedAt: Option[Instant] = None,
-      listingStatus: String = "listed",
+      listingStatus: ListingStatus = ListingStatus.Listed,
       exclusionReason: Option[String] = None
   ) derives CirceCodec.AsObject
 

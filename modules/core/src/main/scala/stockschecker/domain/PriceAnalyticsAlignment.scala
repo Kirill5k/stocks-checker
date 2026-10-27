@@ -1,7 +1,6 @@
-package stockschecker.utils
+package stockschecker.domain
 
 import cats.data.NonEmptyList
-import stockschecker.domain.{PriceAdjustment, PriceAnalytics, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
 
 import java.time.LocalDate
@@ -34,16 +33,16 @@ object PriceAnalyticsAlignment:
         .filterNot(_.date.isAfter(through))
         .flatMap(candle => quotesByDate.get(candle.date).map(quote => candle -> quote))
         .nextOption()
-        .toRight(AppError.DataUnavailable("TwelveData", ticker, "adjusted and quoted histories have no common trading session"))
+        .toRight(AppError.DataUnavailable(Provider.TwelveData, ticker, "adjusted and quoted histories have no common trading session"))
       (endpoint, quote) = common
       _ <- Either.cond(
         ChronoUnit.DAYS.between(endpoint.date, through) <= 7,
         (),
-        AppError.DataUnavailable("TwelveData", ticker, "the latest matching trading session is more than seven days old")
+        AppError.DataUnavailable(Provider.TwelveData, ticker, "the latest matching trading session is more than seven days old")
       )
       aligned   = NonEmptyList(endpoint, valid.toList.filter(_.date.isBefore(endpoint.date)))
       analytics = PriceAnalyticsCalculator.fromDaily(ticker, aligned)
     yield analytics.copy(
       performanceSummary = analytics.performanceSummary.copy(latestPrice = quote.close, latestPriceDate = quote.date),
-      basis = analytics.basis.map(_.copy(priceObservationId = Some(total.id), quotedPriceObservationId = Some(quoted.id)))
+      basis = analytics.basis.copy(priceObservationId = Some(total.id), quotedPriceObservationId = Some(quoted.id))
     )

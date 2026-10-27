@@ -20,7 +20,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         when(repo.find(any[Ticker])).thenReturnSome(AAPLCompanyProfile)
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities)
+          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
           res <- svc.get(AAPL)
         yield res
 
@@ -37,7 +37,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         when(securities.updateCompanyProfileLastUpdated(anyList[Ticker])).thenReturnUnit
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities)
+          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
           res <- svc.get(AAPL, true)
         yield res
 
@@ -56,7 +56,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         // client should NOT be called
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities)
+          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
           res <- svc.get(AAPL) // flag is false (default)
         yield res
 
@@ -73,7 +73,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         when(client.getCompanyProfile(any[Ticker])).thenReturnNone
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities)
+          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
           res <- svc.get(AAPL, true) // fetch latest path
         yield res
 
@@ -93,7 +93,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         when(repo.findAll(any[Option[Int]])).thenReturnIO(List(AAPLCompanyProfile, MSFTCompanyProfile))
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities)
+          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
           res <- svc.getAll(None)
         yield res
 
@@ -108,7 +108,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         when(repo.findAll(any[Option[Int]])).thenReturnIO(List(AAPLCompanyProfile))
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities)
+          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
           res <- svc.getAll(Some(1))
         yield res
 
@@ -123,7 +123,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         when(repo.findAll(any[Option[Int]])).thenReturnIO(List.empty)
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities)
+          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
           res <- svc.getAll(None)
         yield res
 

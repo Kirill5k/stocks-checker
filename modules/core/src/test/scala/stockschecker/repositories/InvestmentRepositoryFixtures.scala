@@ -11,7 +11,7 @@ private[stockschecker] object InvestmentRepositoryFixtures {
     AAPL,
     true,
     Some(BigDecimal(70)),
-    Map("quality" -> BigDecimal(80)),
+    Map(Pillar.Quality -> BigDecimal(80)),
     Map.empty,
     Nil,
     Nil,
@@ -20,15 +20,13 @@ private[stockschecker] object InvestmentRepositoryFixtures {
     None,
     "fundamental-v1"
   )
-  val screenRun = InvestmentScreenRun(
+  val entries = List(InvestmentRankingEntry(InvestmentCandidate(AAPLStock, None), card))
+  val ranking = InvestmentRanking(InvestmentRankingId("rank-1"), now, InvestmentRecipe(), InvestmentRankingSummary.from(entries))
+  val screen  = InvestmentScreen.create(
     InvestmentScreenId("immutable-run"),
     now,
-    InvestmentRecipe(),
+    ranking,
     InvestmentScreenRequest(),
-    List(InvestmentCandidate(AAPLStock, None)),
-    List(card),
-    List(InvestmentCohort("investment", List(AAPL))),
-    InvestmentRankingId("rank-1")
+    List(InvestmentCohort(CohortName.Investment, List(AAPL)))
   )
-
 }

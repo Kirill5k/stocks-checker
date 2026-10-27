@@ -1,15 +1,6 @@
-package stockschecker.utils
+package stockschecker.domain
 
 import cats.data.NonEmptyList
-import stockschecker.domain.{
-  PriceAnalytics,
-  PriceAnalyticsBasis,
-  PriceCandle,
-  PricePerformanceSummary,
-  StockAnalysisMetrics,
-  StockAnalysisScores,
-  Ticker
-}
 
 import java.lang.Double.{isInfinite, isNaN}
 import java.time.{LocalDate, YearMonth}
@@ -54,7 +45,7 @@ object PriceAnalyticsCalculator:
       performanceSummary = calculatePerformanceSummary(NonEmptyList.fromListUnsafe(sorted), monthly = false),
       metrics = metrics,
       scores = calculateScores(metrics),
-      basis = Some(PriceAnalyticsBasis("historical-performance", "split-and-dividend", "daily", 5, None, None))
+      basis = PriceAnalyticsBasis("historical-performance", "split-and-dividend", "daily", 5, None, None)
     )
   }
 
@@ -65,7 +56,7 @@ object PriceAnalyticsCalculator:
       performanceSummary = calculatePerformanceSummary(priceCandles),
       metrics = metrics,
       scores = calculateScores(metrics),
-      basis = Some(PriceAnalyticsBasis("historical-performance", "split", "monthly", 5, None, None))
+      basis = PriceAnalyticsBasis("historical-performance", "split", "monthly", 5, None, None)
     )
   }
 

@@ -33,11 +33,10 @@ final case class Job(
     leaseToken: Option[String] = None,
     leaseUntil: Option[Instant] = None,
     error: Option[String] = None,
-    pausedProvider: Option[String] = None,
+    pausedProvider: Option[Provider] = None,
     plan: Option[JobPlan] = None,
-    waitCount: Option[Int] = None,
-    completedAt: Option[Instant] = None,
-    restartCount: Option[Int] = None
+    waitCount: Int = 0,
+    completedAt: Option[Instant] = None
 ) derives Codec.AsObject {
   def isTerminal: Boolean       = Job.terminalStates.contains(state)
   def hasUsableResults: Boolean = state == Job.Succeeded || state == Job.Partial
@@ -71,12 +70,4 @@ final case class JobStatusSummary(counts: Map[JobState, Long]) {
   def total: Long                  = counts.values.sum
   def terminal: Long               = Job.terminalStates.map(count).sum
   def usable: Long                 = count(Job.Succeeded) + count(Job.Partial)
-}
-
-/** Stored on the command before enqueueing, so a crash cannot lose an accepted scheduled occurrence. */
-final case class ScheduledOccurrence(job: Job) derives Codec.AsObject
-
-object ScheduledOccurrence {
-  // The outbox is operational metadata, not an additional recursively derived command/action schema.
-  given sttp.tapir.Schema[ScheduledOccurrence] = sttp.tapir.Schema.anyObject[ScheduledOccurrence]
 }

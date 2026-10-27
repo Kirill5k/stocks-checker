@@ -1,7 +1,7 @@
 package stockschecker
 
 import cats.data.NonEmptyList
-import stockschecker.utils.PriceAnalyticsCalculator
+import stockschecker.domain.PriceAnalyticsCalculator
 import mongo4cats.bson.ObjectId
 import stockschecker.actions.Action
 import stockschecker.domain.{

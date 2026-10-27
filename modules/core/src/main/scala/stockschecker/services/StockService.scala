@@ -1,8 +1,8 @@
 package stockschecker.services
 
+import stockschecker.domain.ListingStatus
 import cats.MonadThrow
 import cats.syntax.flatMap.*
-import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.domain.{Stock, StockFilters, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.{CompanyProfileRepository, SecurityRepository, StockRepository}
@@ -15,7 +15,6 @@ trait StockService[F[_]]:
 
 final private class LiveStockService[F[_]](
     stockRepository: StockRepository[F],
-    dispatcher: ActionDispatcher[F],
     securityRepository: SecurityRepository[F],
     profileRepository: CompanyProfileRepository[F]
 )(using
@@ -30,19 +29,17 @@ final private class LiveStockService[F[_]](
   override def activate(ticker: Ticker): F[Unit] =
     findByTicker(ticker).flatMap { stock =>
       securityRepository.activate(ticker) >>
-        F.whenA(stock.security.listingStatus != "delisted")(profileRepository.activate(ticker))
+        F.whenA(stock.security.listingStatus != ListingStatus.Delisted)(profileRepository.activate(ticker))
     }
 
   override def deactivate(ticker: Ticker): F[Unit] =
-    dispatcher.dispatch(Action.DeactivateSecurity(ticker)) >>
-      dispatcher.dispatch(Action.DeactivateCompanyProfile(ticker))
+    securityRepository.deactivate(ticker) >> profileRepository.deactivate(ticker)
 }
 
 object StockService:
   def make[F[_]: MonadThrow](
       stockRepository: StockRepository[F],
-      dispatcher: ActionDispatcher[F],
       securityRepository: SecurityRepository[F],
       profileRepository: CompanyProfileRepository[F]
   ): F[StockService[F]] =
-    MonadThrow[F].pure(LiveStockService(stockRepository, dispatcher, securityRepository, profileRepository))
+    MonadThrow[F].pure(LiveStockService(stockRepository, securityRepository, profileRepository))

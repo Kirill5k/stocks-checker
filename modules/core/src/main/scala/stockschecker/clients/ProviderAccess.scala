@@ -1,5 +1,6 @@
 package stockschecker.clients
 
+import stockschecker.domain.Provider
 import cats.effect.{Ref, Temporal}
 import cats.syntax.applicativeError.*
 import cats.syntax.flatMap.*
@@ -14,11 +15,11 @@ final case class ProviderLimits(requestsPerMinute: Int, dailyAllowance: Int, max
 
 /** Shared access service with independent quotas, concurrency and credential pauses for each provider account. */
 trait ProviderAccess[F[_]]:
-  def validateLimits(provider: String, limits: ProviderLimits): F[Unit]
-  def run[A](provider: String, limits: ProviderLimits, account: Option[String] = None)(request: F[A]): F[A]
+  def validateLimits(provider: Provider, limits: ProviderLimits): F[Unit]
+  def run[A](provider: Provider, limits: ProviderLimits, account: Option[String] = None)(request: F[A]): F[A]
 
 object ProviderAccess {
-  final private case class Account(provider: String, credential: Option[String])
+  final private case class Account(provider: Provider, credential: Option[String])
   final private case class State(inFlight: Int, disabled: Option[String])
   private object State {
     val empty: State = State(0, None)
@@ -29,13 +30,13 @@ object ProviderAccess {
       budgets: ProviderBudgetRepository[F]
   )(using F: Temporal[F], C: Clock[F])
       extends ProviderAccess[F] {
-    override def validateLimits(provider: String, limits: ProviderLimits): F[Unit] =
+    override def validateLimits(provider: Provider, limits: ProviderLimits): F[Unit] =
       F.raiseWhen(limits.requestsPerMinute <= 0 || limits.maxConcurrent <= 0 || limits.dailyAllowance < 0)(
-        new IllegalArgumentException(s"Invalid rate limits for $provider")
+        new IllegalArgumentException(s"Invalid rate limits for ${provider.print}")
       )
 
     /** Account identifiers must be stable and contain no credentials; omitted accounts retain provider-wide budgets. */
-    override def run[A](provider: String, limits: ProviderLimits, account: Option[String] = None)(request: F[A]): F[A] = F.uncancelable {
+    override def run[A](provider: Provider, limits: ProviderLimits, account: Option[String] = None)(request: F[A]): F[A] = F.uncancelable {
       poll =>
         val key = Account(provider, account)
         for

@@ -1,7 +1,7 @@
 package stockschecker.repositories
 
 import cats.data.NonEmptyList
-import mongo4cats.operations.{Filter, Update}
+import mongo4cats.operations.Filter
 import stockschecker.actions.Action
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CreateCommand, Exchange, Schedule, UpdateCommand}
@@ -33,7 +33,7 @@ class CommandRepositorySpec extends RepositorySpec {
           }
         }
 
-      "retain BSON schedule timestamps and durable outbox contents after recreation" in
+      "retain BSON schedule timestamps and reserved run IDs after recreation" in
         withEmbeddedMongoDatabase { db =>
           for
             repo       <- CommandRepository.make(db)
@@ -41,6 +41,7 @@ class CommandRepositorySpec extends RepositorySpec {
             ready      <- repo.initializeNextRun(command, ts)
             occurrence <- repo.reserve(ready.get, ts)
             before     <- repo.find(command.id)
+            activeIds  <- repo.activeRunIds
             raw        <- db.getCollection(CommandRepository.CollectionName)
             stored     <- raw
               .find(
@@ -53,23 +54,11 @@ class CommandRepositorySpec extends RepositorySpec {
           yield
             occurrence must not be empty
             stored must not be empty
-            before.outbox mustBe occurrence
+            activeIds mustBe occurrence.flatMap(_.activeRunId).toSet
+            before mustBe occurrence.get
             after mustBe before
         }
 
-      "read legacy commands without operational metadata" in
-        withEmbeddedMongoDatabase { db =>
-          for
-            repo    <- CommandRepository.make(db)
-            command <- repo.create(newCmd)
-            raw     <- db.getCollection(CommandRepository.CollectionName)
-            _       <- raw.updateOne(
-              Filter.idEq(command.id.toObjectId),
-              Update.unset("version").unset("nextRunAt").unset("activeRunId").unset("outbox")
-            )
-            saved <- repo.find(command.id)
-          yield saved mustBe command.copy(version = None)
-        }
     }
 
     "find" should {
@@ -128,7 +117,7 @@ class CommandRepositorySpec extends RepositorySpec {
     }
 
     "pending" should {
-      "exclude future and exhausted schedules while including outbox recovery" in
+      "exclude future and exhausted schedules while including reserved run recovery" in
         withEmbeddedMongoDatabase { db =>
           for {
             repo        <- CommandRepository.make(db)
@@ -138,8 +127,7 @@ class CommandRepositorySpec extends RepositorySpec {
             ready       <- repo.initializeNextRun(exhausted, ts).map(_.get)
             occurrence  <- repo.reserve(ready, ts).map(_.get)
             recoverable <- repo.pending(ts)
-            _           <- repo.clearOutbox(exhausted.id, occurrence.job.id)
-            _           <- repo.completeRun(exhausted.id, occurrence.job.id)
+            _           <- repo.completeRun(exhausted.id, occurrence.activeRunId.get)
             idle        <- repo.pending(ts)
           } yield {
             recoverable.map(_.id) mustBe List(exhausted.id)
@@ -176,7 +164,7 @@ class CommandRepositorySpec extends RepositorySpec {
             _         <- repo.setActive(cmd.id, false)
             activeCmd <- repo.create(newCmd)
             cmds      <- repo.all
-          yield cmds mustBe List(cmd.copy(isActive = false, version = Some(cmd.revision + 1L)), activeCmd)
+          yield cmds mustBe List(cmd.copy(isActive = false, version = cmd.version + 1L), activeCmd)
         }
     }
   }

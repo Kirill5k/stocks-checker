@@ -6,7 +6,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
+import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Provider, Ticker}
 import stockschecker.repositories.PriceHistoryRepository
 
 import java.time.{Duration, Instant, LocalDate, Period, ZoneOffset}
@@ -18,7 +18,8 @@ trait PriceHistoryService[F[_]]:
 
 final private class LivePriceHistoryService[F[_]](
     private val client: MarketDataClient[F],
-    private val repository: PriceHistoryRepository[F]
+    private val repository: PriceHistoryRepository[F],
+    private val quality: DataQualityService[F]
 )(using F: Sync[F], C: Clock[F])
     extends PriceHistoryService[F] {
   private val maxSnapshotAge = Duration.ofDays(1)
@@ -31,7 +32,12 @@ final private class LivePriceHistoryService[F[_]](
       !snapshot.fetchedAt.isBefore(range.through.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant)
 
   private def fetch(ticker: Ticker, range: DateRange, adjustment: PriceAdjustment): F[PriceHistorySnapshot] =
-    client.getDailyPriceHistory(ticker, range, adjustment).flatTap(repository.save)
+    val dataset = adjustment match
+      case PriceAdjustment.SplitsAndDividends => "daily-prices-all"
+      case other                              => s"daily-prices-${other.print}"
+    quality
+      .observe(ticker, Provider.TwelveData, dataset)(client.getDailyPriceHistory(ticker, range, adjustment))(_.candles.nonEmpty)
+      .flatTap(repository.save)
 
   override def recent(ticker: Ticker, range: DateRange, adjustment: PriceAdjustment, asOf: Instant): F[PriceHistorySnapshot] = {
     val cached = adjustment match
@@ -70,5 +76,9 @@ object PriceHistoryService:
   // One unmerged adjustment vintage serves live analytics and historical evaluation captures.
   val SharedHistoryLookback: Period = Period.ofYears(13)
 
-  def make[F[_]: {Sync, Clock}](client: MarketDataClient[F], repository: PriceHistoryRepository[F]): F[PriceHistoryService[F]] =
-    Sync[F].pure(LivePriceHistoryService(client, repository))
+  def make[F[_]: {Sync, Clock}](
+      client: MarketDataClient[F],
+      repository: PriceHistoryRepository[F],
+      quality: DataQualityService[F]
+  ): F[PriceHistoryService[F]] =
+    Sync[F].pure(LivePriceHistoryService(client, repository, quality))

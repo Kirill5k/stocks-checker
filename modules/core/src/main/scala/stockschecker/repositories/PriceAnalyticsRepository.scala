@@ -51,7 +51,7 @@ final private class LivePriceAnalyticsRepository[F[_]](
         .set(Field.PerformanceSummary.Root, analytics.performanceSummary)
         .set(Field.Metrics.Root, analytics.metrics)
         .set(Field.Scores.Root, analytics.scores)
-        .set("basis", analytics.basis)
+        .set(Field.Basis, analytics.basis)
 
   override def save(analytics: PriceAnalytics): F[Unit] =
     clock.now.flatMap { now =>
@@ -116,6 +116,7 @@ object PriceAnalyticsRepository extends MongoJsonCodecs:
 
   object Field:
     val Id        = "_id"
+    val Basis     = "basis"
     val CreatedAt = "createdAt"
     val UpdatedAt = "updatedAt"
 

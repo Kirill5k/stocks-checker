@@ -1,5 +1,6 @@
 package stockschecker.actions
 
+import stockschecker.domain.Provider
 import stockschecker.domain.{Job, JobState, JobStatusSummary}
 import stockschecker.domain.errors.AppError
 
@@ -24,7 +25,7 @@ private[actions] object JobExecutionPolicy:
 
   enum Failure:
     case Defer(until: Instant)
-    case Pause(provider: String)
+    case Pause(provider: Provider)
     case Retry
     case Fail
 
@@ -52,7 +53,7 @@ private[actions] object JobExecutionPolicy:
 
   def retryDelay(retries: Int, jitterMillis: Long): FiniteDuration = ((1000L << retries) + jitterMillis).millis
 
-  def pollDelaySeconds(job: Job): Long = (1L << job.waitCount.getOrElse(0).min(9)).min(300L)
+  def pollDelaySeconds(job: Job): Long = (1L << job.waitCount.min(9)).min(300L)
 
   private def transient(error: Throwable): Boolean = error match
     case _: AppError.DataUnavailable       => true

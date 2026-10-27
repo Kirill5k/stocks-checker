@@ -25,7 +25,7 @@ class ActionExecutorSpec extends IOWordSpec:
       when(jobs.claim(any[Instant], any[FiniteDuration])).thenReturnSome(job)
       when(jobs.summarize(Nil)).thenReturnIO(JobStatusSummary(Map.empty))
       when(jobs.renew(eqTo(job), any[Instant], any[FiniteDuration])).thenReturnIO(false)
-      when(jobs.pruneCompleted(any[Instant])).thenReturnUnit
+      when(jobs.pruneCompleted(any[Instant], any[Set[JobId]])).thenReturnUnit
       (for {
         started   <- Deferred[IO, Unit]
         cancelled <- Deferred[IO, Unit]
@@ -33,7 +33,7 @@ class ActionExecutorSpec extends IOWordSpec:
           def execute(action: Action): IO[ActionResult] =
             started.complete(()) >> IO.never[ActionResult].onCancel(cancelled.complete(()).void)
         }
-        executor <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), ActionExecutorConfig(1))
+        executor <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), IO.pure(Set.empty[JobId]), ActionExecutorConfig(1))
         _        <- executor.run
           .take(1)
           .compile

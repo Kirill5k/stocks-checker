@@ -16,7 +16,7 @@ final case class FinancialObservation(
 final case class FinancialSnapshot(
     id: String,
     ticker: Ticker,
-    provider: String,
+    provider: Provider,
     observedAt: Instant,
     metrics: Map[String, BigDecimal],
     annual: List[FinancialObservation],

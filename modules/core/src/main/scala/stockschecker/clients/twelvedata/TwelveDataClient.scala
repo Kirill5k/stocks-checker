@@ -1,5 +1,6 @@
 package stockschecker.clients.twelvedata
 
+import stockschecker.domain.Provider
 import cats.data.NonEmptyList
 import cats.effect.kernel.{Async, Ref}
 import cats.syntax.applicativeError.*
@@ -10,7 +11,7 @@ import kirill5k.common.cats.Clock
 import stockschecker.common.config.TwelveDataConfig
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceCandle, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.clients.{DatasetAvailabilityObserver, ProviderAccess, RetryAfter}
+import stockschecker.clients.{ProviderAccess, ProviderErrors}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 import sttp.client4.circe.asJson
@@ -29,8 +30,7 @@ final private class LiveTwelveDataClient[F[_]](
     private val apiKeys: Vector[(String, String)],
     private val keyIndex: Ref[F, Int],
     private val backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-    private val access: ProviderAccess[F],
-    private val availability: DatasetAvailabilityObserver[F]
+    private val access: ProviderAccess[F]
 )(using
     F: Async[F],
     C: Clock[F]
@@ -39,11 +39,9 @@ final private class LiveTwelveDataClient[F[_]](
   override def getDailyPriceHistory(ticker: Ticker, range: DateRange, adjustment: PriceAdjustment): F[PriceHistorySnapshot] =
     for
       _      <- F.raiseWhen(!range.isValid)(AppError.FailedValidation("Invalid price history request"))
-      result <- availability.observed(ticker, "TwelveData", s"daily-prices-${providerAdjustment(adjustment)}")(
-        keyIndex.getAndUpdate(i => (i + 1) % apiKeys.size).flatMap { startIndex =>
-          attemptWithKeyRotation(ticker, range, adjustment, startIndex, 0, List.empty)
-        }
-      )(_.candles.nonEmpty)
+      result <- keyIndex.getAndUpdate(i => (i + 1) % apiKeys.size).flatMap { startIndex =>
+        attemptWithKeyRotation(ticker, range, adjustment, startIndex, 0, List.empty)
+      }
     yield result
 
   private def attemptWithKeyRotation(
@@ -59,7 +57,7 @@ final private class LiveTwelveDataClient[F[_]](
       F.raiseError(earliest.getOrElse(failures.head))
     else
       val (apiKey, account) = apiKeys((startIndex + attempted) % apiKeys.size)
-      access.run("TwelveData", config.limits, Some(account))(sendRequest(ticker, range, adjustment, apiKey)).recoverWith {
+      access.run(Provider.TwelveData, config.limits, Some(account))(sendRequest(ticker, range, adjustment, apiKey)).recoverWith {
         case error: AppError.ProviderDeferred =>
           attemptWithKeyRotation(ticker, range, adjustment, startIndex, attempted + 1, error :: failures)
         case error: AppError.ProviderConfiguration =>
@@ -111,7 +109,7 @@ final private class LiveTwelveDataClient[F[_]](
       UUID.randomUUID().toString,
       ticker,
       candles,
-      "TwelveData",
+      Provider.TwelveData,
       meta.currency,
       adjustment,
       now,
@@ -126,16 +124,13 @@ final private class LiveTwelveDataClient[F[_]](
   private def redact(message: String): String =
     apiKeys.map(_._1).sortBy(key => -key.length).foldLeft(message)((result, key) => result.replace(key, "[redacted]"))
 
-  private def failure[A](status: Int, message: String, retryAfter: Option[String] = None): F[A] = status match
-    case 429 =>
-      C.now.flatMap(now => F.raiseError(AppError.ProviderDeferred("TwelveData", RetryAfter.deadline(retryAfter, now), "rate-limited")))
-    case 401 | 403 => F.raiseError(AppError.ProviderConfiguration("TwelveData", s"HTTP $status; check credentials and subscription"))
-    case _         => F.raiseError(AppError.HttpClient("TwelveData", status, redact(message)))
+  private def failure[A](status: Int, message: String, retryAfter: Option[String] = None): F[A] =
+    ProviderErrors.fromStatus[F](Provider.TwelveData, status, retryAfter, redact(message)).flatMap(F.raiseError)
 
   private def processData(data: TwelveDataClient.TimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
     if data.isOk then
       val maybeValues = data.values.flatMap(v => NonEmptyList.fromList(v.map(_.toDomain)))
-      F.fromOption(maybeValues, AppError.HttpClient("TwelveData", 500, s"No values returned for ticker $ticker"))
+      F.fromOption(maybeValues, AppError.HttpClient(Provider.TwelveData.print, 500, s"No values returned for ticker $ticker"))
     else if data.isError then
       val errorCode    = data.code.getOrElse(500)
       val errorMessage = data.message.getOrElse("Unknown error from TwelveData API")
@@ -143,7 +138,7 @@ final private class LiveTwelveDataClient[F[_]](
     else
       F.raiseError(
         AppError.HttpClient(
-          "TwelveData",
+          Provider.TwelveData.print,
           500,
           s"Time series API returned unexpected status code for ticker $ticker: ${redact(data.toString)}"
         )
@@ -194,17 +189,16 @@ object TwelveDataClient {
   def make[F[_]](
       config: TwelveDataConfig,
       backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-      access: ProviderAccess[F],
-      availability: DatasetAvailabilityObserver[F]
+      access: ProviderAccess[F]
   )(using F: Async[F], C: Clock[F]): F[TwelveDataClient[F]] =
     val keys = config.apiKey.split(',').iterator.map(_.trim).filter(_.nonEmpty).toVector.distinct
     for
       _        <- F.raiseWhen(keys.isEmpty)(AppError.Critical("At least one TwelveData API key must be provided"))
-      _        <- access.validateLimits("TwelveData", config.limits)
+      _        <- access.validateLimits(Provider.TwelveData, config.limits)
       accounts <- F.delay(keys.map { key =>
         val digest = MessageDigest.getInstance("SHA-256").digest(key.getBytes(StandardCharsets.UTF_8))
         key -> HexFormat.of().formatHex(digest)
       })
       index <- Ref.of[F, Int](0)
-    yield LiveTwelveDataClient[F](config, accounts, index, backend, access, availability)
+    yield LiveTwelveDataClient[F](config, accounts, index, backend, access)
 }

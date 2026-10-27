@@ -1,4 +1,4 @@
-package stockschecker.utils
+package stockschecker.domain.investment
 
 import stockschecker.domain.*
 
@@ -9,17 +9,6 @@ import scala.math.BigDecimal.RoundingMode
 object InvestmentEvaluator:
   val Version           = "forward-total-return-v1"
   val Benchmark: Ticker = Ticker("VTI")
-  // Shift the next-day fallback before adding years; fourteen extra days also cover leap-day crossings.
-  def finalCaptureThrough(formedDate: LocalDate): LocalDate = formedDate.plusDays(1).plusYears(5).plusDays(14)
-
-  def isFinished(evaluation: InvestmentEvaluation): Boolean =
-    evaluation.isSettled && evaluation.horizons.nonEmpty &&
-      evaluation.dataThrough.exists(through =>
-        evaluation.horizons.forall { horizon =>
-          val lastPossibleExit = horizon.targetDate.plusDays(if horizon.entryDate.isEmpty then 14 else 7)
-          horizon.exitDate.exists(date => !date.isAfter(through)) || !lastPossibleExit.isAfter(through)
-        }
-      )
 
   private def round(n: BigDecimal): BigDecimal                       = n.setScale(4, RoundingMode.HALF_UP)
   private def annualized(growth: BigDecimal, years: Int): BigDecimal =
@@ -40,79 +29,87 @@ object InvestmentEvaluator:
     // VTI is the common US trading calendar. Entry is strictly AFTER the completed screen's date.
     val benchmarkDates =
       benchmark.toList.flatMap(_.closes.map(_.date)).distinct.sorted.filter(d => d.isAfter(formedDate) && !d.isAfter(today))
-    val entry      = benchmarkDates.headOption.filter(d => !d.isAfter(formedDate.plusDays(7)))
     val allCohorts =
-      InvestmentCohort("vti", List(Benchmark), Some(InvestmentConcentration(1, 100, Map.empty, Map.empty, 1))) :: cohorts.filterNot(
-        _.name == "vti"
+      InvestmentCohort(CohortName.Vti, List(Benchmark), Some(InvestmentConcentration(1, 100, Map.empty, Map.empty, 1))) :: cohorts.filterNot(
+        _.name == CohortName.Vti
       )
-    val horizons = List(3, 5).map { years =>
-      val target = entry.getOrElse(formedDate.plusDays(1)).plusYears(years)
-      if today.isBefore(target) then
-        val progress = (entry, benchmarkDates.lastOption) match
-          case (Some(start), Some(end)) =>
-            val dates = benchmarkDates.filter(d => !d.isBefore(start) && !d.isAfter(end))
-            allCohorts.map { cohort =>
-              val current = evaluateCohort(cohort, years, start, end, dates, histories)
-              current.copy(
-                status = if current.status == "complete" then "pending" else "incomplete",
-                totalReturnPercent = None,
-                annualizedReturnPercent = None,
-                excessReturnPercent = None,
-                costs = Nil,
-                observedThrough = Some(end),
-                observedReturnPercent = current.totalReturnPercent
-              )
-            }
-          case _ =>
-            allCohorts.map(c =>
-              CohortEvaluation(
-                c.name,
-                "pending",
-                c.tickers,
-                c.tickers,
-                List("Entry session observations are not available yet"),
-                None,
-                None,
-                None,
-                None,
-                Nil,
-                concentration = c.concentration
-              )
-            )
-        HorizonEvaluation(years, "pending", entry, target, None, progress, List("Investment horizon has not matured"))
-      else
-        val exit = benchmarkDates.find(d => !d.isBefore(target)).filter(d => !d.isAfter(target.plusDays(7)))
-        (entry, exit) match
-          case (Some(start), Some(end)) =>
-            val dates           = benchmarkDates.filter(d => !d.isBefore(start) && !d.isAfter(end))
-            val results         = allCohorts.map(c => evaluateCohort(c, years, start, end, dates, histories))
-            val benchmarkReturn = results.find(_.name == "vti").flatMap(_.totalReturnPercent)
-            val withExcess      =
-              results.map(r => r.copy(excessReturnPercent = for a <- r.totalReturnPercent; b <- benchmarkReturn yield round(a - b)))
-            HorizonEvaluation(
-              years,
-              if withExcess.forall(_.status == "complete") then "complete" else "incomplete",
-              entry,
-              target,
-              exit,
-              withExcess,
-              Nil
-            )
-          case _ =>
-            HorizonEvaluation(years, "incomplete", entry, target, exit, Nil, List("Auditable benchmark entry/exit session is missing"))
-    }
+    val horizons = List(3, 5).map(evaluateHorizon(_, formedDate, today, benchmarkDates, allCohorts, histories))
     InvestmentEvaluation(
       screenId,
       evaluatedAt,
       Version,
       "Frozen cohorts; equal capital at next trading-session close; buy and hold for 3/5 years; dividends reinvested through total-return closes; missing sessions or delisting outcomes remain incomplete; no constituent removal. Cost scenarios deduct 0/25/50/100 basis points from terminal wealth. USD, before tax.",
       horizons,
-      histories.values.map(_.source).toList.distinct.sorted,
+      histories.values.map(_.source).toList.distinct.sortBy(_.print),
       histories.values.toList
         .sortBy(_.ticker.value)
         .map(h => EvaluationPriceEvidence(h.ticker, h.source, h.fetchedAt, h.adjustment, h.audited, h.snapshotIds)),
       dataThrough = dataThrough
     )
+
+  private def evaluateHorizon(
+      years: Int,
+      formedDate: LocalDate,
+      today: LocalDate,
+      benchmarkDates: List[LocalDate],
+      cohorts: List[InvestmentCohort],
+      histories: Map[Ticker, EvaluationPriceSeries]
+  ): HorizonEvaluation =
+    val entry = benchmarkDates.headOption.filter(d => !d.isAfter(formedDate.plusDays(7)))
+    val target = entry.getOrElse(formedDate.plusDays(1)).plusYears(years)
+    if today.isBefore(target) then
+      val progress = (entry, benchmarkDates.lastOption) match
+        case (Some(start), Some(end)) =>
+          val dates = benchmarkDates.filter(d => !d.isBefore(start) && !d.isAfter(end))
+          cohorts.map { cohort =>
+            val current = evaluateCohort(cohort, years, start, end, dates, histories)
+            current.copy(
+              status = if current.status == EvaluationStatus.Complete then EvaluationStatus.Pending else EvaluationStatus.Incomplete,
+              totalReturnPercent = None,
+              annualizedReturnPercent = None,
+              excessReturnPercent = None,
+              costs = Nil,
+              observedThrough = Some(end),
+              observedReturnPercent = current.totalReturnPercent
+            )
+          }
+        case _ =>
+          cohorts.map(c =>
+            CohortEvaluation(
+              c.name,
+              EvaluationStatus.Pending,
+              c.tickers,
+              c.tickers,
+              List("Entry session observations are not available yet"),
+              None,
+              None,
+              None,
+              None,
+              Nil,
+              concentration = c.concentration
+            )
+          )
+      HorizonEvaluation(years, EvaluationStatus.Pending, entry, target, None, progress, List("Investment horizon has not matured"))
+    else
+      val exit = benchmarkDates.find(d => !d.isBefore(target)).filter(d => !d.isAfter(target.plusDays(7)))
+      (entry, exit) match
+        case (Some(start), Some(end)) =>
+          val dates           = benchmarkDates.filter(d => !d.isBefore(start) && !d.isAfter(end))
+          val results         = cohorts.map(c => evaluateCohort(c, years, start, end, dates, histories))
+          val benchmarkReturn = results.find(_.name == CohortName.Vti).flatMap(_.totalReturnPercent)
+          val withExcess      =
+            results.map(r => r.copy(excessReturnPercent = for a <- r.totalReturnPercent; b <- benchmarkReturn yield round(a - b)))
+          HorizonEvaluation(
+            years,
+            if withExcess.forall(_.status == EvaluationStatus.Complete) then EvaluationStatus.Complete else EvaluationStatus.Incomplete,
+            entry,
+            target,
+            exit,
+            withExcess,
+            Nil
+          )
+        case _ =>
+          HorizonEvaluation(years, EvaluationStatus.Incomplete, entry, target, exit, Nil, List("Auditable benchmark entry/exit session is missing"))
 
   private def evaluateCohort(
       cohort: InvestmentCohort,
@@ -127,7 +124,7 @@ object InvestmentEvaluator:
         val duplicateDates = h.closes.map(_.date).distinct.size != h.closes.size
         val errors         = h.issues ++ List(
           Option.when(!h.audited)("price history unaudited"),
-          Option.when(h.adjustment != "split-and-dividend")("total-return adjustments unavailable"),
+          Option.when(h.adjustment != PriceAdjustment.SplitsAndDividends)("total-return adjustments unavailable"),
           Option.when(!h.completeRange.contains(start) || !h.completeRange.contains(end))("incomplete history coverage"),
           Option.when(duplicateDates)("duplicate price dates"),
           Option.when(h.ticker != ticker)("ticker mismatch")
@@ -145,7 +142,7 @@ object InvestmentEvaluator:
     if cohort.tickers.isEmpty || failures.nonEmpty then
       CohortEvaluation(
         cohort.name,
-        "incomplete",
+        EvaluationStatus.Incomplete,
         cohort.tickers,
         failures.map(_._1),
         failures.map { case (t, r) => s"${t.value}: $r" } ++ Option.when(cohort.tickers.isEmpty)("empty cohort"),
@@ -170,7 +167,7 @@ object InvestmentEvaluator:
       }
       CohortEvaluation(
         cohort.name,
-        "complete",
+        EvaluationStatus.Complete,
         cohort.tickers,
         Nil,
         Nil,

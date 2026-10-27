@@ -1,5 +1,6 @@
 package stockschecker.services
 
+import stockschecker.domain.Provider
 import cats.effect.IO
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
@@ -19,7 +20,7 @@ class PriceHistoryServiceSpec extends IOWordSpec {
     "cached",
     ticker,
     List(PriceCandle(today, 100, 100, 100, 100, 1L)),
-    "TwelveData",
+    Provider.TwelveData,
     "USD",
     PriceAdjustment.SplitsAndDividends,
     now,
@@ -34,7 +35,7 @@ class PriceHistoryServiceSpec extends IOWordSpec {
     when(repo.save(any[PriceHistorySnapshot])).thenReturnUnit
     when(client.getDailyPriceHistory(ticker, range, PriceAdjustment.SplitsAndDividends)).thenReturnIO(fetched)
 
-    def service: IO[PriceHistoryService[IO]] = PriceHistoryService.make(client, repo)
+    def service: IO[PriceHistoryService[IO]] = PriceHistoryService.make(client, repo, DataQualityServiceStub)
   }
 
   "Price history acquisition" should {

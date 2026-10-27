@@ -1,5 +1,6 @@
 package stockschecker.actions
 
+import stockschecker.domain.Provider
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import stockschecker.domain.{Job, JobId, JobStatusSummary}
@@ -16,7 +17,7 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
       val job = Job(JobId("parent"), Action.DeactivateSecurity(AAPL), ts, ts, retries = MaxTransientRetries)
       pollDelaySeconds(job) mustBe 1L
       List(0 -> 1L, 1 -> 2L, 8 -> 256L, 9 -> 300L, 30 -> 300L).foreach { case (waitCount, expected) =>
-        pollDelaySeconds(job.copy(waitCount = Some(waitCount))) mustBe expected
+        pollDelaySeconds(job.copy(waitCount = waitCount)) mustBe expected
       }
     }
 
@@ -36,12 +37,12 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
     }
 
     "distinguish provider deferral and configuration from bounded transient failures" in {
-      failure(AppError.ProviderDeferred("Finnhub", ts, "cooldown"), MaxTransientRetries) mustBe Failure.Defer(ts)
-      failure(AppError.ProviderConfiguration("Finnhub", "key"), 0) mustBe Failure.Pause("Finnhub")
-      failure(AppError.DataUnavailable("Finnhub", AAPL, "missing"), MaxTransientRetries - 1) mustBe Failure.Retry
-      failure(AppError.DataUnavailable("Finnhub", AAPL, "missing"), MaxTransientRetries) mustBe Failure.Fail
-      failure(AppError.HttpClient("Finnhub", 401, "unauthorized"), 0) mustBe Failure.Fail
-      failure(AppError.HttpClient("Finnhub", 503, "unavailable"), 0) mustBe Failure.Retry
+      failure(AppError.ProviderDeferred(Provider.Finnhub, ts, "cooldown"), MaxTransientRetries) mustBe Failure.Defer(ts)
+      failure(AppError.ProviderConfiguration(Provider.Finnhub, "key"), 0) mustBe Failure.Pause(Provider.Finnhub)
+      failure(AppError.DataUnavailable(Provider.Finnhub, AAPL, "missing"), MaxTransientRetries - 1) mustBe Failure.Retry
+      failure(AppError.DataUnavailable(Provider.Finnhub, AAPL, "missing"), MaxTransientRetries) mustBe Failure.Fail
+      failure(AppError.HttpClient(Provider.Finnhub.print, 401, "unauthorized"), 0) mustBe Failure.Fail
+      failure(AppError.HttpClient(Provider.Finnhub.print, 503, "unavailable"), 0) mustBe Failure.Retry
       retryDelay(0, MinimumRetryJitterMillis) mustBe 1500.millis
       retryDelay(2, MaximumRetryJitterMillis) mustBe 5500.millis
     }

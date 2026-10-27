@@ -1,5 +1,6 @@
 package stockschecker.clients.finnhub
 
+import stockschecker.domain.Provider
 import io.circe.{Decoder, DecodingFailure, Json, JsonObject}
 import stockschecker.domain.{FinancialData, FinancialObservation, FinancialSnapshot, Ticker}
 
@@ -72,7 +73,7 @@ object FinnhubFinancialMapping:
           val snapshot = FinancialSnapshot(
             id = s"${ticker.value}:$observedAt:$hash",
             ticker = ticker,
-            provider = "Finnhub",
+            provider = Provider.Finnhub,
             observedAt = observedAt,
             metrics = metric.toList.flatMap { case (key, value) => value.as[BigDecimal].toOption.map(key -> _) }.toMap,
             annual = annual,

@@ -4,9 +4,11 @@ import cats.effect.IO
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import org.mockito.ArgumentCaptor
-import stockschecker.domain.Job
+import stockschecker.domain.{Job, JobId}
 import stockschecker.fixtures.*
 import stockschecker.repositories.JobRepository
+
+import java.time.LocalDate
 
 class ActionDispatcherSpec extends IOWordSpec {
   given Clock[IO] = Clock.mock(ts)
@@ -18,7 +20,7 @@ class ActionDispatcherSpec extends IOWordSpec {
       when(jobs.enqueue(any[Job], any[Int])).thenReturnUnit
       val captured = ArgumentCaptor.forClass(classOf[Job])
       (for {
-        dispatcher <- ActionDispatcher.durable(jobs)
+        dispatcher <- ActionDispatcher.make(jobs)
         _          <- dispatcher.dispatch(action)
       } yield ()).asserting { _ =>
         verify(jobs).enqueue(captured.capture(), eqTo(ActionPriority.Normal))
@@ -28,5 +30,19 @@ class ActionDispatcherSpec extends IOWordSpec {
         captured.getValue.id.value must not be empty
       }
     }
+    "derive evaluation priority while preserving the caller's deterministic ID" in {
+      val jobs   = mock[JobRepository[IO]]
+      val id     = JobId("evaluation-job")
+      val action = Action.RefreshEvaluationPrices(AAPL, LocalDate.parse("2013-09-30"), LocalDate.parse("2026-09-30"))
+      when(jobs.enqueue(any[Job], any[Int])).thenReturnUnit
+      (for
+        dispatcher <- ActionDispatcher.make(jobs)
+        _          <- dispatcher.dispatchOnce(id, action)
+      yield ()).asserting { _ =>
+        verify(jobs).enqueue(Job(id, action, ts, ts), ActionPriority.Evaluation)
+        succeed
+      }
+    }
+
   }
 }

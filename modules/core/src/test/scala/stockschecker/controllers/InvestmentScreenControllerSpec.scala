@@ -7,7 +7,7 @@ import org.http4s.implicits.*
 import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
 import stockschecker.domain.*
-import stockschecker.utils.InvestmentEvaluator
+import stockschecker.domain.investment.InvestmentEvaluator
 import stockschecker.services.{InvestmentEvaluationService, InvestmentScreenService}
 import java.time.Instant
 import io.circe.syntax.*

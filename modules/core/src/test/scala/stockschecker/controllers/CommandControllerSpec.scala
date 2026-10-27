@@ -1,16 +1,17 @@
 package stockschecker.controllers
 
 import cats.effect.IO
+import io.circe.parser.parse
 import kirill5k.common.cats.Clock
 import org.http4s.*
 import org.http4s.implicits.*
 import kirill5k.common.http4s.test.HttpRoutesWordSpec
 import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
-import stockschecker.domain.{CreateCommand, Schedule}
+import stockschecker.domain.{CreateCommand, JobId, Schedule, UpdateCommand}
 import stockschecker.services.CommandService
 import stockschecker.actions.{Action, ActionDispatcher}
-import stockschecker.repositories.{CommandRepository, JobRepository}
+import stockschecker.repositories.CommandRepository
 import stockschecker.fixtures.*
 
 import scala.concurrent.duration.*
@@ -25,7 +26,9 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
     "GET /commands" should {
       "return 200 and all commands on success" in {
         val svc = mocks
-        when(svc.getAll).thenReturnIO(List(FetchLatestSecuritiesCommand))
+        when(svc.getAll).thenReturnIO(
+          List(FetchLatestSecuritiesCommand.copy(version = 3L, nextRunAt = Some(ts), activeRunId = Some(JobId("active"))))
+        )
 
         val res = for
           controller <- CommandController.make(apiConfig, svc)
@@ -48,11 +51,7 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
              |    },
              |    "lastExecutedAt" : "${ts}",
              |    "executionCount" : 1,
-             |    "maxExecutions" : 10,
-             |    "version" : null,
-             |    "nextRunAt" : null,
-             |    "activeRunId" : null,
-             |    "outbox" : null
+             |    "maxExecutions" : 10
              |  }
              |]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
@@ -104,23 +103,22 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
         res mustHaveStatus (Status.Created, Some(s"""{"id":"${FetchLatestSecuritiesCommand.id.value}"}"""))
       }
 
-      "reject a retired action before writing a command" in {
+      "reject an unsupported action before writing a command" in {
         given Clock[IO] = Clock.mock(ts)
         val commands    = mock[CommandRepository[IO]]
         val dispatcher  = mock[ActionDispatcher[IO]]
-        val jobs        = mock[JobRepository[IO]]
         val res         = for
-          service    <- CommandService.make(commands, dispatcher, jobs)
+          service    <- CommandService.make(commands, dispatcher)
           controller <- CommandController.make(apiConfig, service)
-          body = """{"action":{"kind":"legacy-retired"},"schedule":{"kind":"periodic","period":"20minutes"}}"""
+          body = """{"action":{"kind":"unsupported"},"schedule":{"kind":"periodic","period":"20minutes"}}"""
           req  = Request[IO](uri = uri"/commands", method = Method.POST).withHeaders(apiKeyHeader).withBody(body)
           response <- controller.routes.orNotFound.run(req)
-          _        <- IO(verifyNoInteractions(commands, dispatcher, jobs))
+          _        <- IO(verifyNoInteractions(commands, dispatcher))
         yield response
 
         res mustHaveStatus (
           Status.UnprocessableContent,
-          Some("""{"message":"This scheduling or audit action has been retired"}""")
+          Some("""{"message":"type Action has no class/object/case named 'unsupported'."}""")
         )
       }
 
@@ -183,6 +181,39 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
 
         res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
         verifyNoInteractions(svc)
+      }
+    }
+
+    "PUT /commands/{id}" should {
+      "return command configuration and execution data without scheduling internals" in {
+        val svc     = mocks
+        val command = FetchLatestSecuritiesCommand.copy(version = 3L, nextRunAt = Some(ts), activeRunId = Some(JobId("active")))
+        when(svc.update(any[UpdateCommand])).thenReturnIO(command)
+        val result = for
+          controller <- CommandController.make(apiConfig, svc)
+          body =
+            """{"isActive":true,"action":{"kind":"fetch-securities","exchanges":["nasdaq"]},"schedule":{"kind":"periodic","period":"20minutes"},"maxExecutions":10}"""
+          request = Request[IO](uri = uri"/commands" / command.id.value, method = Method.PUT).withHeaders(apiKeyHeader).withBody(body)
+          response <- controller.routes.orNotFound.run(request)
+          text     <- response.as[String]
+          json     <- IO.fromEither(parse(text))
+        yield (response.status, json)
+        result
+          .map { case (status, json) =>
+            status mustBe Status.Ok
+            json.asObject.get.keys.toSet mustBe Set(
+              "id",
+              "isActive",
+              "action",
+              "schedule",
+              "lastExecutedAt",
+              "executionCount",
+              "maxExecutions"
+            )
+            json.hcursor.get[String]("id") mustBe Right(command.id.value)
+            json.hcursor.get[Int]("executionCount") mustBe Right(command.executionCount)
+          }
+          .unsafeToFuture()(using cats.effect.unsafe.IORuntime.global)
       }
     }
 

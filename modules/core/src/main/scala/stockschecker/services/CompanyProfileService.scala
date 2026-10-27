@@ -4,7 +4,7 @@ import cats.effect.Sync
 import cats.syntax.flatMap.*
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
+import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Provider, Ticker}
 import stockschecker.repositories.{CompanyProfileRepository, SecurityRepository}
 
 trait CompanyProfileService[F[_]]:
@@ -16,7 +16,8 @@ trait CompanyProfileService[F[_]]:
 final private class LiveCompanyProfileService[F[_]](
     private val repository: CompanyProfileRepository[F],
     private val client: MarketDataClient[F],
-    private val securities: SecurityRepository[F]
+    private val securities: SecurityRepository[F],
+    private val quality: DataQualityService[F]
 )(using
     F: Sync[F]
 ) extends CompanyProfileService[F] {
@@ -33,7 +34,7 @@ final private class LiveCompanyProfileService[F[_]](
     repository.findAll(limit)
 
   private def fetchCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] =
-    client.getCompanyProfile(ticker)
+    quality.observe(ticker, Provider.Finnhub, "profile")(client.getCompanyProfile(ticker))(_.nonEmpty)
 
   override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
@@ -49,6 +50,7 @@ object CompanyProfileService:
   def make[F[_]: Sync](
       repo: CompanyProfileRepository[F],
       client: MarketDataClient[F],
-      securities: SecurityRepository[F]
+      securities: SecurityRepository[F],
+      quality: DataQualityService[F]
   ): F[CompanyProfileService[F]] =
-    Sync[F].pure(LiveCompanyProfileService[F](repo, client, securities))
+    Sync[F].pure(LiveCompanyProfileService[F](repo, client, securities, quality))

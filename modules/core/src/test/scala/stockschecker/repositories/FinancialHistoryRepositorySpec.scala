@@ -1,5 +1,6 @@
 package stockschecker.repositories
 
+import stockschecker.domain.Provider
 import cats.effect.IO
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.operations.Filter
@@ -15,7 +16,7 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
         val first = FinancialSnapshot(
           "first",
           AAPL,
-          "Finnhub",
+          Provider.Finnhub,
           ts,
           Map("peTTM" -> BigDecimal(20)),
           Nil,
@@ -47,7 +48,7 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
         val first = FinancialSnapshot(
           "first",
           AAPL,
-          "Finnhub",
+          Provider.Finnhub,
           ts,
           Map.empty,
           Nil,

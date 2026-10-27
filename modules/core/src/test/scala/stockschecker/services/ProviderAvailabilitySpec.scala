@@ -1,5 +1,9 @@
-package stockschecker.clients
+package stockschecker.services
 
+import stockschecker.clients.{ProviderAccess, ProviderLimits}
+
+import stockschecker.domain.DatasetStatus
+import stockschecker.domain.Provider
 import kirill5k.common.cats.Clock
 import cats.effect.{IO, Ref}
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
@@ -19,7 +23,7 @@ class ProviderAvailabilitySpec extends RepositorySpec {
     "test",
     AAPL,
     AAPLPriceCandles.toList,
-    "TwelveData",
+    Provider.TwelveData,
     "USD",
     PriceAdjustment.SplitsAndDividends,
     Instant.parse("2025-12-01T12:00:00Z"),
@@ -27,10 +31,12 @@ class ProviderAvailabilitySpec extends RepositorySpec {
   )
   private val limits = ProviderLimits(60000, 0, 1)
 
-  private def observed(access: ProviderAccess[IO], availability: DatasetAvailabilityObserver[IO], ticker: Ticker)(
+  private def observed(access: ProviderAccess[IO], availability: DataQualityService[IO], ticker: Ticker)(
       request: IO[PriceHistorySnapshot]
   ): IO[PriceHistorySnapshot] =
-    availability.observed(ticker, "TwelveData", "daily-prices-all")(access.run("TwelveData", limits)(request))(_.candles.nonEmpty)
+    availability.observe(ticker, Provider.TwelveData, "daily-prices-all")(access.run(Provider.TwelveData, limits)(request))(
+      _.candles.nonEmpty
+    )
 
   "Provider availability" should {
     "recover from a provider 404 while preserving manual exclusions and successful-data timestamps" in
@@ -39,19 +45,19 @@ class ProviderAvailabilitySpec extends RepositorySpec {
           quality        <- DataQualityRepository.make[IO](db)
           budgets        <- ProviderBudgetRepository.make[IO](db)
           access         <- ProviderAccess.make[IO](budgets)
-          availability   <- DatasetAvailabilityObserver.make[IO](quality)
+          availability   <- DataQualityService.make[IO](quality, org.mockito.Mockito.mock(classOf[SecurityRepository[IO]]), org.mockito.Mockito.mock(classOf[InvestmentRankingService[IO]]))
           securities     <- SecurityRepository.make[IO](db)
           _              <- securities.save(List(AAPLSecurity, MSFTSecurity))
           _              <- securities.deactivate(AAPL)
           appleCalls     <- Ref.of[IO, Int](0)
           microsoftCalls <- Ref.of[IO, Int](0)
           apple = observed(access, availability, AAPL)(appleCalls.getAndUpdate(_ + 1).flatMap {
-            case 0 => IO.raiseError(AppError.HttpClient("TwelveData", 404, "no data"))
+            case 0 => IO.raiseError(AppError.HttpClient(Provider.TwelveData.print, 404, "no data"))
             case 1 => IO.pure(snapshot)
-            case _ => IO.raiseError(AppError.HttpClient("TwelveData", 503, "transient failure"))
+            case _ => IO.raiseError(AppError.HttpClient(Provider.TwelveData.print, 503, "transient failure"))
           })
           microsoft = observed(access, availability, MSFT)(microsoftCalls.getAndUpdate(_ + 1).flatMap {
-            case 0 => IO.raiseError(AppError.HttpClient("TwelveData", 404, "no data"))
+            case 0 => IO.raiseError(AppError.HttpClient(Provider.TwelveData.print, 404, "no data"))
             case _ => IO.pure(snapshot.copy(ticker = MSFT))
           })
           first       <- apple.attempt
@@ -70,14 +76,14 @@ class ProviderAvailabilitySpec extends RepositorySpec {
           included    <- securities.find(MSFT)
         yield
           first.left.toOption.collect { case e: AppError.HttpClient => e.status } mustBe Some(404)
-          unavailable.find(_.ticker == AAPL).map(_.status) mustBe Some("unavailable")
+          unavailable.find(_.ticker == AAPL).map(_.status) mustBe Some(DatasetStatus.Unavailable)
           unavailable.find(_.ticker == AAPL).flatMap(_.lastSuccessAt) mustBe None
           recovered mustBe snapshot
-          available.map(_.status).toSet mustBe Set("available")
+          available.map(_.status).toSet mustBe Set(DatasetStatus.Available)
           available.flatMap(_.lastSuccessAt).size mustBe 2
           val successfulApple = available.find(_.ticker == AAPL).get
           val failedApple     = failed.find(_.ticker == AAPL).get
-          failedApple.status mustBe "failed"
+          failedApple.status mustBe DatasetStatus.Failed
           failedApple.lastSuccessAt mustBe successfulApple.lastSuccessAt
           failedApple.failure mustBe Some("HTTP 503")
           excluded.map(_.isActive) mustBe Some(false)
@@ -92,13 +98,13 @@ class ProviderAvailabilitySpec extends RepositorySpec {
           quality      <- DataQualityRepository.make[IO](db)
           budgets      <- ProviderBudgetRepository.make[IO](db)
           access       <- ProviderAccess.make[IO](budgets)
-          availability <- DatasetAvailabilityObserver.make[IO](quality)
+          availability <- DataQualityService.make[IO](quality, org.mockito.Mockito.mock(classOf[SecurityRepository[IO]]), org.mockito.Mockito.mock(classOf[InvestmentRankingService[IO]]))
           now          <- IO.realTimeInstant
-          _            <- quality.record(AAPL, "TwelveData", "daily-prices-all", "available", now, None)
-          _            <- quality.record(MSFT, "TwelveData", "daily-prices-all", "failed", now, Some("HTTP 503"))
+          _            <- quality.record(AAPL, Provider.TwelveData, "daily-prices-all", DatasetStatus.Available, now, None)
+          _            <- quality.record(MSFT, Provider.TwelveData, "daily-prices-all", DatasetStatus.Failed, now, Some("HTTP 503"))
           before       <- quality.all
           first        <- observed(access, availability, AAPL)(
-            IO.raiseError(AppError.ProviderDeferred("TwelveData", now.plusSeconds(300), "Retry-After"))
+            IO.raiseError(AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(300), "Retry-After"))
           ).attempt
           second <- observed(access, availability, MSFT)(IO.raiseError(new AssertionError("Deferred request ran"))).attempt
           after  <- quality.all

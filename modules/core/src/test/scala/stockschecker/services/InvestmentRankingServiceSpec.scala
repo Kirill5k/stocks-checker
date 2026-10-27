@@ -1,7 +1,5 @@
 package stockschecker.services
 
-import stockschecker.utils.InvestmentScorer
-
 import cats.effect.IO
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
@@ -16,40 +14,32 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
   private val now     = Instant.parse("2026-10-19T12:00:00Z")
   private val date    = LocalDate.parse("2026-10-19")
   private val recipe  = InvestmentRecipe()
-  private val ranking = InvestmentRankingRun(InvestmentRankingId("published"), now, recipe, Nil, Nil)
+  private val ranking = InvestmentRanking(InvestmentRankingId("published"), now, recipe, InvestmentRankingSummary(0, 0, Map.empty))
   given Clock[IO]     = Clock.mock(now)
-
-  private def metadata(run: InvestmentRankingRun): InvestmentRankingMetadata =
-    InvestmentRankingMetadata(run.id, run.createdAt, run.recipe, Some(InvestmentRankingSummary.from(run)))
 
   private class Dependencies:
     val stocks   = mock[StockRepository[IO]]
     val history  = mock[FinancialHistoryRepository[IO]]
     val rankings = mock[InvestmentRankingRepository[IO]]
-    val inputs   = mock[InvestmentRankingInputRepository[IO]]
     val screens  = mock[InvestmentScreenRepository[IO]]
 
-    def service: IO[InvestmentRankingService[IO]] = InvestmentRankingService.make(stocks, history, rankings, inputs, screens)
+    def service: IO[InvestmentRankingService[IO]] = InvestmentRankingService.make(stocks, history, rankings, screens)
 
     def allowPruning(): Unit =
       when(screens.rankingIds).thenReturnIO(Set.empty[InvestmentRankingId])
-      when(rankings.obsolete(any[Instant], any[Set[InvestmentRankingId]])).thenReturnIO(Nil)
-      when(inputs.delete(any[List[InvestmentRankingId]])).thenReturnUnit
-      when(rankings.delete(any[List[InvestmentRankingId]])).thenReturnUnit
-      when(rankings.ids).thenReturnIO(Set.empty[InvestmentRankingId])
-      when(inputs.pruneOrphans(any[Set[InvestmentRankingId]], any[Instant])).thenReturnUnit
+      when(rankings.prune(any[Instant], any[Set[InvestmentRankingId]])).thenReturnUnit
       ()
 
   "InvestmentRankingService" should {
-    "reuse a ranking from the same UTC day and recipe without loading its inputs" in {
+    "reuse a ranking from the same UTC day and recipe without loading its entries" in {
       val d        = new Dependencies
       val existing = ranking.copy(createdAt = Instant.parse("2026-10-19T00:00:00Z"))
-      when(d.rankings.latest).thenReturnSome(metadata(existing))
+      when(d.rankings.latest).thenReturnSome(existing)
       d.service.flatMap(_.refresh(date)).asserting { refreshed =>
-        refreshed mustBe InvestmentRankingHeader.from(existing)
+        refreshed mustBe existing
         verify(d.rankings).latest
         verifyNoMoreInteractions(d.rankings)
-        verifyNoInteractions(d.stocks, d.history, d.inputs, d.screens)
+        verifyNoInteractions(d.stocks, d.history, d.screens)
         succeed
       }
     }
@@ -57,84 +47,85 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
     "reuse the UTC day selected by the caller when the clock has moved to the next day" in {
       val d        = new Dependencies
       val existing = ranking.copy(createdAt = Instant.parse("2026-10-18T23:59:59Z"))
-      when(d.rankings.latest).thenReturnSome(metadata(existing))
+      when(d.rankings.latest).thenReturnSome(existing)
       d.service.flatMap(_.refresh(date.minusDays(1))).asserting { refreshed =>
-        refreshed mustBe InvestmentRankingHeader.from(existing)
-        verifyNoInteractions(d.stocks, d.history, d.inputs, d.screens)
+        refreshed mustBe existing
+        verifyNoInteractions(d.stocks, d.history, d.screens)
         succeed
       }
     }
 
     List(
-      "no published ranking"                  -> Option.empty[InvestmentRankingMetadata],
-      "a ranking from the previous UTC day"   -> Some(metadata(ranking.copy(createdAt = Instant.parse("2026-10-18T23:59:59Z")))),
-      "a ranking with another recipe version" -> Some(metadata(ranking.copy(recipe = recipe.copy(version = "previous"))))
+      "no published ranking"                  -> Option.empty[InvestmentRanking],
+      "a ranking from the previous UTC day"   -> Some(ranking.copy(createdAt = Instant.parse("2026-10-18T23:59:59Z"))),
+      "a ranking with another recipe version" -> Some(ranking.copy(recipe = recipe.copy(version = "previous")))
     ).foreach { case (condition, existing) =>
-      s"save the complete universe before publishing its header when there is $condition" in {
-        val d         = new Dependencies
-        val financial = FinancialSnapshot("facts", MSFT, "Finnhub", now, Map.empty, Nil, Nil, "", "hash", "mapping", Nil)
+      s"score the complete universe and compact its inputs before storage when there is $condition" in {
+        val d           = new Dependencies
+        val observation = FinancialObservation("fcfMargin", date.minusYears(1), BigDecimal("0.2"), "ratio")
+        val financial   = FinancialSnapshot(
+          "facts",
+          MSFT,
+          Provider.Finnhub,
+          now,
+          Map("peTTM" -> BigDecimal(10), "pfcfShareTTM" -> BigDecimal(12), "epsTTM" -> BigDecimal(4), "irrelevant" -> BigDecimal(999)),
+          List(observation),
+          List(observation),
+          "raw provider response",
+          "hash",
+          "mapping",
+          Nil
+        )
         when(d.rankings.latest).thenReturn(IO.pure(existing))
         when(d.stocks.findAll(StockFilters(), None)).thenReturnIO(List(MSFTStock, AAPLStock))
         when(d.history.findLatestAll).thenReturnIO(List(financial))
-        when(d.inputs.save(any[InvestmentRankingRun])).thenReturnUnit
-        when(d.rankings.save(any[InvestmentRankingHeader])).thenReturnUnit
+        when(d.rankings.save(any[InvestmentRanking], any[List[InvestmentRankingEntry]])).thenReturnUnit
         d.allowPruning()
         d.service.flatMap(_.refresh(date)).asserting { refreshed =>
-          val saved   = org.mockito.ArgumentCaptor.forClass(classOf[InvestmentRankingRun])
-          val ordered = org.mockito.Mockito.inOrder(d.inputs, d.rankings, d.screens)
-          ordered.verify(d.inputs).save(saved.capture())
-          ordered.verify(d.rankings).save(refreshed)
+          val captured = org.mockito.ArgumentCaptor.forClass(classOf[List[InvestmentRankingEntry]])
+          val ordered  = org.mockito.Mockito.inOrder(d.rankings, d.screens)
+          ordered.verify(d.rankings).save(org.mockito.ArgumentMatchers.eq(refreshed), captured.capture())
           ordered.verify(d.screens).rankingIds
-          ordered.verify(d.rankings).obsolete(now.minusSeconds(30L * 86400), Set.empty)
-          val run = saved.getValue
-          run.id.value must not be empty
-          run.createdAt mustBe now
-          run.recipe mustBe recipe
-          run.inputs mustBe List(InvestmentCandidate(AAPLStock, None), InvestmentCandidate(MSFTStock, Some(financial)))
-          run.scorecards.map(_.ticker).toSet mustBe Set(AAPL, MSFT)
-          run.scorecards.find(_.ticker == MSFT).flatMap(_.financialSnapshotId) mustBe Some(financial.id)
-          refreshed mustBe InvestmentRankingHeader.from(run)
+          ordered.verify(d.rankings).prune(now.minusSeconds(30L * 86400), Set.empty)
+          val saved = captured.getValue
+          refreshed.id.value must not be empty
+          refreshed.createdAt mustBe now
+          refreshed.recipe mustBe recipe
+          val compactFinancial = financial.copy(
+            metrics = Map("peTTM" -> BigDecimal(10), "pfcfShareTTM" -> BigDecimal(12), "epsTTM" -> BigDecimal(4)),
+            annual = Nil,
+            quarterly = Nil,
+            rawPayload = ""
+          )
+          saved.map(_.candidate) mustBe List(InvestmentCandidate(AAPLStock, None), InvestmentCandidate(MSFTStock, Some(compactFinancial)))
+          saved.find(_.scorecard.ticker == MSFT).flatMap(_.scorecard.financialSnapshotId) mustBe Some(financial.id)
+          refreshed.summary mustBe InvestmentRankingSummary.from(saved)
           succeed
         }
       }
     }
 
-    "leave a ranking unpublished when saving its inputs fails" in {
+    "skip pruning when saving the ranking fails" in {
       val d       = new Dependencies
       val failure = new RuntimeException("Input batch failed")
       when(d.rankings.latest).thenReturnNone
       when(d.stocks.findAll(StockFilters(), None)).thenReturnIO(List(AAPLStock))
       when(d.history.findLatestAll).thenReturnIO(Nil)
-      when(d.inputs.save(any[InvestmentRankingRun])).thenReturn(IO.raiseError(failure))
+      when(d.rankings.save(any[InvestmentRanking], any[List[InvestmentRankingEntry]])).thenReturn(IO.raiseError(failure))
       d.service.flatMap(_.refresh(date)).attempt.asserting { result =>
         result mustBe Left(failure)
-        verify(d.rankings, never).save(any[InvestmentRankingHeader])
         verifyNoInteractions(d.screens)
         succeed
       }
     }
 
-    "return stored summary metadata without reading ranking inputs" in {
+    "return stored metadata without loading entries" in {
       val d = new Dependencies
-      when(d.rankings.latest).thenReturnSome(metadata(ranking))
-      d.service.flatMap(_.latestHeader).asserting { header =>
-        header mustBe Some(InvestmentRankingHeader.from(ranking))
-        verifyNoInteractions(d.inputs, d.stocks, d.history, d.screens)
-        succeed
-      }
-    }
-
-    "backfill a legacy ranking summary without hydrating its inputs" in {
-      val d       = new Dependencies
-      val summary = InvestmentRankingSummary(100, 80, Map("missing-financials" -> 20))
-      when(d.rankings.latest).thenReturnSome(metadata(ranking).copy(summary = None))
-      when(d.inputs.summary(ranking.id)).thenReturnIO(summary)
-      when(d.rankings.updateSummary(ranking.id, summary)).thenReturnUnit
-      d.service.flatMap(_.latestHeader).asserting { header =>
-        header mustBe Some(InvestmentRankingHeader(ranking.id, now, recipe, summary))
-        verify(d.inputs).summary(ranking.id)
-        verify(d.rankings).updateSummary(ranking.id, summary)
-        verifyNoMoreInteractions(d.inputs)
+      when(d.rankings.latest).thenReturnSome(ranking)
+      d.service.flatMap(_.latestAvailable).asserting { result =>
+        result mustBe Some(ranking)
+        verify(d.rankings).latest
+        verifyNoMoreInteractions(d.rankings)
         verifyNoInteractions(d.stocks, d.history, d.screens)
         succeed
       }
@@ -143,18 +134,13 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
     "return a completed ranking exactly at the two-day freshness boundary" in {
       val d        = new Dependencies
       val existing = ranking.copy(createdAt = now.minusSeconds(2L * 86400))
-      when(d.rankings.latest).thenReturnSome(metadata(existing))
-      when(d.inputs.find(existing.id)).thenReturnIO(InvestmentRankingInputs(Nil, Nil))
-      d.service.flatMap(_.latest).asserting { latest =>
-        latest mustBe existing
-        verifyNoInteractions(d.stocks, d.history)
-        succeed
-      }
+      when(d.rankings.latest).thenReturnSome(existing)
+      d.service.flatMap(_.latest).asserting(_ mustBe existing)
     }
 
     List(
-      "missing"             -> Option.empty[InvestmentRankingMetadata],
-      "from another recipe" -> Some(metadata(ranking.copy(recipe = recipe.copy(version = "previous"))))
+      "missing"             -> Option.empty[InvestmentRanking],
+      "from another recipe" -> Some(ranking.copy(recipe = recipe.copy(version = "previous")))
     ).foreach { case (condition, existing) =>
       s"reject the latest ranking when it is $condition" in {
         val d = new Dependencies
@@ -169,68 +155,43 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
 
     "reject a latest ranking older than two days" in {
       val d = new Dependencies
-      when(d.rankings.latest).thenReturnSome(metadata(ranking.copy(createdAt = now.minusSeconds(2L * 86400 + 1))))
+      when(d.rankings.latest).thenReturnSome(ranking.copy(createdAt = now.minusSeconds(2L * 86400 + 1)))
       d.service.flatMap(_.latest).assertThrows(AppError.FailedValidation("The latest completed ranking is stale"))
     }
 
-    "reconstruct a published ranking from its metadata and stored inputs" in {
-      val d          = new Dependencies
-      val candidates = List(InvestmentCandidate(MSFTStock, None), InvestmentCandidate(AAPLStock, None))
-      val scorecards = InvestmentScorer.rank(candidates, now, recipe)
-      val existing   = ranking.copy(inputs = candidates, scorecards = scorecards)
-      when(d.rankings.find(existing.id)).thenReturnSome(metadata(existing))
-      when(d.inputs.find(existing.id)).thenReturnIO(InvestmentRankingInputs(candidates, scorecards))
-      d.service.flatMap(_.get(existing.id)).asserting { loaded =>
-        loaded mustBe existing
-        verify(d.inputs).find(existing.id)
-        verifyNoMoreInteractions(d.inputs)
-        succeed
+    "load ranking metadata and entries independently" in {
+      val d     = new Dependencies
+      val entry = InvestmentRankingEntry(InvestmentCandidate(AAPLStock, None), InvestmentRepositoryFixtures.card)
+      when(d.rankings.find(ranking.id)).thenReturnSome(ranking)
+      when(d.rankings.findEntries(ranking.id)).thenReturnIO(List(entry))
+      (for
+        service  <- d.service
+        metadata <- service.get(ranking.id)
+        entries  <- service.entries(ranking.id)
+      yield (metadata, entries)).asserting { case (metadata, entries) =>
+        metadata mustBe ranking
+        entries mustBe List(entry)
       }
     }
 
-    "return no ranking without loading orphan inputs when its header is absent" in {
-      val d       = new Dependencies
-      val missing = InvestmentRankingId("missing")
-      when(d.rankings.find(missing)).thenReturnNone
-      d.service.flatMap(_.find(missing)).asserting { loaded =>
-        loaded mustBe None
-        verifyNoInteractions(d.inputs)
-        succeed
-      }
-    }
-
-    "report when a published ranking disappears without loading orphan inputs" in {
+    "report when published metadata disappears" in {
       val d       = new Dependencies
       val missing = InvestmentRankingId("missing")
       when(d.rankings.find(missing)).thenReturnNone
       d.service.flatMap(_.get(missing)).attempt.asserting { loaded =>
         loaded.left.toOption.get mustBe a[IllegalStateException]
         loaded.left.toOption.get.getMessage mustBe "Published investment ranking disappeared"
-        verifyNoInteractions(d.inputs)
-        succeed
       }
     }
 
-    "protect referenced rankings and remove obsolete inputs before headers and orphans" in {
+    "pass referenced rankings to repository retention" in {
       val d          = new Dependencies
       val before     = now.minusSeconds(30L * 86400)
       val referenced = Set(InvestmentRankingId("screen-ranking"))
-      val obsolete   = List(InvestmentRankingId("obsolete"))
-      val published  = referenced + ranking.id
       when(d.screens.rankingIds).thenReturnIO(referenced)
-      when(d.rankings.obsolete(before, referenced)).thenReturnIO(obsolete)
-      when(d.inputs.delete(obsolete)).thenReturnUnit
-      when(d.rankings.delete(obsolete)).thenReturnUnit
-      when(d.rankings.ids).thenReturnIO(published)
-      when(d.inputs.pruneOrphans(published, before)).thenReturnUnit
+      when(d.rankings.prune(before, referenced)).thenReturnUnit
       d.service.flatMap(_.prune(before)).asserting { _ =>
-        val ordered = org.mockito.Mockito.inOrder(d.screens, d.rankings, d.inputs)
-        ordered.verify(d.screens).rankingIds
-        ordered.verify(d.rankings).obsolete(before, referenced)
-        ordered.verify(d.inputs).delete(obsolete)
-        ordered.verify(d.rankings).delete(obsolete)
-        ordered.verify(d.rankings).ids
-        ordered.verify(d.inputs).pruneOrphans(published, before)
+        verify(d.rankings).prune(before, referenced)
         verifyNoInteractions(d.stocks, d.history)
         succeed
       }

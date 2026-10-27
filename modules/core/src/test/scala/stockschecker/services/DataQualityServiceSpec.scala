@@ -20,10 +20,10 @@ class DataQualityServiceSpec extends IOWordSpec {
       val rankings   = mock[InvestmentRankingService[IO]]
       val observed   = now.minusSeconds(3600)
       val datasets   = List(
-        DatasetAvailability(MSFT, "TwelveData", "daily-prices-all", "failed", now, None, Some("HTTP 503")),
-        DatasetAvailability(AAPL, "Finnhub", "financials", "available", observed, Some(observed), None)
+        DatasetAvailability(MSFT, Provider.TwelveData, "daily-prices-all", DatasetStatus.Failed, now, None, Some("HTTP 503")),
+        DatasetAvailability(AAPL, Provider.Finnhub, "financials", DatasetStatus.Available, observed, Some(observed), None)
       )
-      val header = InvestmentRankingHeader(
+      val header = InvestmentRanking(
         InvestmentRankingId("ranking"),
         observed,
         InvestmentRecipe(),
@@ -31,13 +31,13 @@ class DataQualityServiceSpec extends IOWordSpec {
       )
       when(quality.all).thenReturnIO(datasets)
       when(securities.findExcluded).thenReturnIO(List(AAPLSecurity.copy(exclusionReason = Some("user-excluded"))))
-      when(rankings.latestHeader).thenReturnIO(Some(header))
+      when(rankings.latestAvailable).thenReturnIO(Some(header))
       DataQualityService.make(quality, securities, rankings).flatMap(_.report).asserting { report =>
         report.generatedAt mustBe now
         report.rankingAsOf mustBe Some(observed)
         report.datasets.map(_.ticker) mustBe List(AAPL, MSFT)
-        report.countsByStatus mustBe Map("available" -> 1, "failed" -> 1)
-        report.exclusions mustBe List(ExcludedSecurity(AAPL, "user-excluded", "listed"))
+        report.countsByStatus mustBe Map(DatasetStatus.Available -> 1, DatasetStatus.Failed -> 1)
+        report.exclusions mustBe List(ExcludedSecurity(AAPL, "user-excluded", ListingStatus.Listed))
         report.rankingCoverage mustBe Map("eligible" -> 80, "universe" -> 100, "missing-financials" -> 20)
         verify(rankings, never).latest
         verify(securities, never).streamAll
@@ -51,7 +51,7 @@ class DataQualityServiceSpec extends IOWordSpec {
       val rankings   = mock[InvestmentRankingService[IO]]
       when(quality.all).thenReturnIO(Nil)
       when(securities.findExcluded).thenReturnIO(Nil)
-      when(rankings.latestHeader).thenReturnIO(None)
+      when(rankings.latestAvailable).thenReturnIO(None)
       DataQualityService.make(quality, securities, rankings).flatMap(_.report).asserting { report =>
         report.rankingAsOf mustBe None
         report.rankingCoverage mustBe Map.empty

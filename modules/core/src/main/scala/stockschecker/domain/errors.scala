@@ -6,6 +6,16 @@ object errors {
     override def getMessage: String = message
 
   object AppError:
+    /** Safe operational messages: never persist provider response bodies or credentials. */
+    def safeSummary(error: Throwable): String = error match
+      case e: ProviderDeferred      => s"Deferred until ${e.retryAt}"
+      case _: DataUnavailable       => "Recent matching provider price data is unavailable"
+      case _: ProviderConfiguration => "Check provider credentials and subscription"
+      case e: HttpClient            => s"HTTP ${e.status}"
+      case _: JsonParsingFailure    => "Invalid provider response"
+      case _: FailedValidation      => "Provider data failed validation"
+      case _                        => error.getClass.getSimpleName
+
     sealed trait Unauth        extends AppError
     sealed trait NotFound      extends AppError
     sealed trait Conflict      extends AppError
@@ -16,14 +26,14 @@ object errors {
     final case class FailedValidation(message: String) extends Unprocessable
     final case class Critical(message: String)         extends AppError
 
-    final case class ProviderDeferred(provider: String, retryAt: java.time.Instant, reason: String) extends AppError:
-      override def message: String = s"$provider deferred until $retryAt: $reason"
+    final case class ProviderDeferred(provider: Provider, retryAt: java.time.Instant, reason: String) extends AppError:
+      override def message: String = s"${provider.print} deferred until $retryAt: $reason"
 
-    final case class ProviderConfiguration(provider: String, message: String) extends AppError
+    final case class ProviderConfiguration(provider: Provider, message: String) extends AppError
 
     /** Missing market observations use bounded job retries, unlike provider quota deferrals. */
-    final case class DataUnavailable(provider: String, ticker: Ticker, reason: String) extends AppError:
-      override def message: String = s"$provider data unavailable for $ticker: $reason"
+    final case class DataUnavailable(provider: Provider, ticker: Ticker, reason: String) extends AppError:
+      override def message: String = s"${provider.print} data unavailable for $ticker: $reason"
 
     final case class HttpClient(name: String, status: Int, error: String) extends AppError:
       override def message: String = s"$name HTTP $status - $error"

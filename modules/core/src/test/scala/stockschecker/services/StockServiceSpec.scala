@@ -2,7 +2,6 @@ package stockschecker.services
 
 import cats.effect.IO
 import kirill5k.common.cats.test.IOWordSpec
-import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.domain.{StockFilters, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.{CompanyProfileRepository, SecurityRepository, StockRepository}
@@ -13,11 +12,11 @@ class StockServiceSpec extends IOWordSpec {
   "A StockService" when {
     "findByTicker" should {
       "return stock when found" in {
-        val (repo, dispatcher) = mocks
+        val repo = mock[StockRepository[IO]]
         when(repo.find(any[Ticker])).thenReturnSome(AAPLStock)
 
         val res = for
-          svc <- StockService.make(repo, dispatcher, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
+          svc <- StockService.make(repo, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
           res <- svc.findByTicker(AAPL)
         yield res
 
@@ -28,11 +27,11 @@ class StockServiceSpec extends IOWordSpec {
       }
 
       "raise error when not found" in {
-        val (repo, dispatcher) = mocks
+        val repo = mock[StockRepository[IO]]
         when(repo.find(any[Ticker])).thenReturnNone
 
         val res = for
-          svc <- StockService.make(repo, dispatcher, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
+          svc <- StockService.make(repo, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
           res <- svc.findByTicker(AAPL)
         yield res
 
@@ -42,11 +41,11 @@ class StockServiceSpec extends IOWordSpec {
 
     "findAll" should {
       "return all stocks matching filters" in {
-        val (repo, dispatcher) = mocks
+        val repo = mock[StockRepository[IO]]
         when(repo.findAll(any[StockFilters], anyOpt[Int])).thenReturnIO(List(AAPLStock, MSFTStock))
 
         val res = for
-          svc <- StockService.make(repo, dispatcher, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
+          svc <- StockService.make(repo, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
           res <- svc.findAll(StockFilters(), Some(10))
         yield res
 
@@ -58,24 +57,19 @@ class StockServiceSpec extends IOWordSpec {
     }
 
     "deactivate" should {
-      "dispatch DeactivateSecurity and DeactivateCompanyProfile actions" in {
-        val (repo, dispatcher) = mocks
-        when(dispatcher.dispatch(any[Action])).thenReturnUnit
-
-        val res = for
-          svc <- StockService.make(repo, dispatcher, mock[SecurityRepository[IO]], mock[CompanyProfileRepository[IO]])
-          _   <- svc.deactivate(AAPL)
-        yield ()
-
-        res.asserting { _ =>
-          verify(dispatcher).dispatch(Action.DeactivateSecurity(AAPL))
-          verify(dispatcher).dispatch(Action.DeactivateCompanyProfile(AAPL))
+      "persist both deactivations before returning" in {
+        val repo       = mock[StockRepository[IO]]
+        val securities = mock[SecurityRepository[IO]]
+        val profiles   = mock[CompanyProfileRepository[IO]]
+        when(securities.deactivate(AAPL)).thenReturnUnit
+        when(profiles.deactivate(AAPL)).thenReturnUnit
+        StockService.make(repo, securities, profiles).flatMap(_.deactivate(AAPL)).asserting { _ =>
+          verify(securities).deactivate(AAPL)
+          verify(profiles).deactivate(AAPL)
+          verifyNoInteractions(repo)
           succeed
         }
       }
     }
   }
-
-  def mocks: (StockRepository[IO], ActionDispatcher[IO]) =
-    (mock[StockRepository[IO]], mock[ActionDispatcher[IO]])
 }

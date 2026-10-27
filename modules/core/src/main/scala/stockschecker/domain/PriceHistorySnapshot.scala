@@ -8,7 +8,7 @@ final case class PriceHistorySnapshot(
     id: String,
     ticker: Ticker,
     candles: List[PriceCandle],
-    provider: String,
+    provider: Provider,
     currency: String,
     adjustment: PriceAdjustment,
     fetchedAt: Instant,

@@ -1,7 +1,7 @@
 package stockschecker.domain
 
 import io.circe.Codec
-import java.time.{Instant, LocalDate}
+import java.time.{Instant, LocalDate, YearMonth}
 
 final case class EvaluationClose(
     date: LocalDate,
@@ -11,27 +11,41 @@ final case class EvaluationClose(
 final case class EvaluationPriceSeries(
     ticker: Ticker,
     closes: List[EvaluationClose],
-    source: String,
+    source: Provider,
     fetchedAt: Instant,
     audited: Boolean,
-    adjustment: String,
+    adjustment: PriceAdjustment,
     completeRange: DateRange,
     issues: List[String] = Nil,
     snapshotIds: List[String] = Nil
 ) derives Codec.AsObject
 
-final case class EvaluationCapturePlan(
-    screenId: InvestmentScreenId,
-    month: String,
-    through: LocalDate,
-    createdAt: Instant
-) derives Codec.AsObject
+object EvaluationPriceSeries:
+  private val ProviderCandleLimit = 5000
+
+  def from(snapshot: PriceHistorySnapshot, range: DateRange): EvaluationPriceSeries =
+    val issues = List(
+      Option.when(snapshot.currency != "USD")("unsupported evaluation currency"),
+      Option.when(snapshot.adjustment != PriceAdjustment.SplitsAndDividends)("total-return adjustments unavailable"),
+      Option.when(snapshot.candles.size >= ProviderCandleLimit)("provider response may be truncated")
+    ).flatten
+    EvaluationPriceSeries(
+      snapshot.ticker,
+      snapshot.candles.filter(c => range.contains(c.date)).map(c => EvaluationClose(c.date, c.close)),
+      snapshot.provider,
+      snapshot.fetchedAt,
+      issues.isEmpty,
+      snapshot.adjustment,
+      snapshot.requestedRange,
+      issues,
+      snapshotIds = List(snapshot.id)
+    )
 
 final case class EvaluationPriceEvidence(
     ticker: Ticker,
-    source: String,
+    source: Provider,
     fetchedAt: Instant,
-    adjustment: String,
+    adjustment: PriceAdjustment,
     audited: Boolean,
     snapshotIds: List[String]
 ) derives Codec.AsObject
@@ -45,7 +59,7 @@ final case class InvestmentConcentration(
 ) derives Codec.AsObject
 
 final case class InvestmentCohort(
-    name: String,
+    name: CohortName,
     tickers: List[Ticker],
     concentration: Option[InvestmentConcentration] = None
 ) derives Codec.AsObject
@@ -57,8 +71,8 @@ final case class EvaluationCostScenario(
 ) derives Codec.AsObject
 
 final case class CohortEvaluation(
-    name: String,
-    status: String,
+    name: CohortName,
+    status: EvaluationStatus,
     constituents: List[Ticker],
     missing: List[Ticker],
     issues: List[String],
@@ -74,7 +88,7 @@ final case class CohortEvaluation(
 
 final case class HorizonEvaluation(
     years: Int,
-    status: String,
+    status: EvaluationStatus,
     entryDate: Option[LocalDate],
     targetDate: LocalDate,
     exitDate: Option[LocalDate],
@@ -88,20 +102,34 @@ final case class InvestmentEvaluation(
     methodologyVersion: String,
     methodology: String,
     horizons: List[HorizonEvaluation],
-    sources: List[String],
+    sources: List[Provider],
     priceEvidence: List[EvaluationPriceEvidence] = Nil,
     pendingDataJobs: List[JobId] = Nil,
     dataThrough: Option[LocalDate] = None,
-    captureMonth: Option[String] = None,
-    // A settled monthly capture stops fetching; it may still contain unaudited or missing data. None identifies legacy reports.
-    settled: Option[Boolean] = None
+    captureMonth: Option[YearMonth] = None,
+    // A settled monthly capture stops fetching; it may still contain unaudited or missing data.
+    settled: Boolean = false
 ) derives Codec.AsObject {
   def isComplete: Boolean =
     pendingDataJobs.isEmpty && dataThrough.nonEmpty && horizons.nonEmpty &&
       horizons.forall(h =>
-        h.entryDate.nonEmpty && h.cohorts.nonEmpty && h.cohorts.forall(c => c.status != "incomplete" && c.missing.isEmpty)
+        h.entryDate.nonEmpty && h.cohorts.nonEmpty && h.cohorts.forall(c => c.status != EvaluationStatus.Incomplete && c.missing.isEmpty)
       )
 
-  // Legacy reports without a lifecycle marker are final only when all required data is auditable.
-  def isSettled: Boolean = settled.getOrElse(isComplete)
+  def isFinished: Boolean =
+    settled && horizons.nonEmpty &&
+      dataThrough.exists(through =>
+        horizons.forall { horizon =>
+          val lastPossibleExit = horizon.targetDate.plusDays(if horizon.entryDate.isEmpty then 14 else 7)
+          horizon.exitDate.exists(date => !date.isAfter(through)) || !lastPossibleExit.isAfter(through)
+        }
+      )
 }
+
+object InvestmentEvaluation:
+  // Shift the next-day entry fallback before adding years, including leap-day crossings.
+  def finalCaptureThrough(formed: LocalDate): LocalDate = formed.plusDays(1).plusYears(5).plusDays(14)
+
+  /** Capture completed calendar months; stop requesting data once the last horizon can be resolved. */
+  def captureThrough(formed: LocalDate, month: YearMonth): LocalDate =
+    List(month.atDay(1).minusDays(1), finalCaptureThrough(formed)).min

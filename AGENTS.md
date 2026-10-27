@@ -110,8 +110,8 @@ The application starts in `Application.scala` which:
 The application uses a custom action-based task system for background jobs:
 
 *   **Action**: A sealed trait representing different types of background tasks (e.g., `FetchSecurities`, `FetchCompanyProfiles`). Actions are defined in `actions/Action.scala`.
-*   **ActionDispatcher**: A queue-based dispatcher that manages pending actions. Persists accepted jobs in MongoDB.
-*   **ActionExecutor**: Claims durable jobs with leases and executes them through service methods. Parent jobs aggregate child states with backoff. Runs as an FS2 stream in parallel with the HTTP server.
+*   **ActionDispatcher**: The service gateway to durable jobs. Persists dispatched actions in MongoDB, supports deterministic idempotent dispatch, and reports pending job IDs.
+*   **ActionExecutor**: Claims durable jobs with leases and heartbeats and delegates execution to `ActionHandler`. Parent jobs aggregate child states with backoff. Transient failures use the bounded `JobExecutionPolicy`; terminal jobs are not restarted. Runs as an FS2 stream in parallel with the HTTP server.
 
 ### Command System
 
@@ -120,26 +120,30 @@ Commands provide scheduled execution of actions:
 *   **Command**: Represents a scheduled task with a cron or periodic schedule, stored in MongoDB
 *   **Schedule**: Supports both periodic (fixed interval) and cron-based scheduling
 *   Commands track execution count, last execution time, and can have a maximum execution limit
-*   The independent command scheduler reserves due occurrences and recovers persisted outbox entries
+*   The independent command scheduler reserves deterministic run IDs and recovers a missing job from the command's active run. Per-command failures are isolated; no outbox is needed.
 
 ### Layered Architecture
 
-The codebase follows a strict functional architecture with dependency flow:
+The codebase follows a strict functional architecture:
 
 ```
-Application
-  └─> Resources (HTTP backend, MongoDB)
-      └─> Clients (external API integrations)
-          └─> Repositories (MongoDB persistence)
-              └─> Services (business logic)
-                  └─> Controllers (HTTP endpoints)
+Controllers -> Services -> Repositories -> Domain
+                       -> Clients -> ProviderAccess
+                       -> ActionDispatcher -> JobRepository
+ActionExecutor -> ActionHandler -> Services
+CommandScheduler -> CommandRepository, JobRepository
 ```
 
-*   **Resources**: Manages lifecycle of HTTP client and MongoDB connection
-*   **Clients**: Interface with external APIs (Finnhub, TwelveData, AlphaVantage)
-*   **Repositories**: Provide CRUD operations on MongoDB collections
-*   **Services**: Orchestrate business logic, coordinate between repositories and clients
-*   **Controllers**: Define Tapir endpoints and map HTTP requests/responses
+*   **Resources**: Manage the HTTP client and MongoDB connection lifecycle.
+*   **Clients**: Fetch external data; dataset availability is recorded by `DataQualityService` at the service boundary. `ProviderAccess` coordinates persisted request budgets.
+*   **Repositories**: Persist and query domain data. Services own business decisions. Retention receives protected IDs for active command runs and all price jobs belonging to unsettled evaluation captures.
+*   **Services**: Coordinate repositories, clients and pure domain logic. Services access jobs through `ActionDispatcher`.
+*   **Domain**: Pure investment scoring, selection and evaluation live under `domain.investment`. Price analytics live beside `PriceAnalytics`; there is no `utils` package.
+*   **Controllers**: Define Tapir endpoints and map HTTP requests and responses. Internal command scheduling state stays out of response views.
+
+### Storage assumptions
+
+This code targets a first deployment with an empty database. Persistence entities use the current schema; there are no legacy decoders, startup backfills or migrations. Monthly evaluation documents track both pending and settled captures in `investment-evaluations`; reads do not create captures or jobs. `InvestmentRankingRepository` owns `investment-rankings` and `investment-ranking-inputs`, publishing metadata only after all entries are stored.
 
 ### Controller Security
 

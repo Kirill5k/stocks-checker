@@ -6,7 +6,7 @@ import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceAnalytics, PriceAnalyticsFilter, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.utils.PriceAnalyticsAlignment
+import stockschecker.domain.PriceAnalyticsAlignment
 import stockschecker.repositories.{CompanyProfileRepository, LatestPriceRepository, PriceAnalyticsRepository}
 
 import java.time.{LocalDate, ZoneOffset}

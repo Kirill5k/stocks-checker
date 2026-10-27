@@ -5,7 +5,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{FinancialMetrics, Ticker}
+import stockschecker.domain.{FinancialMetrics, Provider, Ticker}
 import stockschecker.repositories.{CompanyProfileRepository, FinancialHistoryRepository, FinancialMetricsRepository}
 
 trait FinancialMetricsService[F[_]]:
@@ -15,7 +15,8 @@ final private class LiveFinancialMetricsService[F[_]](
     private val repository: FinancialMetricsRepository[F],
     private val client: MarketDataClient[F],
     private val profiles: CompanyProfileRepository[F],
-    private val history: FinancialHistoryRepository[F]
+    private val history: FinancialHistoryRepository[F],
+    private val quality: DataQualityService[F]
 )(using
     F: Sync[F]
 ) extends FinancialMetricsService[F] {
@@ -23,7 +24,7 @@ final private class LiveFinancialMetricsService[F[_]](
   override def find(ticker: Ticker, fetch: Boolean): F[FinancialMetrics] =
     val result =
       if fetch then
-        client.getFinancialData(ticker).flatMap {
+        quality.observe(ticker, Provider.Finnhub, "financials")(client.getFinancialData(ticker))(_.nonEmpty).flatMap {
           case Some(data) =>
             history.save(data.snapshot) >> repository.save(List(data.metrics)) >>
               profiles.updateFinancialMetricsLastUpdated(List(ticker)).as(Some(data.metrics))
@@ -38,6 +39,7 @@ object FinancialMetricsService:
       repository: FinancialMetricsRepository[F],
       client: MarketDataClient[F],
       profiles: CompanyProfileRepository[F],
-      history: FinancialHistoryRepository[F]
+      history: FinancialHistoryRepository[F],
+      quality: DataQualityService[F]
   ): F[FinancialMetricsService[F]] =
-    Sync[F].pure(LiveFinancialMetricsService[F](repository, client, profiles, history))
+    Sync[F].pure(LiveFinancialMetricsService[F](repository, client, profiles, history, quality))

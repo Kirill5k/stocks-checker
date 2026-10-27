@@ -10,40 +10,73 @@ import cats.syntax.traverse.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
+import stockschecker.domain.{Command, Job, JobCommand}
 import stockschecker.repositories.{CommandRepository, JobRepository}
 
+import java.time.Instant
 import scala.concurrent.duration.*
 
-/** Scheduling and outbox recovery never share the execution worker pool. */
-object CommandScheduler {
-  def tick[F[_]: {Temporal, Clock}](commands: CommandRepository[F], jobs: JobRepository[F]): F[Unit] =
-    for {
-      now       <- summon[Clock[F]].now
-      pending   <- commands.pending(now)
-      completed <- jobs.terminalIds(pending.flatMap(_.activeRunId))
-      results   <- pending.traverse { command =>
-        (for {
-          _ <- command.outbox.traverse_ { occurrence =>
-            jobs.enqueue(occurrence.job, ActionPriority.forAction(occurrence.job.action)) >> commands.clearOutbox(
-              command.id,
-              occurrence.job.id
-            )
-          }
-          current <- command.activeRunId
-            .filter(completed)
-            .fold(Option(command.copy(outbox = None)).pure[F])(id => commands.completeRun(command.id, id))
-          ready      <- current.traverse(commands.initializeNextRun(_, now)).map(_.flatten)
-          occurrence <- ready.traverse(commands.reserve(_, now)).map(_.flatten)
-          _          <- occurrence.traverse_(o =>
-            jobs.enqueue(o.job, ActionPriority.forAction(o.job.action)) >> commands.clearOutbox(command.id, o.job.id)
-          )
-        } yield ()).attempt
-      }
-      _ <- results.collectFirst { case Left(error) => error }.fold(Temporal[F].unit)(Temporal[F].raiseError[Unit])
-    } yield ()
+trait CommandScheduler[F[_]]:
+  def tick: F[Unit]
+  def run: Stream[F, Unit]
 
-  def run[F[_]: {Temporal, Clock, Logger}](commands: CommandRepository[F], jobs: JobRepository[F]): Stream[F, Unit] =
+/** Scheduling and recovery never share the execution worker pool. */
+final private class LiveCommandScheduler[F[_]: {Temporal, Clock, Logger}](
+    commands: CommandRepository[F],
+    jobs: JobRepository[F]
+) extends CommandScheduler[F] {
+  private def enqueue(command: Command, now: Instant): F[Unit] =
+    command.activeRunId.traverse_ { id =>
+      val acceptedAt = command.lastExecutedAt.getOrElse(now)
+      val job        = Job(id, command.action, acceptedAt, acceptedAt, Some(JobCommand(command.id, command.version, id)))
+      jobs.enqueue(job, ActionPriority.forAction(command.action))
+    }
+
+  private def recoverRun(command: Command, now: Instant): F[Option[Command]] =
+    command.activeRunId.fold(Option(command).pure[F]) { id =>
+      jobs.find(id).flatMap {
+        case Some(_)                                                                                     => Option(command).pure[F]
+        case None if command.isActive && id.value.startsWith(s"${command.id.value}:${command.version}:") =>
+          enqueue(command, now).as(Some(command))
+        // An edit may replace the action after reservation but before enqueue. Never attach it to the old run ID.
+        case None => commands.completeRun(command.id, id)
+      }
+    }
+
+  private def completeRun(command: Command): F[Option[Command]] =
+    command.activeRunId.fold(Option(command).pure[F]) { id =>
+      jobs.find(id).flatMap {
+        case Some(job) if job.isTerminal => commands.completeRun(command.id, id)
+        case _                           => Option(command).pure[F]
+      }
+    }
+
+  private def scheduleNext(command: Command, now: Instant): F[Option[Command]] =
+    commands.initializeNextRun(command, now)
+
+  private def reserveAndEnqueue(command: Command, now: Instant): F[Unit] =
+    commands.reserve(command, now).flatMap(_.traverse_(enqueue(_, now)))
+
+  override def tick: F[Unit] =
+    for
+      now     <- summon[Clock[F]].now
+      pending <- commands.pending(now)
+      _       <- pending.traverse_ { command =>
+        (for
+          recovered <- recoverRun(command, now)
+          completed <- recovered.traverse(completeRun).map(_.flatten)
+          ready     <- completed.traverse(scheduleNext(_, now)).map(_.flatten)
+          _         <- ready.traverse_(reserveAndEnqueue(_, now))
+        yield ()).handleErrorWith(error => summon[Logger[F]].error(error)(s"Command ${command.id.value} scheduling failed"))
+      }
+    yield ()
+
+  override def run: Stream[F, Unit] =
     Stream
-      .repeatEval(tick(commands, jobs).handleErrorWith(error => summon[Logger[F]].error(error)("Command scheduler tick failed")))
+      .repeatEval(tick.handleErrorWith(error => summon[Logger[F]].error(error)("Command scheduler tick failed")))
       .metered(1.second)
 }
+
+object CommandScheduler:
+  def make[F[_]: {Temporal, Clock, Logger}](commands: CommandRepository[F], jobs: JobRepository[F]): F[CommandScheduler[F]] =
+    Temporal[F].pure(new LiveCommandScheduler(commands, jobs))

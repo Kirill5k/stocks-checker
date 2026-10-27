@@ -1,14 +1,15 @@
 package stockschecker.clients.twelvedata
 
+import stockschecker.domain.Provider
 import kirill5k.common.cats.Clock
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.traverse.*
 import io.circe.syntax.*
 import kirill5k.common.sttp.test.Sttp4WordSpec
-import stockschecker.clients.{DatasetAvailabilityObserver, ProviderAccess, ProviderLimits}
+import stockschecker.clients.{ProviderAccess, ProviderLimits}
 import stockschecker.common.config.TwelveDataConfig
-import stockschecker.domain.{DatasetAvailability, DateRange, PriceAdjustment, Ticker}
-import stockschecker.repositories.{DataQualityRepository, ProviderBudgetRepository}
+import stockschecker.domain.{DateRange, PriceAdjustment, Ticker}
+import stockschecker.repositories.ProviderBudgetRepository
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.WebSocketStreamBackend
 import stockschecker.domain.errors.AppError
@@ -22,25 +23,22 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
   given Clock[IO] = Clock.make[IO]
   final private case class AccessFixture(
       access: ProviderAccess[IO],
-      availability: DatasetAvailabilityObserver[IO],
-      reservations: Ref[IO, List[(String, Long, Int)]],
-      statuses: Ref[IO, List[String]]
+      reservations: Ref[IO, List[(String, Long, Int)]]
   )
 
   private def accessFixture: IO[AccessFixture] =
     for
       budgets      <- Ref.of[IO, Map[String, (LocalDate, Int, Instant)]](Map.empty)
       reservations <- Ref.of[IO, List[(String, Long, Int)]](List.empty)
-      statuses     <- Ref.of[IO, List[String]](List.empty)
       repository = new ProviderBudgetRepository[IO] {
         def reserve(
-            provider: String,
+            provider: Provider,
             now: Instant,
             spacingMillis: Long,
             dailyAllowance: Int,
             account: Option[String] = None
         ): IO[Option[Instant]] =
-          val id = account.fold(provider)(value => s"$provider:$value")
+          val id = account.fold(provider.print)(value => s"${provider.print}:$value")
           reservations.update(_ :+ ((id, spacingMillis, dailyAllowance))) >> budgets.modify { all =>
             val today              = now.atZone(ZoneOffset.UTC).toLocalDate
             val (day, count, next) = all.getOrElse(id, (today, 0, Instant.EPOCH))
@@ -52,24 +50,18 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
               case Some(until) => (all, Some(until))
               case None        => (all.updated(id, (today, used + 1, now.plusMillis(spacingMillis))), None)
           }
-        def cooldown(provider: String, until: Instant, account: Option[String] = None): IO[Unit] =
-          val id = account.fold(provider)(value => s"$provider:$value")
+        def cooldown(provider: Provider, until: Instant, account: Option[String] = None): IO[Unit] =
+          val id = account.fold(provider.print)(value => s"${provider.print}:$value")
           budgets.update { all =>
             val (day, used, next) = all.getOrElse(id, (LocalDate.ofEpochDay(0L), 0, Instant.EPOCH))
             all.updated(id, (day, used, if until.isAfter(next) then until else next))
           }
       }
-      quality = new DataQualityRepository[IO] {
-        def record(ticker: Ticker, provider: String, dataset: String, status: String, at: Instant, failure: Option[String]): IO[Unit] =
-          statuses.update(_ :+ status)
-        def all: IO[List[DatasetAvailability]] = IO.pure(List.empty)
-      }
-      access       <- ProviderAccess.make[IO](repository)
-      availability <- DatasetAvailabilityObserver.make[IO](quality)
-    yield AccessFixture(access, availability, reservations, statuses)
+      access <- ProviderAccess.make[IO](repository)
+    yield AccessFixture(access, reservations)
 
   private def makeClient(config: TwelveDataConfig, backend: WebSocketStreamBackend[IO, Fs2Streams[IO]]): IO[TwelveDataClient[IO]] =
-    accessFixture.flatMap(fixture => TwelveDataClient.make[IO](config, backend, fixture.access, fixture.availability))
+    accessFixture.flatMap(fixture => TwelveDataClient.make[IO](config, backend, fixture.access))
 
   private def dailyResponse(
       values: List[(LocalDate, BigDecimal)],
@@ -125,7 +117,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           results.foreach { case (adjustment, result) =>
             result.ticker mustBe Ticker("AAPL")
             result.currency mustBe "EUR"
-            result.provider mustBe "TwelveData"
+            result.provider mustBe Provider.TwelveData
             result.adjustment mustBe adjustment
             result.requestedRange mustBe DateRange(from, through)
             result.candles.map(_.date) mustBe List(from, through)
@@ -218,7 +210,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           second <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
         } yield (before, after, first, second)).asserting { case (before, after, first, second) =>
           val error = first.left.toOption.get.asInstanceOf[AppError.ProviderDeferred]
-          error.provider mustBe "TwelveData"
+          error.provider mustBe Provider.TwelveData
           error.retryAt.isBefore(before.plusSeconds(120)) mustBe false
           error.retryAt.isAfter(after.plusSeconds(120)) mustBe false
           second.left.toOption.collect { case e: AppError.ProviderDeferred => e.retryAt } mustBe Some(error.retryAt)
@@ -253,13 +245,12 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         }
         (for
           fixture  <- accessFixture
-          client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access, fixture.availability)
+          client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
           first    <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends)
           second   <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends)
           third    <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
           attempts <- fixture.reservations.get
-          statuses <- fixture.statuses.get
-        yield (first, second, third, attempts, statuses)).asserting { case (first, second, third, attempts, statuses) =>
+        yield (first, second, third, attempts)).asserting { case (first, second, third, attempts) =>
           first.candles.head.close mustBe BigDecimal(101)
           second.candles.head.close mustBe BigDecimal(202)
           third.left.toOption.get mustBe a[AppError.ProviderDeferred]
@@ -271,7 +262,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
             spacing mustBe 1L
             allowance mustBe 1
           }
-          statuses mustBe List("available", "available")
+          succeed
         }
       }
 
@@ -284,11 +275,11 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         }
         (for
           fixture   <- accessFixture
-          original  <- TwelveDataClient.make[IO](multiple, backend, fixture.access, fixture.availability)
+          original  <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
           first     <- original.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends)
-          reordered <- TwelveDataClient.make[IO](multiple.copy(apiKey = "key-two,key-one"), backend, fixture.access, fixture.availability)
+          reordered <- TwelveDataClient.make[IO](multiple.copy(apiKey = "key-two,key-one"), backend, fixture.access)
           second    <- reordered.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends)
-          recreated <- TwelveDataClient.make[IO](multiple, backend, fixture.access, fixture.availability)
+          recreated <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
           exhausted <- recreated.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
           attempts  <- fixture.reservations.get
         yield (first, second, exhausted, attempts)).asserting { case (first, second, exhausted, attempts) =>
@@ -312,7 +303,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
             .thenRespondF(firstStarted.complete(()).void >> release.get.as(ResponseStub.adjust(dailyResponse(candles))))
             .whenRequestMatches(_.hasParams(Map("apikey" -> "key-two")))
             .thenRespondF(secondStarted.complete(()).void >> release.get.as(ResponseStub.adjust(dailyResponse(candles))))
-          client <- TwelveDataClient.make[IO](multiple, backend, fixture.access, fixture.availability)
+          client <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
           first  <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).start
           result <- (for
             _       <- firstStarted.get.timeout(2.seconds)
@@ -340,7 +331,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         val backend  = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(dailyResponse(candles)))
         (for
           fixture  <- accessFixture
-          client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access, fixture.availability)
+          client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
           before   <- IO.realTimeInstant
           _        <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends)
           _        <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends)
@@ -355,7 +346,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         }
       }
 
-      "continue with a healthy key after an authentication failure and record only the successful logical request" in {
+      "continue with a healthy key after an authentication failure" in {
         val multiple = config.copy(apiKey = "invalid-secret,healthy-secret", limits = ProviderLimits(60000, 0, 1))
         val backend  = fs2BackendStub.whenRequestMatchesPartial {
           case r if r.hasParams(Map("apikey" -> "invalid-secret")) => ResponseStub.adjust("invalid-secret", StatusCode.Unauthorized)
@@ -364,18 +355,16 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         }
         (for
           fixture  <- accessFixture
-          client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access, fixture.availability)
+          client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
           first    <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends)
           _        <- IO.sleep(3.millis)
           _        <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends)
           _        <- IO.sleep(3.millis)
           _        <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends)
           attempts <- fixture.reservations.get
-          statuses <- fixture.statuses.get
-        yield (first, attempts, statuses)).asserting { case (first, attempts, statuses) =>
+        yield (first, attempts)).asserting { case (first, attempts) =>
           first.candles.size mustBe 2
           attempts.groupBy(_._1).values.map(_.size).toList.sorted mustBe List(1, 3)
-          statuses mustBe List("available", "available", "available")
         }
       }
 
@@ -389,21 +378,19 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           case _ => throw new AssertionError("Unexpected API key")
         }
         (for
-          fixture  <- accessFixture
-          client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access, fixture.availability)
-          before   <- IO.realTimeInstant
-          first    <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
-          after    <- IO.realTimeInstant
-          second   <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
-          statuses <- fixture.statuses.get
-        yield (before, after, first, second, statuses)).asserting { case (before, after, first, second, statuses) =>
+          fixture <- accessFixture
+          client  <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
+          before  <- IO.realTimeInstant
+          first   <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
+          after   <- IO.realTimeInstant
+          second  <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
+        yield (before, after, first, second)).asserting { case (before, after, first, second) =>
           val error = first.left.toOption.get.asInstanceOf[AppError.ProviderDeferred]
           error.retryAt.isBefore(before.plusSeconds(60)) mustBe false
           error.retryAt.isAfter(after.plusSeconds(60)) mustBe false
           second.left.toOption.collect { case e: AppError.ProviderDeferred => e.retryAt } mustBe Some(error.retryAt)
           error.toString must not include "slow-secret"
           error.toString must not include "fast-secret"
-          statuses mustBe empty
         }
       }
 
@@ -412,12 +399,11 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         val backend  = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust("first-secret,second-secret", StatusCode.Forbidden))
         (for
           fixture  <- accessFixture
-          client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access, fixture.availability)
+          client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
           first    <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
           second   <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
           attempts <- fixture.reservations.get
-          statuses <- fixture.statuses.get
-        yield (first, second, attempts, statuses)).asserting { case (first, second, attempts, statuses) =>
+        yield (first, second, attempts)).asserting { case (first, second, attempts) =>
           List(first, second).foreach { result =>
             val error = result.left.toOption.get
             error mustBe a[AppError.ProviderConfiguration]
@@ -425,7 +411,6 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
             error.toString must not include "second-secret"
           }
           attempts.size mustBe 2
-          statuses mustBe List("configuration-error", "configuration-error")
         }
       }
 
@@ -465,14 +450,12 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         }
         (for {
           fixture  <- accessFixture
-          client   <- TwelveDataClient.make[IO](config, backend, fixture.access, fixture.availability)
+          client   <- TwelveDataClient.make[IO](config, backend, fixture.access)
           result   <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(through, from), PriceAdjustment.SplitsAndDividends).attempt
           attempts <- fixture.reservations.get
-          statuses <- fixture.statuses.get
-        } yield (result, attempts, statuses)).asserting { case (result, attempts, statuses) =>
+        } yield (result, attempts)).asserting { case (result, attempts) =>
           result.left.toOption.get mustBe a[AppError.FailedValidation]
           attempts mustBe empty
-          statuses mustBe empty
         }
       }
     }

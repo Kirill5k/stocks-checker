@@ -1,5 +1,6 @@
 package stockschecker.repositories
 
+import stockschecker.domain.ListingStatus
 import cats.Monad
 import cats.effect.Concurrent
 import cats.syntax.functor.*
@@ -54,7 +55,7 @@ final private class LiveSecurityRepository[F[_]](
         .set(Field.Exchange, security.exchange)
         .set(Field.Name, security.name)
         .set(Field.Kind, security.kind)
-        .set("listingStatus", "listed")
+        .set(Field.ListingStatus, ListingStatus.Listed.print)
       update = security.companyProfileLastUpdatedAt.fold(update)(ts => update.set(Field.CompanyProfileLastUpdatedAt, ts))
       WriteCommand.UpdateOne(Filter.idEq(id), update, UpdateOptions(upsert = true))
 
@@ -116,15 +117,15 @@ final private class LiveSecurityRepository[F[_]](
     collection
       .updateOne(
         Filter.idEq(ticker.value),
-        Update.set(Field.IsActive, false).set("exclusionReason", "user-excluded").currentDate(Field.UpdatedAt)
+        Update.set(Field.IsActive, false).set(Field.ExclusionReason, "user-excluded").currentDate(Field.UpdatedAt)
       )
       .void
 
   override def activate(ticker: Ticker): F[Unit] =
-    collection.updateOne(Filter.idEq(ticker.value), Update.set("exclusionReason", Option.empty[String])).void >>
+    collection.updateOne(Filter.idEq(ticker.value), Update.set(Field.ExclusionReason, Option.empty[String])).void >>
       collection
         .updateOne(
-          Filter.idEq(ticker.value) && Filter.ne("listingStatus", "delisted"),
+          Filter.idEq(ticker.value) && Filter.ne(Field.ListingStatus, ListingStatus.Delisted.print),
           Update.set(Field.IsActive, true).currentDate(Field.UpdatedAt)
         )
         .void
@@ -135,13 +136,15 @@ final private class LiveSecurityRepository[F[_]](
       for
         current <- findByExchange(exchange)
         _       <- save(securities)
-        _ <- collection.updateMany(Filter.in(Field.Id, listed) && Filter.isNull("exclusionReason"), Update.set(Field.IsActive, true)).void
+        _       <- collection
+          .updateMany(Filter.in(Field.Id, listed) && Filter.isNull(Field.ExclusionReason), Update.set(Field.IsActive, true))
+          .void
         missing = current.map(_.ticker.value).filterNot(listed.toSet)
         _ <- F.whenA(missing.nonEmpty)(
           collection
             .updateMany(
               Filter.in(Field.Id, missing),
-              Update.set("listingStatus", "delisted").set(Field.IsActive, false)
+              Update.set(Field.ListingStatus, ListingStatus.Delisted.print).set(Field.IsActive, false)
             )
             .void
         )
@@ -178,6 +181,7 @@ object SecurityRepository extends MongoJsonCodecs:
     val Kind                        = "kind"
     val IsActive                    = "isActive"
     val ExclusionReason             = "exclusionReason"
+    val ListingStatus               = "listingStatus"
     val CompanyProfileLastUpdatedAt = "companyProfileLastUpdatedAt"
     val CreatedAt                   = "createdAt"
     val UpdatedAt                   = "updatedAt"
@@ -185,17 +189,13 @@ object SecurityRepository extends MongoJsonCodecs:
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[SecurityRepository[F]] =
     for
       collection <- database.getCollectionWithCodec[SecurityEntity](CollectionName)
-      _          <- collection.updateMany(
-        Filter.eq(Field.IsActive, false) && Filter.isNull("exclusionReason") && Filter.isNull("listingStatus"),
-        Update.set("exclusionReason", "legacy-excluded").set("listingStatus", "listed")
-      )
-      _ <- collection.createIndex(Index.ascending(Field.Ticker))
-      _ <- collection.createIndex(Index.ascending(Field.Exchange))
-      _ <- collection.createIndex(Index.ascending(Field.Kind))
-      _ <- collection.createIndex(Index.ascending(Field.IsActive))
-      _ <- collection.createIndex(Index.ascending(Field.ExclusionReason))
-      _ <- collection.createIndex(Index.ascending(List(Field.Exchange, Field.Kind, Field.IsActive)))
-      _ <- collection.createIndex(Index.ascending(Field.UpdatedAt))
-      _ <- collection.createIndex(Index.ascending(Field.CompanyProfileLastUpdatedAt))
+      _          <- collection.createIndex(Index.ascending(Field.Ticker))
+      _          <- collection.createIndex(Index.ascending(Field.Exchange))
+      _          <- collection.createIndex(Index.ascending(Field.Kind))
+      _          <- collection.createIndex(Index.ascending(Field.IsActive))
+      _          <- collection.createIndex(Index.ascending(Field.ExclusionReason))
+      _          <- collection.createIndex(Index.ascending(List(Field.Exchange, Field.Kind, Field.IsActive)))
+      _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
+      _          <- collection.createIndex(Index.ascending(Field.CompanyProfileLastUpdatedAt))
       collWithCodecs = collection.withAddedCodec[Ticker].withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[Entity]
     yield LiveSecurityRepository[F](collWithCodecs)

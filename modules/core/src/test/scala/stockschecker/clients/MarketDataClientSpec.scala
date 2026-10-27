@@ -1,5 +1,6 @@
 package stockschecker.clients
 
+import stockschecker.domain.Provider
 import cats.effect.IO
 import kirill5k.common.cats.Clock
 import fs2.Stream
@@ -8,7 +9,7 @@ import stockschecker.clients.finnhub.FinnhubClient
 import stockschecker.clients.twelvedata.TwelveDataClient
 import stockschecker.domain.{DateRange, Exchange, FinancialData, FinancialSnapshot, PriceAdjustment, PriceHistorySnapshot}
 import stockschecker.fixtures.*
-import stockschecker.repositories.{DataQualityRepository, ProviderBudgetRepository}
+import stockschecker.repositories.ProviderBudgetRepository
 
 import java.time.{Instant, LocalDate}
 
@@ -22,7 +23,7 @@ class MarketDataClientSpec extends IOWordSpec {
     "prices",
     AAPL,
     AAPLPriceCandles.toList,
-    "TwelveData",
+    Provider.TwelveData,
     "USD",
     PriceAdjustment.Splits,
     ts,
@@ -30,12 +31,24 @@ class MarketDataClientSpec extends IOWordSpec {
   )
   private val financials = FinancialData(
     AAPLFinancialMetrics,
-    FinancialSnapshot("financials", AAPL, "Finnhub", ts, Map.empty, Nil, Nil, "{}", "hash", FinancialSnapshot.FinnhubMappingVersion, Nil)
+    FinancialSnapshot(
+      "financials",
+      AAPL,
+      Provider.Finnhub,
+      ts,
+      Map.empty,
+      Nil,
+      Nil,
+      "{}",
+      "hash",
+      FinancialSnapshot.FinnhubMappingVersion,
+      Nil
+    )
   )
 
   private def budgets: ProviderBudgetRepository[IO] = {
     val repository = mock[ProviderBudgetRepository[IO]]
-    when(repository.reserve(anyString, any[Instant], any[Long], any[Int], any[Option[String]])).thenReturnIO(None)
+    when(repository.reserve(any[Provider], any[Instant], any[Long], any[Int], any[Option[String]])).thenReturnIO(None)
     repository
   }
 
@@ -44,16 +57,15 @@ class MarketDataClientSpec extends IOWordSpec {
       val finnhub = mock[FinnhubClient[IO]]
       val twelve  = mock[TwelveDataClient[IO]]
       val budget  = budgets
-      val quality = mock[DataQualityRepository[IO]]
       (for
         access <- ProviderAccess.make[IO](budget)
         _ = when(finnhub.getListedSecurities(Exchange.NASDAQ)).thenReturn(
-          Stream.eval(access.run("Finnhub", limits)(IO.pure(List(AAPLSecurity, MSFTSecurity)))).flatMap(Stream.emits)
+          Stream.eval(access.run(Provider.Finnhub, limits)(IO.pure(List(AAPLSecurity, MSFTSecurity)))).flatMap(Stream.emits)
         )
-        _ = when(finnhub.getCompanyProfile(AAPL)).thenReturn(access.run("Finnhub", limits)(IO.pure(Some(AAPLCompanyProfile))))
-        _ = when(finnhub.getFinancialData(AAPL)).thenReturn(access.run("Finnhub", limits)(IO.pure(Some(financials))))
+        _ = when(finnhub.getCompanyProfile(AAPL)).thenReturn(access.run(Provider.Finnhub, limits)(IO.pure(Some(AAPLCompanyProfile))))
+        _ = when(finnhub.getFinancialData(AAPL)).thenReturn(access.run(Provider.Finnhub, limits)(IO.pure(Some(financials))))
         _ = when(twelve.getDailyPriceHistory(AAPL, range, PriceAdjustment.Splits))
-          .thenReturn(access.run("TwelveData", limits)(IO.pure(snapshot)))
+          .thenReturn(access.run(Provider.TwelveData, limits)(IO.pure(snapshot)))
         client     <- MarketDataClient.make[IO](finnhub, twelve)
         securities <- client.getTradedSecurities(Exchange.NASDAQ).compile.toList
         profile    <- client.getCompanyProfile(AAPL)
@@ -68,10 +80,15 @@ class MarketDataClientSpec extends IOWordSpec {
         verify(finnhub).getCompanyProfile(AAPL)
         verify(finnhub).getFinancialData(AAPL)
         verify(twelve).getDailyPriceHistory(AAPL, range, PriceAdjustment.Splits)
-        verify(budget, times(3)).reserve(org.mockito.ArgumentMatchers.eq("Finnhub"), any[Instant], any[Long], any[Int], any[Option[String]])
-        verify(budget).reserve(org.mockito.ArgumentMatchers.eq("TwelveData"), any[Instant], any[Long], any[Int], any[Option[String]])
+        verify(budget, times(3)).reserve(
+          org.mockito.ArgumentMatchers.eq(Provider.Finnhub),
+          any[Instant],
+          any[Long],
+          any[Int],
+          any[Option[String]]
+        )
+        verify(budget).reserve(org.mockito.ArgumentMatchers.eq(Provider.TwelveData), any[Instant], any[Long], any[Int], any[Option[String]])
         verifyNoMoreInteractions(budget, finnhub, twelve)
-        verifyNoInteractions(quality)
         succeed
       }
     }

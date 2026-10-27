@@ -13,16 +13,17 @@ import sttp.tapir.server.http4s.Http4sServerInterpreter
 final private class InvestmentScreenController[F[_]: Async](
     service: InvestmentScreenService[F],
     evaluations: InvestmentEvaluationService[F],
-    config: ApiConfig
-) extends Controller[F](ApiKeyRequirement.Required(config.key)):
+    apiKeyRequirement: ApiKeyRequirement
+) extends Controller[F](apiKeyRequirement):
   import InvestmentScreenController.*
-  private val create        = secured(createEndpoint).serverLogic(_ => request => service.create(request).asResponse)
-  private val get           = secured(getEndpoint).serverLogic(_ => id => service.get(id).asResponse)
-  private val list          = secured(listEndpoint).serverLogic(_ => limit => service.list(limit.getOrElse(20)).asResponse)
-  private val evaluate      = secured(evaluationEndpoint).serverLogic(_ => id => evaluations.evaluate(id).asResponse)
-  val routes: HttpRoutes[F] = Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(create, get, list, evaluate))
+  private val create                 = secured(createEndpoint).serverLogic(_ => request => service.create(request).asResponse)
+  private val get                    = secured(getEndpoint).serverLogic(_ => id => service.get(id).asResponse)
+  private val list                   = secured(listEndpoint).serverLogic(_ => limit => service.list(limit.getOrElse(20)).asResponse)
+  private val evaluate               = secured(evaluationEndpoint).serverLogic(_ => id => evaluations.evaluate(id).asResponse)
+  override val routes: HttpRoutes[F] = Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(create, get, list, evaluate))
 
 object InvestmentScreenController extends TapirJsonCirce with SchemaDerivation:
+  private given Schema[java.time.YearMonth] = Schema.string
   // Derive intermediate schemas explicitly to keep deeply nested evaluation responses within inline limits.
   private given Schema[EvaluationCostScenario]  = Schema.derived[EvaluationCostScenario]
   private given Schema[EvaluationPriceEvidence] = Schema.derived[EvaluationPriceEvidence]
@@ -46,4 +47,4 @@ object InvestmentScreenController extends TapirJsonCirce with SchemaDerivation:
       evaluations: InvestmentEvaluationService[F],
       config: ApiConfig
   ): F[Controller[F]] =
-    Async[F].pure(new InvestmentScreenController(service, evaluations, config))
+    Async[F].pure(new InvestmentScreenController(service, evaluations, ApiKeyRequirement.Required(config.key)))

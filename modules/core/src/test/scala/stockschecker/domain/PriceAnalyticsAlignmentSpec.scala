@@ -1,8 +1,7 @@
-package stockschecker.utils
+package stockschecker.domain
 
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
-import stockschecker.domain.{DateRange, PriceAdjustment, PriceCandle, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
 
 import java.time.{Instant, LocalDate}
@@ -17,7 +16,7 @@ class PriceAnalyticsAlignmentSpec extends AnyWordSpec with Matchers {
       adjustment.value,
       ticker,
       dates.map(date => PriceCandle(date, close, close, close, close, 1L)),
-      "TwelveData",
+      Provider.TwelveData,
       "USD",
       adjustment,
       Instant.parse("2026-10-27T12:00:00Z"),
@@ -32,15 +31,15 @@ class PriceAnalyticsAlignmentSpec extends AnyWordSpec with Matchers {
       val result = PriceAnalyticsAlignment.calculate(ticker, total, quoted, today).toOption.get
       result.performanceSummary.latestPriceDate mustBe today.minusDays(7)
       result.performanceSummary.latestPrice mustBe BigDecimal(100)
-      result.basis.flatMap(_.priceObservationId) mustBe Some(total.id)
-      result.basis.flatMap(_.quotedPriceObservationId) mustBe Some(quoted.id)
+      result.basis.priceObservationId mustBe Some(total.id)
+      result.basis.quotedPriceObservationId mustBe Some(quoted.id)
     }
 
     "reject a common session eight days old" in {
       val total  = snapshot(PriceAdjustment.SplitsAndDividends, List(today.minusDays(8)))
       val quoted = snapshot(PriceAdjustment.Unadjusted, List(today.minusDays(8)))
       PriceAnalyticsAlignment.calculate(ticker, total, quoted, today) mustBe Left(
-        AppError.DataUnavailable("TwelveData", ticker, "the latest matching trading session is more than seven days old")
+        AppError.DataUnavailable(Provider.TwelveData, ticker, "the latest matching trading session is more than seven days old")
       )
     }
 

@@ -1,5 +1,6 @@
 package stockschecker.services
 
+import stockschecker.domain.Provider
 import cats.effect.IO
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
@@ -22,7 +23,7 @@ class PriceServiceSpec extends IOWordSpec {
       history: PriceHistoryRepository[IO]
   ) {
     def service: IO[PriceService[IO]] =
-      PriceHistoryService.make(client, history).flatMap(PriceService.make(repo, latest, profiles, _))
+      PriceHistoryService.make(client, history, DataQualityServiceStub).flatMap(PriceService.make(repo, latest, profiles, _))
     def cache(adjusted: PriceHistorySnapshot, quoted: PriceHistorySnapshot): Unit = {
       val range = DateRange(adjusted.requestedRange.through.minusYears(13), adjusted.requestedRange.through)
       when(history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, range))
@@ -52,7 +53,7 @@ class PriceServiceSpec extends IOWordSpec {
       adjustment.value,
       AAPL,
       offsets.map(offset => PriceCandle(through.minusDays(offset), close, close, close, close, 1L)),
-      "TwelveData",
+      Provider.TwelveData,
       "USD",
       adjustment,
       now,
@@ -70,8 +71,8 @@ class PriceServiceSpec extends IOWordSpec {
         analytics <- service.findPriceAnalytics(AAPL, fetch = true)
       yield analytics).asserting { analytics =>
         analytics.performanceSummary.latestPrice mustBe BigDecimal(100)
-        analytics.basis.flatMap(_.priceObservationId) mustBe Some("split-and-dividend")
-        analytics.basis.flatMap(_.quotedPriceObservationId) mustBe Some("none")
+        analytics.basis.priceObservationId mustBe Some("split-and-dividend")
+        analytics.basis.quotedPriceObservationId mustBe Some("none")
         val ordered = org.mockito.Mockito.inOrder(d.repo, d.latest, d.profiles)
         ordered.verify(d.repo).save(List(analytics))
         ordered.verify(d.latest).save(List(analytics.toLatestPrice))
@@ -107,7 +108,9 @@ class PriceServiceSpec extends IOWordSpec {
         service <- d.service
         outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
       yield outcome).asserting { outcome =>
-        outcome mustBe Left(AppError.DataUnavailable("TwelveData", AAPL, "adjusted and quoted histories have no common trading session"))
+        outcome mustBe Left(
+          AppError.DataUnavailable(Provider.TwelveData, AAPL, "adjusted and quoted histories have no common trading session")
+        )
         verify(d.repo, never).save(anyList[PriceAnalytics])
         verify(d.latest, never).save(anyList)
         verify(d.profiles, never).updatePriceAnalyticsLastUpdated(anyList)
@@ -124,7 +127,9 @@ class PriceServiceSpec extends IOWordSpec {
         service <- d.service
         outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
       yield outcome).asserting { outcome =>
-        outcome mustBe Left(AppError.DataUnavailable("TwelveData", AAPL, "the latest matching trading session is more than seven days old"))
+        outcome mustBe Left(
+          AppError.DataUnavailable(Provider.TwelveData, AAPL, "the latest matching trading session is more than seven days old")
+        )
         verify(d.repo, never).save(anyList[PriceAnalytics])
         verify(d.latest, never).save(anyList)
         verify(d.profiles, never).updatePriceAnalyticsLastUpdated(anyList)
@@ -182,7 +187,7 @@ class PriceServiceSpec extends IOWordSpec {
         _    = when(
           d.client.getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
         ).thenReturnIO(full)
-        deferred = AppError.ProviderDeferred("TwelveData", now.plusSeconds(60), "quota")
+        deferred = AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(60), "quota")
         _        = when(
           d.client
             .getDailyPriceHistory(

@@ -38,28 +38,15 @@ class ActionSpec extends AnyWordSpec with Matchers {
       Action.RefreshInvestmentResearch.asJson.noSpaces mustBe """{"kind":"refresh-investment-research"}"""
     }
 
-    "decode retired persisted actions without restoring the old execution paths" in {
-      List(
-        "schedule",
-        "reschedule-all",
-        "record-company-profile-update",
-        "record-financial-metrics-update",
-        "record-price-analytics-update"
-      )
-        .foreach(kind => decode[Action](s"""{"kind":"$kind"}""") mustBe Right(Action.LegacyRetired))
-      decode[Action]("""{"kind":"retried","action":{"kind":"deactivate-security","ticker":"AAPL"},"attempt":2}""") mustBe
-        Right(Action.DeactivateSecurity(Ticker("AAPL")))
-    }
-
     "decode supported nested actions from existing commands" in {
       val json   = """{
         "id":"cmd-123","isActive":true,
         "action":{"kind":"sequence","actions":[
           {"kind":"fetch-company-profiles","filter":{"kind":"is-active","active":true}},
-          {"kind":"retried","action":{"kind":"deactivate-security","ticker":"AAPL"},"attempt":2}
+          {"kind":"deactivate-security","ticker":"AAPL"}
         ]},
         "schedule":{"kind":"periodic","period":"10seconds"},
-        "lastExecutedAt":null,"executionCount":0,"maxExecutions":null
+        "lastExecutedAt":null,"executionCount":0,"maxExecutions":null,"version":0
       }"""
       val action = Action.Sequence(
         NonEmptyList.of(Action.FetchCompanyProfiles(SecurityFilter.IsActive(true)), Action.DeactivateSecurity(Ticker("AAPL")))
@@ -73,7 +60,6 @@ class ActionSpec extends AnyWordSpec with Matchers {
         """{"kind":"unknown"}""",
         """{"kind":123}""",
         """{"kind":"sequence","actions":[]}""",
-        """{"kind":"retried"}""",
         """{"kind":"deactivate-security"}"""
       )
         .foreach(json => decode[Action](json).isLeft mustBe true)

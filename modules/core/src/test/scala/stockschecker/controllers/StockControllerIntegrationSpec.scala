@@ -6,10 +6,9 @@ import io.circe.parser.parse
 import org.http4s.{Header, Request, Status, Uri}
 import org.http4s.implicits.*
 import org.typelevel.ci.CIString
-import stockschecker.actions.ActionDispatcher
 import stockschecker.common.config.ApiConfig
 import stockschecker.fixtures.*
-import stockschecker.repositories.{CompanyProfileRepository, JobRepository, RepositorySpec, SecurityRepository, StockRepository}
+import stockschecker.repositories.{CompanyProfileRepository, RepositorySpec, SecurityRepository, StockRepository}
 import stockschecker.services.StockService
 
 class StockControllerIntegrationSpec extends RepositorySpec {
@@ -32,11 +31,9 @@ class StockControllerIntegrationSpec extends RepositorySpec {
       withEmbeddedMongoDatabase(seed) { db =>
         for
           repo       <- StockRepository.make[IO](db)
-          jobs       <- JobRepository.make[IO](db)
-          dispatcher <- ActionDispatcher.durable[IO](jobs)
           securities <- SecurityRepository.make[IO](db)
           profiles   <- CompanyProfileRepository.make[IO](db)
-          service    <- StockService.make(repo, dispatcher, securities, profiles)
+          service    <- StockService.make(repo, securities, profiles)
           controller <- StockController.make(service, config)
           response   <- controller.routes.orNotFound.run(
             Request[IO](uri = Uri.unsafeFromString("/stocks?minConsistencyScore=70&limit=20")).withHeaders(authHeader)
@@ -53,11 +50,9 @@ class StockControllerIntegrationSpec extends RepositorySpec {
       withEmbeddedMongoDatabase { db =>
         for
           repo       <- StockRepository.make[IO](db)
-          jobs       <- JobRepository.make[IO](db)
-          dispatcher <- ActionDispatcher.durable[IO](jobs)
           securities <- SecurityRepository.make[IO](db)
           profiles   <- CompanyProfileRepository.make[IO](db)
-          service    <- StockService.make(repo, dispatcher, securities, profiles)
+          service    <- StockService.make(repo, securities, profiles)
           controller <- StockController.make(service, config)
           statuses   <- List(
             "minConsistencyScore=101",

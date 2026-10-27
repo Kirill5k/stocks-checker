@@ -2,12 +2,15 @@ package stockschecker.services
 
 import cats.effect.Async
 import cats.syntax.flatMap.*
+import cats.syntax.applicativeError.*
+import stockschecker.domain.errors.AppError
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.domain.*
 import stockschecker.repositories.{DataQualityRepository, SecurityRepository}
 
 trait DataQualityService[F[_]]:
+  def observe[A](ticker: Ticker, provider: Provider, dataset: String)(request: F[A])(present: A => Boolean): F[A]
   def report: F[DataQualityReport]
 
 final private class LiveDataQualityService[F[_]](
@@ -18,12 +21,28 @@ final private class LiveDataQualityService[F[_]](
     F: Async[F],
     C: Clock[F]
 ) extends DataQualityService[F] {
+  override def observe[A](ticker: Ticker, provider: Provider, dataset: String)(request: F[A])(present: A => Boolean): F[A] =
+    request.attempt.flatMap {
+      case Right(value) =>
+        record(ticker, provider, dataset, if (present(value)) DatasetStatus.Available else DatasetStatus.Unavailable, None).as(value)
+      case Left(error: AppError.ProviderDeferred) => F.raiseError(error)
+      case Left(error)                            =>
+        val status = error match
+          case _: AppError.ProviderConfiguration         => DatasetStatus.ConfigurationError
+          case e: AppError.HttpClient if e.status == 404 => DatasetStatus.Unavailable
+          case _                                         => DatasetStatus.Failed
+        record(ticker, provider, dataset, status, Some(AppError.safeSummary(error))) >> F.raiseError(error)
+    }
+
+  private def record(ticker: Ticker, provider: Provider, dataset: String, status: DatasetStatus, failure: Option[String]): F[Unit] =
+    C.now.flatMap(now => quality.record(ticker, provider, dataset, status, now, failure))
+
   override def report: F[DataQualityReport] =
     for
       at       <- C.now
       datasets <- quality.all
       excluded <- securities.findExcluded
-      ranking  <- rankings.latestHeader
+      ranking  <- rankings.latestAvailable
       exclusions = excluded.flatMap(s => s.exclusionReason.map(r => ExcludedSecurity(s.ticker, r, s.listingStatus)))
       coverage   = ranking
         .map { header =>

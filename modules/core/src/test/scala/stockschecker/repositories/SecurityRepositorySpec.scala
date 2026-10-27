@@ -1,5 +1,6 @@
 package stockschecker.repositories
 
+import stockschecker.domain.ListingStatus
 import cats.data.NonEmptyList
 import cats.effect.IO
 import org.scalatest.wordspec.AsyncWordSpec
@@ -48,28 +49,9 @@ class SecurityRepositorySpec extends RepositorySpec {
           yield
             excluded.map(_.isActive) mustBe Some(false)
             excluded.flatMap(_.exclusionReason) mustBe Some("user-excluded")
-            excluded.map(_.listingStatus) mustBe Some("listed")
+            excluded.map(_.listingStatus) mustBe Some(ListingStatus.Listed)
             listed.map(_.isActive) mustBe Some(true)
         }
-
-      "migrate legacy inactive records conservatively until explicitly restored" in {
-        val seed = Map(SecurityRepository.CollectionName -> List(toDoc(AAPLSecurity.copy(isActive = false))))
-        withEmbeddedMongoDatabase(seed) { db =>
-          for
-            repo       <- SecurityRepository.make(db)
-            migrated   <- repo.find(AAPL)
-            _          <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity))
-            reconciled <- repo.find(AAPL)
-            _          <- repo.activate(AAPL)
-            restored   <- repo.find(AAPL)
-          yield
-            migrated.flatMap(_.exclusionReason) mustBe Some("legacy-excluded")
-            reconciled.map(_.isActive) mustBe Some(false)
-            reconciled.flatMap(_.exclusionReason) mustBe Some("legacy-excluded")
-            restored.map(_.isActive) mustBe Some(true)
-            restored.flatMap(_.exclusionReason) mustBe None
-        }
-      }
 
       "keep delisted securities inactive after restore until a successful listing reconciliation" in
         withEmbeddedMongoDatabase { db =>
@@ -84,12 +66,12 @@ class SecurityRepositorySpec extends RepositorySpec {
             _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
             relisted <- repo.find(AAPL)
           yield
-            delisted.map(_.listingStatus) mustBe Some("delisted")
+            delisted.map(_.listingStatus) mustBe Some(ListingStatus.Delisted)
             restored.map(_.isActive) mustBe Some(false)
-            restored.map(_.listingStatus) mustBe Some("delisted")
+            restored.map(_.listingStatus) mustBe Some(ListingStatus.Delisted)
             restored.flatMap(_.exclusionReason) mustBe None
             relisted.map(_.isActive) mustBe Some(true)
-            relisted.map(_.listingStatus) mustBe Some("listed")
+            relisted.map(_.listingStatus) mustBe Some(ListingStatus.Listed)
         }
 
       "leave existing listing state unchanged for an empty reconciliation" in
@@ -136,13 +118,13 @@ class SecurityRepositorySpec extends RepositorySpec {
 
     "findExcluded" should {
       "return only securities with an exclusion reason regardless of listing status" in {
-        val legacy   = AAPLSecurity.copy(isActive = false, exclusionReason = Some("legacy-excluded"))
-        val manual   = MSFTSecurity.copy(isActive = false, exclusionReason = Some("user-excluded"))
-        val excluded = AAPLSecurity.copy(ticker = Ticker("EXCLUDED"))
-        val delisted = AAPLSecurity.copy(ticker = Ticker("DELISTED"))
-        val restored = AAPLSecurity.copy(ticker = Ticker("RESTORED"))
-        val active   = AAPLSecurity.copy(ticker = Ticker("ACTIVE"))
-        val seed     = Map(SecurityRepository.CollectionName -> List(toDoc(legacy)))
+        val persisted = AAPLSecurity.copy(isActive = false, exclusionReason = Some("user-excluded"))
+        val manual    = MSFTSecurity.copy(isActive = false, exclusionReason = Some("user-excluded"))
+        val excluded  = AAPLSecurity.copy(ticker = Ticker("EXCLUDED"))
+        val delisted  = AAPLSecurity.copy(ticker = Ticker("DELISTED"))
+        val restored  = AAPLSecurity.copy(ticker = Ticker("RESTORED"))
+        val active    = AAPLSecurity.copy(ticker = Ticker("ACTIVE"))
+        val seed      = Map(SecurityRepository.CollectionName -> List(toDoc(persisted)))
 
         withEmbeddedMongoDatabase(seed) { db =>
           for
@@ -160,9 +142,9 @@ class SecurityRepositorySpec extends RepositorySpec {
             empty  <- repo.findExcluded
           yield
             result must contain theSameElementsAs List(
-              legacy,
+              persisted,
               manual,
-              excluded.copy(isActive = false, listingStatus = "delisted", exclusionReason = Some("user-excluded"))
+              excluded.copy(isActive = false, listingStatus = ListingStatus.Delisted, exclusionReason = Some("user-excluded"))
             )
             empty mustBe List.empty[Security]
         }

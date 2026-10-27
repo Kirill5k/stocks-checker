@@ -30,6 +30,8 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
       "name"                        := security.name,
       "kind"                        := security.kind.print,
       "isActive"                    := security.isActive,
+      "listingStatus"               := security.listingStatus.print,
+      "exclusionReason"             := security.exclusionReason,
       "companyProfileLastUpdatedAt" := security.companyProfileLastUpdatedAt,
       "createdAt"                   := now,
       "updatedAt"                   := now
@@ -38,6 +40,7 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
   protected def toDoc(profile: CompanyProfile): Document =
     Document(
       "_id"                           := profile.ticker.value,
+      "isActive"                      := true,
       "name"                          := profile.name,
       "country"                       := profile.country,
       "industry"                      := profile.industry,
