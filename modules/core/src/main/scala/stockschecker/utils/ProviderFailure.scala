@@ -1,4 +1,4 @@
-package stockschecker.domain
+package stockschecker.utils
 
 import stockschecker.domain.errors.AppError
 

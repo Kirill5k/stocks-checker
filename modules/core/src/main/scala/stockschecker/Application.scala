@@ -6,8 +6,8 @@ import fs2.Stream
 import kirill5k.common.http4s.Server
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.log4cats.Logger
-import stockschecker.actions.{ActionDispatcher, ActionExecutor, CommandScheduler}
-import stockschecker.clients.{Clients, ProviderAccess}
+import stockschecker.actions.{ActionDispatcher, ActionExecutor, ActionHandler, CommandScheduler}
+import stockschecker.clients.{Clients, DatasetAvailabilityObserver, ProviderAccess}
 import stockschecker.common.config.AppConfig
 import stockschecker.controllers.Controllers
 import stockschecker.repositories.Repositories
@@ -31,11 +31,13 @@ object Application extends IOApp.Simple {
           for
             repositories     <- Repositories.make(res.mongoDatabase)
             actionDispatcher <- ActionDispatcher.durable[IO](repositories.jobs)
-            providerAccess   <- ProviderAccess.make(repositories.providerBudgets, repositories.dataQuality)
-            clients          <- Clients.make(config.clients, res.httpBackend, providerAccess)
+            providerAccess   <- ProviderAccess.make(repositories.providerBudgets)
+            availability     <- DatasetAvailabilityObserver.make(repositories.dataQuality)
+            clients          <- Clients.make(config.clients, res.httpBackend, providerAccess, availability)
             services         <- Services.make(clients, repositories, actionDispatcher, config.investment)
             controllers      <- Controllers.make(services, config.api)
-            actionExecutor   <- ActionExecutor.make(repositories.jobs, services, config.actionExecutor)
+            actionHandler    <- ActionHandler.make(services)
+            actionExecutor   <- ActionExecutor.make(repositories.jobs, actionHandler, services.command.isCurrent, config.actionExecutor)
             restartTime      <- IO.realTimeInstant
             _                <- repositories.jobs.resumePaused("Finnhub", restartTime)
             _                <- repositories.jobs.resumePaused("TwelveData", restartTime)

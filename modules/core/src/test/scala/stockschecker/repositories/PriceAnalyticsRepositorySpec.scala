@@ -1,6 +1,7 @@
 package stockschecker.repositories
 
 import cats.data.NonEmptyList
+import stockschecker.utils.PriceAnalyticsCalculator
 import cats.effect.IO
 import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, PriceCandle}
 import stockschecker.fixtures.*
@@ -38,7 +39,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
     )
   )
 
-  val MSFTPriceAnalytics: PriceAnalytics = PriceAnalytics.from(MSFT, MSFTPriceCandles)
+  val MSFTPriceAnalytics: PriceAnalytics = PriceAnalyticsCalculator.from(MSFT, MSFTPriceCandles)
 
   "A PriceAnalyticsRepository" when {
     "save" should {

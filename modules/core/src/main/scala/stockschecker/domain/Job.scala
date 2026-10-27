@@ -39,9 +39,8 @@ final case class Job(
     completedAt: Option[Instant] = None,
     restartCount: Option[Int] = None
 ) derives Codec.AsObject {
-  def isTerminal: Boolean        = Job.terminalStates.contains(state)
-  def nextPollDelaySeconds: Long = (1L << waitCount.getOrElse(0).min(9)).min(300L)
-  def hasUsableResults: Boolean  = state == Job.Succeeded || state == Job.Partial
+  def isTerminal: Boolean       = Job.terminalStates.contains(state)
+  def hasUsableResults: Boolean = state == Job.Succeeded || state == Job.Partial
 }
 
 enum JobState(val value: String) {
@@ -64,7 +63,6 @@ object JobState {
 
 object Job {
   export JobState.*
-  val MaxEvaluationRestarts          = 2
   val terminalStates: List[JobState] = List(Succeeded, Partial, Failed, Cancelled)
 }
 

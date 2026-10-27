@@ -4,7 +4,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
-import stockschecker.domain.Ticker
+import stockschecker.domain.{FinancialSnapshot, Ticker}
 
 import java.time.Instant
 import scala.io.Source
@@ -29,6 +29,8 @@ class FinnhubFinancialMappingSpec extends AnyWordSpec with Matchers:
       data.snapshot.validationErrors mustBe Nil
       data.snapshot.rawPayload must include("cashFlowPerShareTTM")
       data.snapshot.payloadHash.length mustBe 64
+      data.snapshot.mappingVersion mustBe FinancialSnapshot.FinnhubMappingVersion
+      data.snapshot.mappingVersion mustBe "finnhub-basic-financials-v1"
     }
 
     "keep generic cash flow out of free cash flow when the explicit FCF series is missing" in {

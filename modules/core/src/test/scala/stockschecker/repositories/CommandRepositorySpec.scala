@@ -1,6 +1,7 @@
 package stockschecker.repositories
 
 import cats.data.NonEmptyList
+import mongo4cats.operations.{Filter, Update}
 import stockschecker.actions.Action
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CreateCommand, Exchange, Schedule, UpdateCommand}
@@ -30,6 +31,44 @@ class CommandRepositorySpec extends RepositorySpec {
             cmd.schedule mustBe Schedule.Periodic(5.minutes)
             assert(cmd.action == action)
           }
+        }
+
+      "retain BSON schedule timestamps and durable outbox contents after recreation" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo       <- CommandRepository.make(db)
+            command    <- repo.create(newCmd)
+            ready      <- repo.initializeNextRun(command, ts)
+            occurrence <- repo.reserve(ready.get, ts)
+            before     <- repo.find(command.id)
+            raw        <- db.getCollection(CommandRepository.CollectionName)
+            stored     <- raw
+              .find(
+                Filter.idEq(command.id.toObjectId) && Filter.eq("lastExecutedAt", ts) &&
+                  Filter.eq("nextRunAt", ts.plusSeconds(5.minutes.toSeconds))
+              )
+              .first
+            recreated <- CommandRepository.make(db)
+            after     <- recreated.find(command.id)
+          yield
+            occurrence must not be empty
+            stored must not be empty
+            before.outbox mustBe occurrence
+            after mustBe before
+        }
+
+      "read legacy commands without operational metadata" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo    <- CommandRepository.make(db)
+            command <- repo.create(newCmd)
+            raw     <- db.getCollection(CommandRepository.CollectionName)
+            _       <- raw.updateOne(
+              Filter.idEq(command.id.toObjectId),
+              Update.unset("version").unset("nextRunAt").unset("activeRunId").unset("outbox")
+            )
+            saved <- repo.find(command.id)
+          yield saved mustBe command.copy(version = None)
         }
     }
 

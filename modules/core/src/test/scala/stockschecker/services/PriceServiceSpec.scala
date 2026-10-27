@@ -1,6 +1,7 @@
 package stockschecker.services
 
 import cats.effect.IO
+import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceAnalytics, PriceCandle, PriceHistorySnapshot, Ticker}
@@ -10,6 +11,9 @@ import stockschecker.fixtures.*
 import java.time.{Instant, LocalDate, ZoneOffset}
 
 class PriceServiceSpec extends IOWordSpec {
+  private val fixedNow = Instant.parse("2026-10-27T12:00:00Z")
+  given Clock[IO]      = Clock.mock(fixedNow)
+
   private case class Dependencies(
       repo: PriceAnalyticsRepository[IO],
       latest: LatestPriceRepository[IO],
@@ -17,7 +21,8 @@ class PriceServiceSpec extends IOWordSpec {
       profiles: CompanyProfileRepository[IO],
       history: PriceHistoryRepository[IO]
   ) {
-    def service: IO[PriceService[IO]] = PriceService.make(repo, latest, client, profiles, history)
+    def service: IO[PriceService[IO]] =
+      PriceHistoryService.make(client, history).flatMap(PriceService.make(repo, latest, profiles, _))
     def cache(adjusted: PriceHistorySnapshot, quoted: PriceHistorySnapshot): Unit = {
       val range = DateRange(adjusted.requestedRange.through.minusYears(13), adjusted.requestedRange.through)
       when(history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, range))
@@ -59,7 +64,7 @@ class PriceServiceSpec extends IOWordSpec {
     "reuse daily observations and save the unadjusted quote with direct profile updates" in {
       val d = mocks
       (for
-        now <- IO.realTimeInstant
+        now <- IO.pure(fixedNow)
         _ = d.cache(snapshot(now, PriceAdjustment.SplitsAndDividends), snapshot(now, PriceAdjustment.Unadjusted))
         service   <- d.service
         analytics <- service.findPriceAnalytics(AAPL, fetch = true)
@@ -67,9 +72,10 @@ class PriceServiceSpec extends IOWordSpec {
         analytics.performanceSummary.latestPrice mustBe BigDecimal(100)
         analytics.basis.flatMap(_.priceObservationId) mustBe Some("split-and-dividend")
         analytics.basis.flatMap(_.quotedPriceObservationId) mustBe Some("none")
-        verify(d.repo).save(List(analytics))
-        verify(d.latest).save(List(analytics.toLatestPrice))
-        verify(d.profiles).updatePriceAnalyticsLastUpdated(List(AAPL))
+        val ordered = org.mockito.Mockito.inOrder(d.repo, d.latest, d.profiles)
+        ordered.verify(d.repo).save(List(analytics))
+        ordered.verify(d.latest).save(List(analytics.toLatestPrice))
+        ordered.verify(d.profiles).updatePriceAnalyticsLastUpdated(List(AAPL))
         verifyNoInteractions(d.client)
         succeed
       }
@@ -78,7 +84,7 @@ class PriceServiceSpec extends IOWordSpec {
     "align a cached adjusted series and a later quote to their latest common trading session" in {
       val d = mocks
       (for
-        now <- IO.realTimeInstant
+        now <- IO.pure(fixedNow)
         _ = d.cache(
           snapshot(now, PriceAdjustment.SplitsAndDividends, List(1L, 2L)),
           snapshot(now, PriceAdjustment.Unadjusted, List(0L, 1L, 2L))
@@ -96,7 +102,7 @@ class PriceServiceSpec extends IOWordSpec {
     "report disjoint sessions as unavailable data eligible for bounded retries" in {
       val d = mocks
       (for
-        now <- IO.realTimeInstant
+        now <- IO.pure(fixedNow)
         _ = d.cache(snapshot(now, PriceAdjustment.SplitsAndDividends, List(0L)), snapshot(now, PriceAdjustment.Unadjusted, List(1L)))
         service <- d.service
         outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
@@ -113,7 +119,7 @@ class PriceServiceSpec extends IOWordSpec {
     "report a halted ticker's stale session as unavailable data without indefinitely deferring its job" in {
       val d = mocks
       (for
-        now <- IO.realTimeInstant
+        now <- IO.pure(fixedNow)
         _ = d.cache(snapshot(now, PriceAdjustment.SplitsAndDividends, List(45L)), snapshot(now, PriceAdjustment.Unadjusted, List(45L)))
         service <- d.service
         outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
@@ -130,7 +136,7 @@ class PriceServiceSpec extends IOWordSpec {
     "reject mismatched currencies without publishing analytics" in {
       val d = mocks
       (for
-        now <- IO.realTimeInstant
+        now <- IO.pure(fixedNow)
         _ = d.cache(snapshot(now, PriceAdjustment.SplitsAndDividends), snapshot(now, PriceAdjustment.Unadjusted).copy(currency = "CAD"))
         service <- d.service
         result  <- service.findPriceAnalytics(AAPL, fetch = true).attempt
@@ -144,7 +150,7 @@ class PriceServiceSpec extends IOWordSpec {
     "refetch fresh cached history when it does not cover the requested horizon" in {
       val d = mocks
       (for
-        now <- IO.realTimeInstant
+        now <- IO.pure(fixedNow)
         full = snapshot(now, PriceAdjustment.SplitsAndDividends)
         _    = d.cache(
           full.copy(requestedRange = full.requestedRange.copy(from = full.requestedRange.through.minusDays(14))),
@@ -169,7 +175,7 @@ class PriceServiceSpec extends IOWordSpec {
     "retain the first fetched observation when the second request is rate limited" in {
       val d = mocks
       (for
-        now <- IO.realTimeInstant
+        now <- IO.pure(fixedNow)
         full = snapshot(now, PriceAdjustment.SplitsAndDividends)
         _    = when(d.history.latest(any[Ticker], any[PriceAdjustment])).thenReturnIO(None)
         _    = when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, full.requestedRange)).thenReturnIO(None)
@@ -190,7 +196,16 @@ class PriceServiceSpec extends IOWordSpec {
         result  <- service.findPriceAnalytics(AAPL, fetch = true).attempt
       yield (full, deferred, result)).asserting { case (full, deferred, result) =>
         result mustBe Left(deferred)
-        verify(d.history).save(full)
+        val ordered = org.mockito.Mockito.inOrder(d.client, d.history)
+        ordered.verify(d.client).getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
+        ordered.verify(d.history).save(full)
+        ordered
+          .verify(d.client)
+          .getDailyPriceHistory(
+            AAPL,
+            DateRange(full.requestedRange.through.minusDays(14), full.requestedRange.through),
+            PriceAdjustment.Unadjusted
+          )
         verify(d.repo, never).save(anyList[PriceAnalytics])
         succeed
       }

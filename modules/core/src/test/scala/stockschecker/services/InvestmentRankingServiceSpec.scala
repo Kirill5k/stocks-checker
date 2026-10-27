@@ -1,5 +1,7 @@
 package stockschecker.services
 
+import stockschecker.utils.InvestmentScorer
+
 import cats.effect.IO
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec

@@ -24,14 +24,19 @@ object CommandScheduler {
       results   <- pending.traverse { command =>
         (for {
           _ <- command.outbox.traverse_ { occurrence =>
-            jobs.enqueue(occurrence.job) >> commands.clearOutbox(command.id, occurrence.job.id)
+            jobs.enqueue(occurrence.job, ActionPriority.forAction(occurrence.job.action)) >> commands.clearOutbox(
+              command.id,
+              occurrence.job.id
+            )
           }
           current <- command.activeRunId
             .filter(completed)
             .fold(Option(command.copy(outbox = None)).pure[F])(id => commands.completeRun(command.id, id))
           ready      <- current.traverse(commands.initializeNextRun(_, now)).map(_.flatten)
           occurrence <- ready.traverse(commands.reserve(_, now)).map(_.flatten)
-          _          <- occurrence.traverse_(o => jobs.enqueue(o.job) >> commands.clearOutbox(command.id, o.job.id))
+          _          <- occurrence.traverse_(o =>
+            jobs.enqueue(o.job, ActionPriority.forAction(o.job.action)) >> commands.clearOutbox(command.id, o.job.id)
+          )
         } yield ()).attempt
       }
       _ <- results.collectFirst { case Left(error) => error }.fold(Temporal[F].unit)(Temporal[F].raiseError[Unit])

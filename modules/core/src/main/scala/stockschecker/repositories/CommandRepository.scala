@@ -15,8 +15,7 @@ import stockschecker.domain.errors.AppError
 import stockschecker.domain.{Command, CommandId, CreateCommand, Schedule, UpdateCommand}
 import stockschecker.domain.{Job, JobCommand, JobId, ScheduledOccurrence}
 import kirill5k.common.cats.syntax.applicative.*
-import io.circe.Codec
-import mongo4cats.bson.ObjectId
+import stockschecker.repositories.entities.CommandEntity
 
 import java.time.Instant
 
@@ -32,36 +31,8 @@ trait CommandRepository[F[_]]:
   def clearOutbox(id: CommandId, runId: JobId): F[Unit]
   def completeRun(id: CommandId, runId: JobId): F[Option[Command]]
 
-final private case class ScheduledCommandEntity(
-    _id: ObjectId,
-    isActive: Boolean,
-    action: Action,
-    schedule: Schedule,
-    lastExecutedAt: Option[Instant],
-    executionCount: Int,
-    maxExecutions: Option[Int],
-    version: Option[Long],
-    nextRunAt: Option[Instant],
-    activeRunId: Option[JobId],
-    outbox: Option[ScheduledOccurrence]
-) derives Codec.AsObject {
-  def toDomain: Command = Command(
-    CommandId(_id),
-    isActive,
-    action,
-    schedule,
-    lastExecutedAt,
-    executionCount,
-    maxExecutions,
-    version,
-    nextRunAt,
-    activeRunId,
-    outbox
-  )
-}
-
 final private class LiveCommandRepository[F[_]](
-    private val collection: MongoCollection[F, ScheduledCommandEntity]
+    private val collection: MongoCollection[F, CommandEntity]
 )(using
     F: MonadThrow[F]
 ) extends CommandRepository[F] {
@@ -89,8 +60,7 @@ final private class LiveCommandRepository[F[_]](
       .flatMap(toCommandOrError(id))
 
   override def create(cmd: CreateCommand): F[Command] =
-    val newCmd =
-      ScheduledCommandEntity(ObjectId.gen, true, cmd.action, cmd.schedule, None, 0, cmd.maxExecutions, Some(0L), None, None, None)
+    val newCmd = CommandEntity.from(cmd)
     collection.insertOne(newCmd).as(newCmd.toDomain)
 
   override def update(cmd: UpdateCommand): F[Command] =
@@ -174,7 +144,7 @@ final private class LiveCommandRepository[F[_]](
       )
       .map(_.map(_.toDomain))
 
-  private def toCommandOrError(id: CommandId)(maybeCmd: Option[ScheduledCommandEntity]): F[Command] =
+  private def toCommandOrError(id: CommandId)(maybeCmd: Option[CommandEntity]): F[Command] =
     F.fromOption(maybeCmd.map(_.toDomain), AppError.EntityDoesNotExist("Command", id.value))
 
 }
@@ -191,7 +161,7 @@ object CommandRepository:
 
   def make[F[_]](db: MongoDatabase[F])(using F: MonadThrow[F]): F[CommandRepository[F]] =
     for
-      collection <- db.getCollectionWithCodec[ScheduledCommandEntity](CollectionName)
+      collection <- db.getCollectionWithCodec[CommandEntity](CollectionName)
       _          <- collection.updateMany(
         Filter.in(
           "action.kind",

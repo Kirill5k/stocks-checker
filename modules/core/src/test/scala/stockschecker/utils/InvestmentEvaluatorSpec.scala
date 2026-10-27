@@ -33,6 +33,30 @@ class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
     )
 
   "Forward investment evaluation" should {
+    "finish settled horizons at their observed exit or the end of the allowed exit window" in {
+      val target  = LocalDate.parse("2025-01-02")
+      val entry   = Some(LocalDate.parse("2020-01-02"))
+      val horizon = HorizonEvaluation(5, "incomplete", entry, target, None, Nil, Nil)
+      val report  = evaluate(List(tickerA), Map.empty).copy(horizons = List(horizon), settled = Some(true))
+
+      InvestmentEvaluator.isFinished(report.copy(dataThrough = Some(target.plusDays(6)))) mustBe false
+      InvestmentEvaluator.isFinished(report.copy(dataThrough = Some(target.plusDays(7)))) mustBe true
+
+      val missingEntry = report.copy(horizons = List(horizon.copy(entryDate = None)))
+      InvestmentEvaluator.isFinished(missingEntry.copy(dataThrough = Some(target.plusDays(13)))) mustBe false
+      InvestmentEvaluator.isFinished(missingEntry.copy(dataThrough = Some(target.plusDays(14)))) mustBe true
+
+      val observedExit = report.copy(horizons = List(horizon.copy(exitDate = Some(target.plusDays(2)))))
+      InvestmentEvaluator.isFinished(observedExit.copy(dataThrough = Some(target.plusDays(1)))) mustBe false
+      InvestmentEvaluator.isFinished(observedExit.copy(dataThrough = Some(target.plusDays(2)))) mustBe true
+
+      val finished = report.copy(dataThrough = Some(target.plusDays(7)))
+      InvestmentEvaluator.isFinished(finished.copy(settled = Some(false))) mustBe false
+      InvestmentEvaluator.isFinished(finished.copy(horizons = Nil)) mustBe false
+      InvestmentEvaluator.isFinished(finished.copy(dataThrough = None)) mustBe false
+      InvestmentEvaluator.isFinished(finished.copy(horizons = List(horizon, horizon.copy(targetDate = target.plusYears(1))))) mustBe false
+    }
+
     "enter on the next session and calculate weighted wealth, drawdown, benchmark excess and costs" in {
       val report  = evaluate(List(tickerA), Map(tickerA -> series(tickerA, List(1000, 100, 50, 150, 200))))
       val horizon = report.horizons.head

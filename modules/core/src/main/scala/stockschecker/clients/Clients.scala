@@ -1,6 +1,7 @@
 package stockschecker.clients
 
 import cats.effect.Async
+import kirill5k.common.cats.Clock
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import stockschecker.clients.finnhub.FinnhubClient
@@ -13,14 +14,15 @@ trait Clients[F[_]]:
   def marketData: MarketDataClient[F]
 
 object Clients:
-  def make[F[_]: Async](
+  def make[F[_]: {Async, Clock}](
       config: ClientsConfig,
       backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-      access: ProviderAccess[F]
+      access: ProviderAccess[F],
+      availability: DatasetAvailabilityObserver[F]
   ): F[Clients[F]] =
     for
-      finnhubClient    <- FinnhubClient.make[F](config.finnhub, backend, access)
-      twelveDataClient <- TwelveDataClient.make(config.twelveData, backend, access)
+      finnhubClient    <- FinnhubClient.make[F](config.finnhub, backend, access, availability)
+      twelveDataClient <- TwelveDataClient.make(config.twelveData, backend, access, availability)
       marketDataClient <- MarketDataClient.make[F](finnhubClient, twelveDataClient)
     yield new Clients[F]:
       def marketData: MarketDataClient[F] = marketDataClient

@@ -13,6 +13,7 @@ import mongo4cats.models.collection.UpdateOptions
 import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort, Update}
 import stockschecker.domain.*
 import stockschecker.repositories.entities.{InvestmentEvaluationEntity, InvestmentEvaluationScreenReference}
+import stockschecker.utils.InvestmentEvaluator
 
 trait InvestmentEvaluationRepository[F[_]]:
   def saveMonthly(evaluation: InvestmentEvaluation): F[Unit]
@@ -42,7 +43,7 @@ final private class LiveInvestmentEvaluationRepository[F[_]](
               .set("evaluation", evaluation)
               .set("complete", evaluation.isComplete)
               .set("settled", evaluation.isSettled)
-              .set("finished", evaluation.isFinished),
+              .set("finished", InvestmentEvaluator.isFinished(evaluation)),
             UpdateOptions(upsert = true)
           )
           .void
@@ -89,7 +90,10 @@ final private class LiveInvestmentEvaluationRepository[F[_]](
             collection
               .updateOne(
                 Filter.idEq(entry._id) && Filter.ne("settled", true),
-                Update.set("complete", entry.evaluation.isComplete).set("settled", true).set("finished", entry.evaluation.isFinished)
+                Update
+                  .set("complete", entry.evaluation.isComplete)
+                  .set("settled", true)
+                  .set("finished", InvestmentEvaluator.isFinished(entry.evaluation))
               )
               .void
           }

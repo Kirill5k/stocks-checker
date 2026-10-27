@@ -1,5 +1,6 @@
 package stockschecker.clients
 
+import kirill5k.common.cats.Clock
 import cats.effect.{IO, Ref}
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
@@ -10,6 +11,7 @@ import java.time.{Instant, LocalDate}
 import scala.concurrent.duration.*
 
 class ProviderAvailabilitySpec extends RepositorySpec {
+  given Clock[IO]        = Clock.make[IO]
   override def port: Int = 12158
   private val from       = LocalDate.parse("2025-01-01")
   private val through    = LocalDate.parse("2025-12-01")
@@ -25,8 +27,10 @@ class ProviderAvailabilitySpec extends RepositorySpec {
   )
   private val limits = ProviderLimits(60000, 0, 1)
 
-  private def observed(access: ProviderAccess[IO], ticker: Ticker)(request: IO[PriceHistorySnapshot]): IO[PriceHistorySnapshot] =
-    access.observed(ticker, "TwelveData", "daily-prices-all")(access.run("TwelveData", limits)(request))(_.candles.nonEmpty)
+  private def observed(access: ProviderAccess[IO], availability: DatasetAvailabilityObserver[IO], ticker: Ticker)(
+      request: IO[PriceHistorySnapshot]
+  ): IO[PriceHistorySnapshot] =
+    availability.observed(ticker, "TwelveData", "daily-prices-all")(access.run("TwelveData", limits)(request))(_.candles.nonEmpty)
 
   "Provider availability" should {
     "recover from a provider 404 while preserving manual exclusions and successful-data timestamps" in
@@ -34,18 +38,19 @@ class ProviderAvailabilitySpec extends RepositorySpec {
         for
           quality        <- DataQualityRepository.make[IO](db)
           budgets        <- ProviderBudgetRepository.make[IO](db)
-          access         <- ProviderAccess.make[IO](budgets, quality)
+          access         <- ProviderAccess.make[IO](budgets)
+          availability   <- DatasetAvailabilityObserver.make[IO](quality)
           securities     <- SecurityRepository.make[IO](db)
           _              <- securities.save(List(AAPLSecurity, MSFTSecurity))
           _              <- securities.deactivate(AAPL)
           appleCalls     <- Ref.of[IO, Int](0)
           microsoftCalls <- Ref.of[IO, Int](0)
-          apple = observed(access, AAPL)(appleCalls.getAndUpdate(_ + 1).flatMap {
+          apple = observed(access, availability, AAPL)(appleCalls.getAndUpdate(_ + 1).flatMap {
             case 0 => IO.raiseError(AppError.HttpClient("TwelveData", 404, "no data"))
             case 1 => IO.pure(snapshot)
             case _ => IO.raiseError(AppError.HttpClient("TwelveData", 503, "transient failure"))
           })
-          microsoft = observed(access, MSFT)(microsoftCalls.getAndUpdate(_ + 1).flatMap {
+          microsoft = observed(access, availability, MSFT)(microsoftCalls.getAndUpdate(_ + 1).flatMap {
             case 0 => IO.raiseError(AppError.HttpClient("TwelveData", 404, "no data"))
             case _ => IO.pure(snapshot.copy(ticker = MSFT))
           })
@@ -84,17 +89,18 @@ class ProviderAvailabilitySpec extends RepositorySpec {
     "leave the last available or failed dataset result unchanged during provider and budget deferrals" in
       withEmbeddedMongoDatabase { db =>
         for
-          quality <- DataQualityRepository.make[IO](db)
-          budgets <- ProviderBudgetRepository.make[IO](db)
-          access  <- ProviderAccess.make[IO](budgets, quality)
-          now     <- IO.realTimeInstant
-          _       <- quality.record(AAPL, "TwelveData", "daily-prices-all", "available", now, None)
-          _       <- quality.record(MSFT, "TwelveData", "daily-prices-all", "failed", now, Some("HTTP 503"))
-          before  <- quality.all
-          first   <- observed(access, AAPL)(
+          quality      <- DataQualityRepository.make[IO](db)
+          budgets      <- ProviderBudgetRepository.make[IO](db)
+          access       <- ProviderAccess.make[IO](budgets)
+          availability <- DatasetAvailabilityObserver.make[IO](quality)
+          now          <- IO.realTimeInstant
+          _            <- quality.record(AAPL, "TwelveData", "daily-prices-all", "available", now, None)
+          _            <- quality.record(MSFT, "TwelveData", "daily-prices-all", "failed", now, Some("HTTP 503"))
+          before       <- quality.all
+          first        <- observed(access, availability, AAPL)(
             IO.raiseError(AppError.ProviderDeferred("TwelveData", now.plusSeconds(300), "Retry-After"))
           ).attempt
-          second <- observed(access, MSFT)(IO.raiseError(new AssertionError("Deferred request ran"))).attempt
+          second <- observed(access, availability, MSFT)(IO.raiseError(new AssertionError("Deferred request ran"))).attempt
           after  <- quality.all
         yield
           first.left.toOption.get mustBe a[AppError.ProviderDeferred]

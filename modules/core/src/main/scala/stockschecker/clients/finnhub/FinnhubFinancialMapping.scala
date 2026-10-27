@@ -1,7 +1,7 @@
 package stockschecker.clients.finnhub
 
 import io.circe.{Decoder, DecodingFailure, Json, JsonObject}
-import stockschecker.domain.{FinancialData, FinancialObservation, FinancialSnapshot, InvestmentScorer, Ticker}
+import stockschecker.domain.{FinancialData, FinancialObservation, FinancialSnapshot, Ticker}
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -79,7 +79,7 @@ object FinnhubFinancialMapping:
             quarterly = quarterly,
             rawPayload = raw,
             payloadHash = hash,
-            mappingVersion = InvestmentScorer.MappingVersion,
+            mappingVersion = FinancialSnapshot.FinnhubMappingVersion,
             validationErrors = errors.result().distinct
           )
           // FCF comes only from the explicitly named TTM FCF series; generic cash flow is retained in the raw snapshot.

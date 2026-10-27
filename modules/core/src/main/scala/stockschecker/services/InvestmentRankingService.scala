@@ -1,5 +1,7 @@
 package stockschecker.services
 
+import stockschecker.utils.InvestmentScorer
+
 import cats.effect.Sync
 import cats.syntax.applicative.*
 import cats.syntax.flatMap.*

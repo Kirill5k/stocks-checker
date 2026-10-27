@@ -1,5 +1,6 @@
 package stockschecker.repositories
 
+import kirill5k.common.cats.Clock
 import cats.effect.{IO, Ref}
 import cats.syntax.parallel.*
 import stockschecker.clients.{ProviderAccess, ProviderLimits}
@@ -10,6 +11,7 @@ import java.time.temporal.ChronoUnit
 import scala.concurrent.duration.*
 
 class ProviderBudgetRepositorySpec extends RepositorySpec {
+  given Clock[IO]        = Clock.make[IO]
   override def port: Int = 12162
 
   "Persistent provider budgets" should {
@@ -17,9 +19,8 @@ class ProviderBudgetRepositorySpec extends RepositorySpec {
       for {
         firstRepo  <- ProviderBudgetRepository.make[IO](db)
         secondRepo <- ProviderBudgetRepository.make[IO](db)
-        quality    <- DataQualityRepository.make[IO](db)
-        first      <- ProviderAccess.make[IO](firstRepo, quality)
-        second     <- ProviderAccess.make[IO](secondRepo, quality)
+        first      <- ProviderAccess.make[IO](firstRepo)
+        second     <- ProviderAccess.make[IO](secondRepo)
         calls      <- Ref.of[IO, Int](0)
         now        <- IO.realTimeInstant
         until   = now.plusSeconds(600).truncatedTo(ChronoUnit.MILLIS)
@@ -30,7 +31,7 @@ class ProviderBudgetRepositorySpec extends RepositorySpec {
         ).parTupled
         issued        <- calls.get
         restartedRepo <- ProviderBudgetRepository.make[IO](db)
-        restarted     <- ProviderAccess.make[IO](restartedRepo, quality)
+        restarted     <- ProviderAccess.make[IO](restartedRepo)
         refused       <- restarted.run("shared", ProviderLimits(1, 0, 2))(calls.update(_ + 1)).attempt
         after         <- calls.get
       } yield {
@@ -45,12 +46,11 @@ class ProviderBudgetRepositorySpec extends RepositorySpec {
     "preserve the daily allowance across new gates and permit the next UTC day" in withEmbeddedMongoDatabase { db =>
       for {
         original      <- ProviderBudgetRepository.make[IO](db)
-        quality       <- DataQualityRepository.make[IO](db)
-        first         <- ProviderAccess.make[IO](original, quality)
+        first         <- ProviderAccess.make[IO](original)
         _             <- first.run("daily", ProviderLimits(60000, 1, 1))(IO.unit)
         _             <- IO.sleep(5.millis)
         restartedRepo <- ProviderBudgetRepository.make[IO](db)
-        restarted     <- ProviderAccess.make[IO](restartedRepo, quality)
+        restarted     <- ProviderAccess.make[IO](restartedRepo)
         now           <- IO.realTimeInstant
         second        <- restarted.run("daily", ProviderLimits(60000, 1, 1))(IO.unit).attempt
         reset = now.atZone(ZoneOffset.UTC).toLocalDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant
@@ -81,11 +81,10 @@ class ProviderBudgetRepositorySpec extends RepositorySpec {
       val limits = ProviderLimits(60000, 1, 1)
       for {
         repository          <- ProviderBudgetRepository.make[IO](db)
-        quality             <- DataQualityRepository.make[IO](db)
-        first               <- ProviderAccess.make[IO](repository, quality)
+        first               <- ProviderAccess.make[IO](repository)
         _                   <- first.run("TwelveData", limits, Some("credential-one"))(IO.unit)
         restartedRepository <- ProviderBudgetRepository.make[IO](db)
-        restarted           <- ProviderAccess.make[IO](restartedRepository, quality)
+        restarted           <- ProviderAccess.make[IO](restartedRepository)
         firstKey            <- restarted.run("TwelveData", limits, Some("credential-one"))(IO.unit).attempt
         secondKey           <- restarted.run("TwelveData", limits, Some("credential-two"))(IO.pure(2))
         otherProvider       <- restarted.run("Finnhub", limits, Some("credential-one"))(IO.pure(3))

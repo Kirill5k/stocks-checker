@@ -1,4 +1,6 @@
-package stockschecker.domain
+package stockschecker.utils
+
+import stockschecker.domain.*
 
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -38,7 +40,7 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       List(FinancialObservation("fcfPerShareTTM", LocalDate.of(2025, 9, 30), BigDecimal(5), "reporting-currency-per-share")),
       "{}",
       "hash",
-      InvestmentScorer.MappingVersion,
+      FinancialSnapshot.FinnhubMappingVersion,
       Nil
     )
     val analytics = AAPLPriceAnalytics.copy(
@@ -256,5 +258,35 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       )
       val card = InvestmentScorer.rank(List(modified), now, recipe).head
       card.exclusions must contain allOf ("missing-invalid-or-stale-price", "invalid-or-stale-current-free-cash-flow")
+    }
+
+    "use the same cash-flow durability thresholds in eligibility and near-miss explanations" in {
+      val input = candidate("CASH")
+      val cases = List(
+        (Set(2024), true, "4/5 positive years"),
+        (Set(2025), false, "4/5 positive years"),
+        (Set(2024, 2023), false, "3/5 positive years")
+      )
+      cases.foreach { case (negativeYears, eligible, count) =>
+        val snapshot = input.financialSnapshot.get.copy(annual = input.financialSnapshot.get.annual.map { observation =>
+          if observation.metric == "fcfMargin" && negativeYears(observation.period.getYear) then
+            observation.copy(value = BigDecimal("-0.1"))
+          else observation
+        })
+        val modified = input.copy(financialSnapshot = Some(snapshot))
+        val scored   = InvestmentScorer
+          .rank(List(candidate("A"), candidate("B"), modified), now, recipe)
+          .find(_.ticker == input.stock.security.ticker)
+          .get
+
+        scored.eligible mustBe eligible
+        if eligible then InvestmentEligibility.explainExclusion(scored, Some(snapshot)) mustBe None
+        else
+          scored.exclusions mustBe List("insufficient-cash-flow-durability")
+          val compact     = snapshot.copy(annual = Nil, quarterly = Nil, rawPayload = "")
+          val explanation = InvestmentEligibility.explainExclusion(scored, Some(compact)).get
+          explanation must include(count)
+          explanation must include("requires latest > 0 and at least 4/5 positive years")
+      }
     }
   }

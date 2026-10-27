@@ -15,13 +15,13 @@ class ActionDispatcherSpec extends IOWordSpec {
     "persist accepted work before returning" in {
       val jobs   = mock[JobRepository[IO]]
       val action = Action.DeactivateSecurity(AAPL)
-      when(jobs.enqueue(any[Job])).thenReturnUnit
+      when(jobs.enqueue(any[Job], any[Int])).thenReturnUnit
       val captured = ArgumentCaptor.forClass(classOf[Job])
       (for {
         dispatcher <- ActionDispatcher.durable(jobs)
         _          <- dispatcher.dispatch(action)
       } yield ()).asserting { _ =>
-        verify(jobs).enqueue(captured.capture())
+        verify(jobs).enqueue(captured.capture(), eqTo(ActionPriority.Normal))
         captured.getValue.action mustBe action
         captured.getValue.availableAt mustBe ts
         captured.getValue.createdAt mustBe ts

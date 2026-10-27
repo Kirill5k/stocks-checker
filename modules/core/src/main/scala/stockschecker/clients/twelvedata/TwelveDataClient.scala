@@ -6,10 +6,11 @@ import cats.syntax.applicativeError.*
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import io.circe.Codec
+import kirill5k.common.cats.Clock
 import stockschecker.common.config.TwelveDataConfig
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceCandle, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.clients.{ProviderAccess, RetryAfter}
+import stockschecker.clients.{DatasetAvailabilityObserver, ProviderAccess, RetryAfter}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 import sttp.client4.circe.asJson
@@ -28,15 +29,17 @@ final private class LiveTwelveDataClient[F[_]](
     private val apiKeys: Vector[(String, String)],
     private val keyIndex: Ref[F, Int],
     private val backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-    private val access: ProviderAccess[F]
+    private val access: ProviderAccess[F],
+    private val availability: DatasetAvailabilityObserver[F]
 )(using
-    F: Async[F]
+    F: Async[F],
+    C: Clock[F]
 ) extends TwelveDataClient[F] {
 
   override def getDailyPriceHistory(ticker: Ticker, range: DateRange, adjustment: PriceAdjustment): F[PriceHistorySnapshot] =
     for
       _      <- F.raiseWhen(!range.isValid)(AppError.FailedValidation("Invalid price history request"))
-      result <- access.observed(ticker, "TwelveData", s"daily-prices-${providerAdjustment(adjustment)}")(
+      result <- availability.observed(ticker, "TwelveData", s"daily-prices-${providerAdjustment(adjustment)}")(
         keyIndex.getAndUpdate(i => (i + 1) % apiKeys.size).flatMap { startIndex =>
           attemptWithKeyRotation(ticker, range, adjustment, startIndex, 0, List.empty)
         }
@@ -90,7 +93,7 @@ final private class LiveTwelveDataClient[F[_]](
         case Left(ResponseException.UnexpectedStatusCode(body, meta)) => failure(meta.code.code, body, meta.header("Retry-After"))
         case Left(error) => F.raiseError(AppError.JsonParsingFailure("", s"Invalid daily prices: ${redact(error.getMessage)}"))
       values <- processData(data, ticker)
-      now    <- F.realTimeInstant
+      now    <- C.now
       candles = values.toList.sortBy(_.date)
       _ <- F.raiseWhen(candles.exists(_.close <= 0) || candles.map(_.date).distinct.size != candles.size)(
         AppError.FailedValidation("Price history contains invalid prices or duplicate dates")
@@ -125,9 +128,7 @@ final private class LiveTwelveDataClient[F[_]](
 
   private def failure[A](status: Int, message: String, retryAfter: Option[String] = None): F[A] = status match
     case 429 =>
-      F.realTimeInstant.flatMap(now =>
-        F.raiseError(AppError.ProviderDeferred("TwelveData", RetryAfter.deadline(retryAfter, now), "rate-limited"))
-      )
+      C.now.flatMap(now => F.raiseError(AppError.ProviderDeferred("TwelveData", RetryAfter.deadline(retryAfter, now), "rate-limited")))
     case 401 | 403 => F.raiseError(AppError.ProviderConfiguration("TwelveData", s"HTTP $status; check credentials and subscription"))
     case _         => F.raiseError(AppError.HttpClient("TwelveData", status, redact(message)))
 
@@ -193,8 +194,9 @@ object TwelveDataClient {
   def make[F[_]](
       config: TwelveDataConfig,
       backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-      access: ProviderAccess[F]
-  )(using F: Async[F]): F[TwelveDataClient[F]] =
+      access: ProviderAccess[F],
+      availability: DatasetAvailabilityObserver[F]
+  )(using F: Async[F], C: Clock[F]): F[TwelveDataClient[F]] =
     val keys = config.apiKey.split(',').iterator.map(_.trim).filter(_.nonEmpty).toVector.distinct
     for
       _        <- F.raiseWhen(keys.isEmpty)(AppError.Critical("At least one TwelveData API key must be provided"))
@@ -204,5 +206,5 @@ object TwelveDataClient {
         key -> HexFormat.of().formatHex(digest)
       })
       index <- Ref.of[F, Int](0)
-    yield LiveTwelveDataClient[F](config, accounts, index, backend, access)
+    yield LiveTwelveDataClient[F](config, accounts, index, backend, access, availability)
 }

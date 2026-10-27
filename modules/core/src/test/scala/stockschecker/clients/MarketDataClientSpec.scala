@@ -1,17 +1,19 @@
 package stockschecker.clients
 
 import cats.effect.IO
+import kirill5k.common.cats.Clock
 import fs2.Stream
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.finnhub.FinnhubClient
 import stockschecker.clients.twelvedata.TwelveDataClient
-import stockschecker.domain.{DateRange, Exchange, FinancialData, FinancialSnapshot, InvestmentScorer, PriceAdjustment, PriceHistorySnapshot}
+import stockschecker.domain.{DateRange, Exchange, FinancialData, FinancialSnapshot, PriceAdjustment, PriceHistorySnapshot}
 import stockschecker.fixtures.*
 import stockschecker.repositories.{DataQualityRepository, ProviderBudgetRepository}
 
 import java.time.{Instant, LocalDate}
 
 class MarketDataClientSpec extends IOWordSpec {
+  given Clock[IO]      = Clock.make[IO]
   private val limits   = ProviderLimits(60000, 0, 1)
   private val from     = LocalDate.parse("2025-01-01")
   private val through  = LocalDate.parse("2025-12-01")
@@ -28,7 +30,7 @@ class MarketDataClientSpec extends IOWordSpec {
   )
   private val financials = FinancialData(
     AAPLFinancialMetrics,
-    FinancialSnapshot("financials", AAPL, "Finnhub", ts, Map.empty, Nil, Nil, "{}", "hash", InvestmentScorer.MappingVersion, Nil)
+    FinancialSnapshot("financials", AAPL, "Finnhub", ts, Map.empty, Nil, Nil, "{}", "hash", FinancialSnapshot.FinnhubMappingVersion, Nil)
   )
 
   private def budgets: ProviderBudgetRepository[IO] = {
@@ -44,7 +46,7 @@ class MarketDataClientSpec extends IOWordSpec {
       val budget  = budgets
       val quality = mock[DataQualityRepository[IO]]
       (for
-        access <- ProviderAccess.make[IO](budget, quality)
+        access <- ProviderAccess.make[IO](budget)
         _ = when(finnhub.getListedSecurities(Exchange.NASDAQ)).thenReturn(
           Stream.eval(access.run("Finnhub", limits)(IO.pure(List(AAPLSecurity, MSFTSecurity)))).flatMap(Stream.emits)
         )

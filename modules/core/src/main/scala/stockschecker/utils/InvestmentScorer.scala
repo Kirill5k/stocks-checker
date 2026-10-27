@@ -1,4 +1,6 @@
-package stockschecker.domain
+package stockschecker.utils
+
+import stockschecker.domain.*
 
 import java.time.{Instant, ZoneOffset}
 import java.time.temporal.ChronoUnit
@@ -6,7 +8,6 @@ import scala.math.BigDecimal.RoundingMode
 
 /** Scores a complete, fixed universe. Callers may filter the returned cards, never the peer inputs. */
 object InvestmentScorer:
-  val MappingVersion       = "finnhub-basic-financials-v1"
   val SectorMappingVersion = "finnhub-industry-v1"
 
   private val sectors = Map(
@@ -177,7 +178,8 @@ object InvestmentScorer:
       .toList
     val evidence = candidate.financialSnapshot.map { snapshot =>
       val observations = snapshot.annual.groupBy(_.metric).toList.sortBy(_._1).flatMap { case (metric, points) =>
-        if Set("roa", "fcfMargin")(metric) then points.sortBy(_.period).reverse.take(5)
+        if metric == "roa" then points.sortBy(_.period).reverse.take(5)
+        else if metric == "fcfMargin" then points.sortBy(_.period).reverse.take(InvestmentEligibility.CashFlowHistoryYears)
         else if metric == "totalDebtToTotalAsset" then points.sortBy(_.period).reverse.take(1)
         else Nil
       }
@@ -223,7 +225,8 @@ object InvestmentScorer:
     val today   = asOf.atZone(ZoneOffset.UTC).toLocalDate
     val reasons = List.newBuilder[String]
     if snapshot.ticker != ticker then reasons += "financial-ticker-mismatch"
-    if snapshot.provider != "Finnhub" || snapshot.mappingVersion != MappingVersion then reasons += "unverified-financial-mapping"
+    if snapshot.provider != "Finnhub" || snapshot.mappingVersion != FinancialSnapshot.FinnhubMappingVersion then
+      reasons += "unverified-financial-mapping"
     val requiredSeries = Set("annual:roa", "annual:fcfMargin", "annual:totalDebtToTotalAsset", "quarterly:fcfPerShareTTM")
     val relevantErrors = snapshot.validationErrors.filter { error =>
       error.split(":", 2).toList match
@@ -252,14 +255,12 @@ object InvestmentScorer:
         reasons += s"stale-fiscal-period:$metric"
         None
       else Some(points)
-    def positiveMetric(metric: String): Option[BigDecimal] = snapshot.metrics.get(metric) match
-      case Some(value) if value > 0 => Some(value)
-      case Some(_)                  =>
-        reasons += s"nonpositive-metric:$metric"
-        None
-      case None =>
-        reasons += s"missing-metric:$metric"
-        None
+    def positiveMetric(metric: String): Option[BigDecimal] =
+      InvestmentEligibility.positiveMetric(metric, snapshot.metrics) match
+        case Right(value) => Some(value)
+        case Left(reason) =>
+          reasons += reason
+          None
     def growthMetric(metric: String): Option[BigDecimal] = snapshot.metrics.get(metric) match
       case Some(value) => Some(value / 100)
       case None        =>
@@ -269,7 +270,7 @@ object InvestmentScorer:
       val values = points.map(_.value).sorted
       values(values.size / 2)
     val roa = history("roa", 5)
-    val fcf = history("fcfMargin", 5)
+    val fcf = history("fcfMargin", InvestmentEligibility.CashFlowHistoryYears)
     if roa.nonEmpty && fcf.nonEmpty && roa.get.map(_.period) != fcf.get.map(_.period) then reasons += "misaligned-quality-fiscal-periods"
     val debt          = history("totalDebtToTotalAsset", 1)
     val pe            = positiveMetric("peTTM")
@@ -277,7 +278,7 @@ object InvestmentScorer:
     val currentEps    = positiveMetric("epsTTM")
     val revenueGrowth = growthMetric("revenueGrowth5Y")
     val epsGrowth     = growthMetric("epsGrowth5Y")
-    if fcf.exists(p => p.head.value <= 0 || p.count(_.value > 0) < 4) then reasons += "insufficient-cash-flow-durability"
+    if fcf.exists(p => !InvestmentEligibility.hasDurableCashFlow(p)) then reasons += InvestmentEligibility.InsufficientCashFlowDurability
     if debt.exists(_.exists(_.value < 0)) then reasons += "negative-debt-to-assets"
     val features = List(
       roa.map(p => "returnOnAssets5YMedian" -> median(p)),

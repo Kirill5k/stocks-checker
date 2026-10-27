@@ -4,19 +4,22 @@ import cats.effect.Async
 import org.http4s.HttpRoutes
 import stockschecker.common.config.ApiConfig
 import stockschecker.domain.*
-import stockschecker.services.InvestmentScreenService
+import stockschecker.services.{InvestmentEvaluationService, InvestmentScreenService}
 import sttp.tapir.*
 import sttp.tapir.generic.auto.SchemaDerivation
 import sttp.tapir.json.circe.TapirJsonCirce
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
-final private class InvestmentScreenController[F[_]: Async](service: InvestmentScreenService[F], config: ApiConfig)
-    extends Controller[F](ApiKeyRequirement.Required(config.key)):
+final private class InvestmentScreenController[F[_]: Async](
+    service: InvestmentScreenService[F],
+    evaluations: InvestmentEvaluationService[F],
+    config: ApiConfig
+) extends Controller[F](ApiKeyRequirement.Required(config.key)):
   import InvestmentScreenController.*
   private val create        = secured(createEndpoint).serverLogic(_ => request => service.create(request).asResponse)
   private val get           = secured(getEndpoint).serverLogic(_ => id => service.get(id).asResponse)
   private val list          = secured(listEndpoint).serverLogic(_ => limit => service.list(limit.getOrElse(20)).asResponse)
-  private val evaluate      = secured(evaluationEndpoint).serverLogic(_ => id => service.evaluate(id).asResponse)
+  private val evaluate      = secured(evaluationEndpoint).serverLogic(_ => id => evaluations.evaluate(id).asResponse)
   val routes: HttpRoutes[F] = Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(create, get, list, evaluate))
 
 object InvestmentScreenController extends TapirJsonCirce with SchemaDerivation:
@@ -38,5 +41,9 @@ object InvestmentScreenController extends TapirJsonCirce with SchemaDerivation:
     Controller.secureEndpoint.get.in(base).in(query[Option[Int]]("limit")).out(jsonBody[List[InvestmentScreenSummary]])
   private val evaluationEndpoint =
     Controller.secureEndpoint.get.in(base / path[InvestmentScreenId]("id") / "evaluation").out(jsonBody[InvestmentEvaluation])
-  def make[F[_]: Async](service: InvestmentScreenService[F], config: ApiConfig): F[Controller[F]] =
-    Async[F].pure(new InvestmentScreenController(service, config))
+  def make[F[_]: Async](
+      service: InvestmentScreenService[F],
+      evaluations: InvestmentEvaluationService[F],
+      config: ApiConfig
+  ): F[Controller[F]] =
+    Async[F].pure(new InvestmentScreenController(service, evaluations, config))

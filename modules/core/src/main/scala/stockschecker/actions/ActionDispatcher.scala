@@ -18,6 +18,6 @@ object ActionDispatcher:
         for {
           now <- C.now
           id  <- F.delay(JobId.gen)
-          _   <- repository.enqueue(Job(id, action, now, now))
+          _   <- repository.enqueue(Job(id, action, now, now), ActionPriority.forAction(action))
         } yield ()
     })

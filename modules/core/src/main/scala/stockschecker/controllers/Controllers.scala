@@ -36,7 +36,7 @@ object Controllers:
       h          <- HealthController.make[F]
       c          <- CommandController.make[F](apiConfig, services.command)
       st         <- StockController.make(services.stock, apiConfig)
-      investment <- InvestmentScreenController.make(services.investmentScreens, apiConfig)
+      investment <- InvestmentScreenController.make(services.investmentScreens, services.investmentEvaluations, apiConfig)
       quality    <- DataQualityController.make(services.dataQuality, apiConfig)
     yield new Controllers[F]:
       override val security: Controller[F]          = s

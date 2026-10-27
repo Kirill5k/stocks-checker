@@ -1,5 +1,7 @@
 package stockschecker.services
 
+import stockschecker.utils.InvestmentScorer
+
 import cats.effect.{IO, Ref}
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
@@ -31,19 +33,18 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
 
   "InvestmentScreenService" should {
     "propagate a missing-screen error from the repository" in {
-      val screens     = mock[InvestmentScreenRepository[IO]]
-      val rankings    = mock[InvestmentRankingService[IO]]
-      val evaluations = mock[InvestmentEvaluationService[IO]]
-      val id          = InvestmentScreenId("missing")
-      val error       = AppError.EntityDoesNotExist("Investment screen", id.value)
+      val screens  = mock[InvestmentScreenRepository[IO]]
+      val rankings = mock[InvestmentRankingService[IO]]
+      val id       = InvestmentScreenId("missing")
+      val error    = AppError.EntityDoesNotExist("Investment screen", id.value)
       when(screens.find(id)).thenRaiseError(error)
       (for
-        service <- InvestmentScreenService.make(screens, rankings, evaluations)
+        service <- InvestmentScreenService.make(screens, rankings)
         result  <- service.get(id)
       yield result).attempt.asserting { result =>
         result mustBe Left(error)
         verify(screens).find(id)
-        verifyNoInteractions(rankings, evaluations)
+        verifyNoInteractions(rankings)
         succeed
       }
     }
@@ -64,48 +65,44 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       when(screens.find(id)).thenReturnIO(header)
       when(rankings.find(rankingId)).thenReturnNone
       (for
-        service <- InvestmentScreenService.make(screens, rankings, mock[InvestmentEvaluationService[IO]])
+        service <- InvestmentScreenService.make(screens, rankings)
         result  <- service.get(id)
       yield result).attempt.asserting(_ mustBe Left(AppError.EntityDoesNotExist("Investment screen", id.value)))
     }
 
-    "publish the daily ranking before capturing monthly evaluations during a research refresh" in {
-      val screens     = mock[InvestmentScreenRepository[IO]]
-      val rankings    = mock[InvestmentRankingService[IO]]
-      val evaluations = mock[InvestmentEvaluationService[IO]]
-      val header      =
+    "refresh the daily ranking without freezing a cohort when too few companies are eligible" in {
+      val screens  = mock[InvestmentScreenRepository[IO]]
+      val rankings = mock[InvestmentRankingService[IO]]
+      val header   =
         InvestmentRankingHeader(InvestmentRankingId("daily"), now, InvestmentRecipe(), InvestmentRankingSummary(1, 0, Map.empty))
       val id = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
       when(rankings.refresh(LocalDate.parse("2026-10-19"))).thenReturnIO(header)
       when(screens.header(id)).thenReturnNone
-      when(evaluations.captureMonthlyEvaluations).thenReturnIO(0)
       val result = for
-        service <- InvestmentScreenService.make(screens, rankings, evaluations)
-        _       <- service.refreshResearch
+        service <- InvestmentScreenService.make(screens, rankings)
+        _       <- service.generateScheduledScreen
       yield ()
       result.asserting { _ =>
-        val ordered = org.mockito.Mockito.inOrder(rankings, screens, evaluations)
+        val ordered = org.mockito.Mockito.inOrder(rankings, screens)
         ordered.verify(rankings).refresh(LocalDate.parse("2026-10-19"))
         ordered.verify(screens).header(id)
-        ordered.verify(evaluations).captureMonthlyEvaluations
         verify(rankings, never).get(any[InvestmentRankingId])
         verify(screens, never).save(any[InvestmentScreenHeader])
         succeed
       }
     }
-    "propagate ranking failures and skip evaluation capture during a research refresh" in {
-      val screens     = mock[InvestmentScreenRepository[IO]]
-      val rankings    = mock[InvestmentRankingService[IO]]
-      val evaluations = mock[InvestmentEvaluationService[IO]]
-      val error       = new IllegalStateException("Ranking storage is unavailable")
+    "propagate ranking failures before saving a scheduled screen" in {
+      val screens  = mock[InvestmentScreenRepository[IO]]
+      val rankings = mock[InvestmentRankingService[IO]]
+      val error    = new IllegalStateException("Ranking storage is unavailable")
       when(rankings.refresh(any[LocalDate])).thenReturn(IO.raiseError(error))
       val result = for
-        service <- InvestmentScreenService.make(screens, rankings, evaluations)
-        outcome <- service.refreshResearch.attempt
+        service <- InvestmentScreenService.make(screens, rankings)
+        outcome <- service.generateScheduledScreen.attempt
       yield outcome
       result.asserting { outcome =>
         outcome mustBe Left(error)
-        verifyNoInteractions(screens, evaluations)
+        verifyNoInteractions(screens)
         succeed
       }
     }
@@ -119,8 +116,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         state   <- Ref.of[IO, List[InvestmentScreenHeader]](Nil)
         service <- InvestmentScreenService.make(
           memoryScreens(state),
-          rankings,
-          mock[InvestmentEvaluationService[IO]]
+          rankings
         )
         created <- service.create(InvestmentScreenRequest(limit = Some(1), country = Some("GB")))
         saved   <- state.get
@@ -152,8 +148,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         state   <- Ref.of[IO, List[InvestmentScreenHeader]](List(InvestmentScreenHeader.from(run)))
         service <- InvestmentScreenService.make(
           memoryScreens(state),
-          publishedRanking(run),
-          mock[InvestmentEvaluationService[IO]]
+          publishedRanking(run)
         )
         found <- service.get(run.id)
       yield found
@@ -194,8 +189,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         state   <- Ref.of[IO, List[InvestmentScreenHeader]](Nil)
         service <- InvestmentScreenService.make(
           memoryScreens(state),
-          rankings,
-          mock[InvestmentEvaluationService[IO]]
+          rankings
         )
         user   <- service.create(InvestmentScreenRequest(limit = Some(1)))
         first  <- service.generateScheduledScreen
@@ -253,8 +247,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         state   <- Ref.of[IO, List[InvestmentScreenHeader]](List(InvestmentScreenHeader.from(run)))
         service <- InvestmentScreenService.make(
           memoryScreens(state),
-          publishedRanking(run),
-          mock[InvestmentEvaluationService[IO]]
+          publishedRanking(run)
         )
         found <- service.get(run.id)
       yield found
@@ -287,8 +280,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val result = for
         service <- InvestmentScreenService.make(
           screens,
-          rankings,
-          mock[InvestmentEvaluationService[IO]]
+          rankings
         )
         created <- service.generateScheduledScreen
       yield created
@@ -348,8 +340,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         state   <- Ref.of[IO, List[InvestmentScreenHeader]](List(InvestmentScreenHeader.from(run)))
         service <- InvestmentScreenService.make(
           memoryScreens(state),
-          publishedRanking(run),
-          mock[InvestmentEvaluationService[IO]]
+          publishedRanking(run)
         )
         found <- service.get(run.id)
       yield found

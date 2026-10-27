@@ -3,14 +3,14 @@ package stockschecker.services
 import cats.effect.IO
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{FinancialData, FinancialMetrics, FinancialSnapshot, InvestmentScorer, Ticker}
+import stockschecker.domain.{FinancialData, FinancialMetrics, FinancialSnapshot, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.{CompanyProfileRepository, FinancialHistoryRepository, FinancialMetricsRepository}
 import stockschecker.fixtures.*
 
 class FinancialMetricsServiceSpec extends IOWordSpec {
   private val snapshot =
-    FinancialSnapshot("vintage", AAPL, "Finnhub", ts, Map.empty, Nil, Nil, "{}", "hash", InvestmentScorer.MappingVersion, Nil)
+    FinancialSnapshot("vintage", AAPL, "Finnhub", ts, Map.empty, Nil, Nil, "{}", "hash", FinancialSnapshot.FinnhubMappingVersion, Nil)
 
   "FinancialMetricsService" should {
     "persist financial evidence before publishing metrics and record the update directly" in {

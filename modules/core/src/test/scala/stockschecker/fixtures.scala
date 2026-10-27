@@ -1,6 +1,7 @@
 package stockschecker
 
 import cats.data.NonEmptyList
+import stockschecker.utils.PriceAnalyticsCalculator
 import mongo4cats.bson.ObjectId
 import stockschecker.actions.Action
 import stockschecker.domain.{
@@ -129,7 +130,7 @@ object fixtures {
     )
   )
 
-  val AAPLPriceAnalytics: PriceAnalytics = PriceAnalytics.from(AAPL, AAPLPriceCandles)
+  val AAPLPriceAnalytics: PriceAnalytics = PriceAnalyticsCalculator.from(AAPL, AAPLPriceCandles)
 
   val AAPLPricePerformanceSummary: PricePerformanceSummary = AAPLPriceAnalytics.performanceSummary
 

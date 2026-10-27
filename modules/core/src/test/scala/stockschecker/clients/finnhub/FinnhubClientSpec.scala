@@ -1,8 +1,9 @@
 package stockschecker.clients.finnhub
 
+import kirill5k.common.cats.Clock
 import cats.effect.{Deferred, IO}
 import kirill5k.common.sttp.test.Sttp4WordSpec
-import stockschecker.clients.{ProviderAccess, ProviderLimits}
+import stockschecker.clients.{DatasetAvailabilityObserver, ProviderAccess, ProviderLimits}
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.{CompanyProfile, Exchange, FinancialMetrics, Security, SecurityKind, Ticker}
 import stockschecker.domain.errors.AppError
@@ -14,6 +15,7 @@ import sttp.model.StatusCode
 import java.time.{Instant, LocalDate}
 
 class FinnhubClientSpec extends Sttp4WordSpec {
+  given Clock[IO]                                   = Clock.make[IO]
   private def budgets: ProviderBudgetRepository[IO] = {
     val repository = mock[ProviderBudgetRepository[IO]]
     when(repository.reserve(anyString, any[Instant], any[Long], any[Int], any[Option[String]])).thenReturnIO(None)
@@ -27,7 +29,7 @@ class FinnhubClientSpec extends Sttp4WordSpec {
     repository
   }
 
-  private def providerAccess: IO[ProviderAccess[IO]] = ProviderAccess.make[IO](budgets, quality)
+  private def providerAccess: IO[ProviderAccess[IO]] = ProviderAccess.make[IO](budgets)
 
   "A FinnhubClient" when {
 
@@ -45,7 +47,8 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
         val result = for
           access     <- providerAccess
-          client     <- FinnhubClient.make[IO](config, testingBackend, access)
+          observer   <- DatasetAvailabilityObserver.make[IO](quality)
+          client     <- FinnhubClient.make[IO](config, testingBackend, access, observer)
           securities <- client.getListedSecurities(Exchange.NASDAQ).compile.toList
         yield securities
 
@@ -77,7 +80,8 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
         val result = for
           access     <- providerAccess
-          client     <- FinnhubClient.make[IO](config, testingBackend, access)
+          observer   <- DatasetAvailabilityObserver.make[IO](quality)
+          client     <- FinnhubClient.make[IO](config, testingBackend, access, observer)
           securities <- client.getListedSecurities(Exchange.NYSE).compile.toList
         yield securities
 
@@ -98,9 +102,10 @@ class FinnhubClientSpec extends Sttp4WordSpec {
           }
 
         val result = for
-          access  <- providerAccess
-          client  <- FinnhubClient.make[IO](config, testingBackend, access)
-          profile <- client.getCompanyProfile(Ticker("AAPL"))
+          access   <- providerAccess
+          observer <- DatasetAvailabilityObserver.make[IO](quality)
+          client   <- FinnhubClient.make[IO](config, testingBackend, access, observer)
+          profile  <- client.getCompanyProfile(Ticker("AAPL"))
         yield profile
 
         result.asserting { cp =>
@@ -132,9 +137,10 @@ class FinnhubClientSpec extends Sttp4WordSpec {
           }
 
         val result = for
-          access  <- providerAccess
-          client  <- FinnhubClient.make[IO](config, testingBackend, access)
-          profile <- client.getCompanyProfile(Ticker("INVALID"))
+          access   <- providerAccess
+          observer <- DatasetAvailabilityObserver.make[IO](quality)
+          client   <- FinnhubClient.make[IO](config, testingBackend, access, observer)
+          profile  <- client.getCompanyProfile(Ticker("INVALID"))
         yield profile
 
         result.asserting { cp =>
@@ -150,9 +156,10 @@ class FinnhubClientSpec extends Sttp4WordSpec {
           )
 
         val result = for
-          access  <- providerAccess
-          client  <- FinnhubClient.make[IO](config, testingBackend, access)
-          profile <- client.getCompanyProfile(Ticker("AAPL"))
+          access   <- providerAccess
+          observer <- DatasetAvailabilityObserver.make[IO](quality)
+          client   <- FinnhubClient.make[IO](config, testingBackend, access, observer)
+          profile  <- client.getCompanyProfile(Ticker("AAPL"))
         yield profile
 
         result.attempt.asserting { response =>
@@ -172,9 +179,10 @@ class FinnhubClientSpec extends Sttp4WordSpec {
           }
 
         val result = for
-          access  <- providerAccess
-          client  <- FinnhubClient.make[IO](config, testingBackend, access)
-          metrics <- client.getFinancialData(Ticker("AAPL"))
+          access   <- providerAccess
+          observer <- DatasetAvailabilityObserver.make[IO](quality)
+          client   <- FinnhubClient.make[IO](config, testingBackend, access, observer)
+          metrics  <- client.getFinancialData(Ticker("AAPL"))
         yield metrics
 
         result.asserting { m =>
@@ -207,9 +215,10 @@ class FinnhubClientSpec extends Sttp4WordSpec {
           }
 
         val result = for
-          access  <- providerAccess
-          client  <- FinnhubClient.make[IO](config, testingBackend, access)
-          metrics <- client.getFinancialData(Ticker("INVALID"))
+          access   <- providerAccess
+          observer <- DatasetAvailabilityObserver.make[IO](quality)
+          client   <- FinnhubClient.make[IO](config, testingBackend, access, observer)
+          metrics  <- client.getFinancialData(Ticker("INVALID"))
         yield metrics
 
         result.asserting { m =>
@@ -225,9 +234,10 @@ class FinnhubClientSpec extends Sttp4WordSpec {
           )
 
         val result = for
-          access  <- providerAccess
-          client  <- FinnhubClient.make[IO](config, testingBackend, access)
-          profile <- client.getFinancialData(Ticker("AAPL"))
+          access   <- providerAccess
+          observer <- DatasetAvailabilityObserver.make[IO](quality)
+          client   <- FinnhubClient.make[IO](config, testingBackend, access, observer)
+          profile  <- client.getFinancialData(Ticker("AAPL"))
         yield profile
 
         result.attempt.asserting { response =>
@@ -248,9 +258,10 @@ class FinnhubClientSpec extends Sttp4WordSpec {
           now <- IO.realTimeInstant
           until = now.plusSeconds(60)
           _     = when(repository.reserve(anyString, any[Instant], any[Long], any[Int], any[Option[String]])).thenReturnIO(Some(until))
-          access <- ProviderAccess.make[IO](repository, availability)
-          client <- FinnhubClient.make[IO](config, testingBackend, access)
-          result <- client.getCompanyProfile(Ticker("AAPL")).attempt
+          access   <- ProviderAccess.make[IO](repository)
+          observer <- DatasetAvailabilityObserver.make[IO](availability)
+          client   <- FinnhubClient.make[IO](config, testingBackend, access, observer)
+          result   <- client.getCompanyProfile(Ticker("AAPL")).attempt
         yield (result, until)).asserting { case (result, until) =>
           result.left.toOption.collect { case error: AppError.ProviderDeferred => error.retryAt } mustBe Some(until)
           verify(repository).reserve(eqTo("Finnhub"), any[Instant], eqTo(1000L), eqTo(0), eqTo(Option.empty[String]))
@@ -268,12 +279,13 @@ class FinnhubClientSpec extends Sttp4WordSpec {
         )
 
         (for
-          access          <- ProviderAccess.make[IO](repository, availability)
-          client          <- FinnhubClient.make[IO](config, testingBackend, access)
+          access          <- ProviderAccess.make[IO](repository)
+          observer        <- DatasetAvailabilityObserver.make[IO](availability)
+          client          <- FinnhubClient.make[IO](config, testingBackend, access, observer)
           failed          <- client.getCompanyProfile(Ticker("AAPL")).attempt
           paused          <- client.getCompanyProfile(Ticker("AAPL")).attempt
-          restartedAccess <- ProviderAccess.make[IO](repository, availability)
-          restartedClient <- FinnhubClient.make[IO](config, testingBackend, restartedAccess)
+          restartedAccess <- ProviderAccess.make[IO](repository)
+          restartedClient <- FinnhubClient.make[IO](config, testingBackend, restartedAccess, observer)
           recovered       <- restartedClient.getCompanyProfile(Ticker("AAPL"))
         yield (failed, paused, recovered)).asserting { case (failed, paused, recovered) =>
           failed.left.toOption.get mustBe a[AppError.ProviderConfiguration]
@@ -296,17 +308,18 @@ class FinnhubClientSpec extends Sttp4WordSpec {
         val repository = budgets
 
         (for
-          access  <- ProviderAccess.make[IO](repository, quality)
-          started <- Deferred[IO, Unit]
-          release <- Deferred[IO, Unit]
+          access   <- ProviderAccess.make[IO](repository)
+          observer <- DatasetAvailabilityObserver.make[IO](quality)
+          started  <- Deferred[IO, Unit]
+          release  <- Deferred[IO, Unit]
           body = (Stream.eval(started.complete(())) >> Stream.eval(release.get) >>
             Stream.emit(readJson("finnhub/list-stocks-success.json"))).through(fs2.text.utf8.encode)
           testingBackend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(body))
-          client     <- FinnhubClient.make[IO](config.copy(limits = config.limits.copy(maxConcurrent = 1)), testingBackend, access)
-          active     <- client.getListedSecurities(Exchange.NASDAQ).compile.toList.start
-          _          <- started.get
-          blocked    <- client.getCompanyProfile(Ticker("AAPL")).attempt
-          _          <- release.complete(())
+          client  <- FinnhubClient.make[IO](config.copy(limits = config.limits.copy(maxConcurrent = 1)), testingBackend, access, observer)
+          active  <- client.getListedSecurities(Exchange.NASDAQ).compile.toList.start
+          _       <- started.get
+          blocked <- client.getCompanyProfile(Ticker("AAPL")).attempt
+          _       <- release.complete(())
           securities <- active.joinWithNever
         yield (blocked, securities)).asserting { case (blocked, securities) =>
           blocked.left.toOption.get mustBe a[AppError.ProviderDeferred]

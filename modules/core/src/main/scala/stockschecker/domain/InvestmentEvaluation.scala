@@ -104,13 +104,4 @@ final case class InvestmentEvaluation(
 
   // Legacy reports without a lifecycle marker are final only when all required data is auditable.
   def isSettled: Boolean = settled.getOrElse(isComplete)
-
-  def isFinished: Boolean =
-    isSettled && horizons.nonEmpty &&
-      dataThrough.exists(through =>
-        horizons.forall { horizon =>
-          val lastPossibleExit = horizon.targetDate.plusDays(if horizon.entryDate.isEmpty then 14 else 7)
-          horizon.exitDate.exists(date => !date.isAfter(through)) || !lastPossibleExit.isAfter(through)
-        }
-      )
 }

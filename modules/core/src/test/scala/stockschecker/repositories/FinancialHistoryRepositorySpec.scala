@@ -3,7 +3,7 @@ package stockschecker.repositories
 import cats.effect.IO
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.operations.Filter
-import stockschecker.domain.{FinancialSnapshot, InvestmentScorer}
+import stockschecker.domain.FinancialSnapshot
 import stockschecker.fixtures.*
 
 class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs:
@@ -22,7 +22,7 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
           Nil,
           "first-payload",
           "first-hash",
-          InvestmentScorer.MappingVersion,
+          FinancialSnapshot.FinnhubMappingVersion,
           Nil
         )
         val second = first.copy(id = "second", observedAt = ts.plusSeconds(60), metrics = Map("peTTM" -> BigDecimal(30)))
@@ -54,7 +54,7 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
           Nil,
           "large-raw-payload",
           "hash",
-          InvestmentScorer.MappingVersion,
+          FinancialSnapshot.FinnhubMappingVersion,
           Nil
         )
         for

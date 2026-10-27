@@ -6,7 +6,7 @@ import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
 import stockschecker.common.config.ActionExecutorConfig
 import stockschecker.repositories.JobRepository
-import stockschecker.services.Services
+import stockschecker.domain.JobCommand
 
 trait ActionExecutor[F[_]]:
   def run: Stream[F, Unit]
@@ -14,7 +14,8 @@ trait ActionExecutor[F[_]]:
 object ActionExecutor:
   def make[F[_]: {Async, Logger, Clock}](
       jobs: JobRepository[F],
-      services: Services[F],
+      handler: ActionHandler[F],
+      isCurrent: JobCommand => F[Boolean],
       config: ActionExecutorConfig
   ): F[ActionExecutor[F]] =
-    Async[F].pure(new DurableActionExecutor(jobs, services, config))
+    Async[F].pure(new DurableActionExecutor(jobs, handler, isCurrent, config))

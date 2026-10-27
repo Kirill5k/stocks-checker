@@ -27,6 +27,9 @@ final case class FinancialSnapshot(
     validationErrors: List[String]
 ) derives Codec.AsObject
 
+object FinancialSnapshot:
+  val FinnhubMappingVersion = "finnhub-basic-financials-v1"
+
 final case class FinancialData(
     metrics: FinancialMetrics,
     snapshot: FinancialSnapshot

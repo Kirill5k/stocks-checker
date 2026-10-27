@@ -34,6 +34,7 @@ import stockschecker.domain.{
   PriceAnalyticsBasis,
   PricePerformanceSummary,
   Schedule,
+  ScheduledOccurrence,
   Security,
   SecurityKind,
   Stock,
@@ -191,7 +192,11 @@ private[repositories] object entities extends MongoJsonCodecs {
       schedule: Schedule,
       lastExecutedAt: Option[Instant],
       executionCount: Int,
-      maxExecutions: Option[Int]
+      maxExecutions: Option[Int],
+      version: Option[Long],
+      nextRunAt: Option[Instant],
+      activeRunId: Option[JobId],
+      outbox: Option[ScheduledOccurrence]
   ) derives Codec.AsObject:
     def toDomain: Command =
       Command(
@@ -201,7 +206,11 @@ private[repositories] object entities extends MongoJsonCodecs {
         schedule = schedule,
         lastExecutedAt = lastExecutedAt,
         executionCount = executionCount,
-        maxExecutions = maxExecutions
+        maxExecutions = maxExecutions,
+        version = version,
+        nextRunAt = nextRunAt,
+        activeRunId = activeRunId,
+        outbox = outbox
       )
 
   object CommandEntity:
@@ -214,7 +223,11 @@ private[repositories] object entities extends MongoJsonCodecs {
         schedule = cmd.schedule,
         lastExecutedAt = None,
         executionCount = 0,
-        maxExecutions = cmd.maxExecutions
+        maxExecutions = cmd.maxExecutions,
+        version = Some(0L),
+        nextRunAt = None,
+        activeRunId = None,
+        outbox = None
       )
 
   // The API codec encodes Instants as JSON strings; Mongo claims and updates use BSON dates.

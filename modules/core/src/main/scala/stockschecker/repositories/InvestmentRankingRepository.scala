@@ -37,8 +37,7 @@ final private class LiveInvestmentRankingRepository[F[_]: MonadThrow](
       .mapOpt(_.toDomain)
 
   override def latest: F[Option[InvestmentRankingMetadata]] =
-    collection
-      .find
+    collection.find
       .sort(Sort.desc("createdAt"))
       .first
       .mapOpt(_.toDomain)

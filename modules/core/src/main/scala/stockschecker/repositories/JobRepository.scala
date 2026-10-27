@@ -11,7 +11,6 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{FindOneAndUpdateOptions, UpdateOptions}
 import mongo4cats.operations.{Accumulator, Aggregate, Filter, Index, Projection, Sort, Update}
-import stockschecker.actions.Action
 import stockschecker.domain.{CommandId, Job, JobId, JobPlan, JobState, JobStatusSummary}
 import stockschecker.repositories.entities.{JobEntity, JobIdEntity, JobStateCount}
 
@@ -22,7 +21,7 @@ import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 trait JobRepository[F[_]] {
-  def enqueue(job: Job): F[Unit]
+  def enqueue(job: Job, priority: Int): F[Unit]
   def find(id: JobId): F[Option[Job]]
   def summarize(ids: List[JobId]): F[JobStatusSummary]
   def terminalIds(ids: List[JobId]): F[Set[JobId]]
@@ -30,11 +29,11 @@ trait JobRepository[F[_]] {
   def renew(job: Job, now: Instant, lease: FiniteDuration): F[Boolean]
   def finish(job: Job, state: JobState, error: Option[String] = None): F[Unit]
   def savePlan(job: Job, plan: JobPlan): F[Boolean]
-  def waitForChildren(job: Job, children: List[JobId], now: Instant): F[Unit]
+  def waitForChildren(job: Job, children: List[JobId], availableAt: Instant): F[Unit]
   def defer(job: Job, until: Instant, error: Option[String], countRetry: Boolean): F[Unit]
   def pause(job: Job, provider: String, error: String): F[Unit]
   def resumePaused(provider: String, now: Instant): F[Unit]
-  def retryTerminal(id: JobId, now: Instant): F[Boolean]
+  def restart(expected: Job, availableAt: Instant): F[Boolean]
   def cancelObsolete(commandId: CommandId, currentVersion: Long): F[Unit]
   def pruneCompleted(now: Instant): F[Unit]
 }
@@ -53,19 +52,13 @@ final private class LiveJobRepository[F[_]](
 
   private val terminal = Filter.in("job.state", Job.terminalStates.map(_.value))
 
-  override def enqueue(job: Job): F[Unit] =
+  override def enqueue(job: Job, priority: Int): F[Unit] =
     collection
       .updateOne(
         Filter.idEq(job.id.value),
         Update
           .setOnInsert("job", job)
-          .setOnInsert(
-            "priority",
-            job.action match {
-              case _: Action.RefreshEvaluationPrices => 1
-              case _                                 => 0
-            }
-          ),
+          .setOnInsert("priority", priority),
         UpdateOptions(upsert = true)
       )
       .void
@@ -123,14 +116,14 @@ final private class LiveJobRepository[F[_]](
   override def savePlan(job: Job, plan: JobPlan): F[Boolean] =
     collection.updateOne(owned(job), Update.set("job.plan", plan)).map(_.getMatchedCount == 1)
 
-  override def waitForChildren(job: Job, children: List[JobId], now: Instant): F[Unit] =
+  override def waitForChildren(job: Job, children: List[JobId], availableAt: Instant): F[Unit] =
     collection
       .updateOne(
         owned(job),
         release
           .set("job.state", Job.Waiting.value)
           .set("job.children", children.map(_.value))
-          .set("job.availableAt", now.plusSeconds(job.nextPollDelaySeconds))
+          .set("job.availableAt", availableAt)
           .set("job.waitCount", job.waitCount.getOrElse(0) + 1)
       )
       .void
@@ -161,28 +154,23 @@ final private class LiveJobRepository[F[_]](
       )
       .void
 
-  override def retryTerminal(id: JobId, now: Instant): F[Boolean] =
-    find(id).flatMap {
-      case Some(job)
-          if job.isTerminal && job.children.isEmpty && job.plan.isEmpty && !job.id.value.contains("/") &&
-            job.action.isInstanceOf[Action.RefreshEvaluationPrices] && job.restartCount.getOrElse(0) < Job.MaxEvaluationRestarts =>
-        val retryAt          = job.completedAt.fold(now)(_.plusSeconds(1.day.toSeconds))
-        val sameRestartCount = job.restartCount.fold(Filter.isNull("job.restartCount"))(count => Filter.eq("job.restartCount", count))
-        collection
-          .updateOne(
-            Filter.idEq(id.value) && Filter.eq("job.state", job.state.value) && Filter
-              .eq("job.completedAt", job.completedAt) && sameRestartCount,
-            release
-              .set("job.state", Job.Pending.value)
-              .set("job.availableAt", if (retryAt.isAfter(now)) retryAt else now)
-              .set("job.retries", 0)
-              .set("job.restartCount", job.restartCount.getOrElse(0) + 1)
-              .set("job.error", Option.empty[String])
-              .set("job.completedAt", Option.empty[Instant])
-          )
-          .map(_.getMatchedCount == 1)
-      case _ => false.pure[F]
-    }
+  override def restart(expected: Job, availableAt: Instant): F[Boolean] =
+    if !expected.isTerminal || expected.children.nonEmpty || expected.plan.nonEmpty || expected.id.value.contains("/") then false.pure[F]
+    else
+      val sameRestartCount = expected.restartCount.fold(Filter.isNull("job.restartCount"))(count => Filter.eq("job.restartCount", count))
+      collection
+        .updateOne(
+          Filter.idEq(expected.id.value) && Filter.eq("job.state", expected.state.value) &&
+            Filter.eq("job.completedAt", expected.completedAt) && sameRestartCount,
+          release
+            .set("job.state", Job.Pending.value)
+            .set("job.availableAt", availableAt)
+            .set("job.retries", 0)
+            .set("job.restartCount", expected.restartCount.getOrElse(0) + 1)
+            .set("job.error", Option.empty[String])
+            .set("job.completedAt", Option.empty[Instant])
+        )
+        .map(_.getMatchedCount == 1)
 
   override def cancelObsolete(commandId: CommandId, currentVersion: Long): F[Unit] =
     collection

@@ -1,14 +1,16 @@
 package stockschecker.clients
 
+import kirill5k.common.cats.Clock
 import cats.effect.{Deferred, IO}
 import cats.syntax.traverse.*
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{DataQualityRepository, ProviderBudgetRepository}
+import stockschecker.repositories.ProviderBudgetRepository
 
 import java.time.Instant
 
 class ProviderAccessSpec extends IOWordSpec {
+  given Clock[IO]  = Clock.make[IO]
   private val fast = ProviderLimits(requestsPerMinute = 60000, dailyAllowance = 0, maxConcurrent = 1)
 
   private def budgets: ProviderBudgetRepository[IO] = {
@@ -18,8 +20,6 @@ class ProviderAccessSpec extends IOWordSpec {
     repository
   }
 
-  private def quality: DataQualityRepository[IO] = mock[DataQualityRepository[IO]]
-
   "ProviderAccess" should {
     "persist provider cooldowns and honor shared reservations without issuing rejected requests" in {
       val repository = budgets
@@ -28,7 +28,7 @@ class ProviderAccessSpec extends IOWordSpec {
         until = now.plusSeconds(300)
         _     = when(repository.reserve(anyString, any[Instant], any[Long], any[Int], any[Option[String]]))
           .thenReturn(IO.pure(None), IO.pure(Some(until)))
-        access <- ProviderAccess.make[IO](repository, quality)
+        access <- ProviderAccess.make[IO](repository)
         _      <- access.run("test", fast)(IO.raiseError[Unit](AppError.ProviderDeferred("test", until, "Retry-After"))).attempt
         result <- access.run("test", fast)(IO.raiseError[Unit](new AssertionError("Rejected request ran"))).attempt
       yield (result, until)).asserting { case (result, until) =>
@@ -40,7 +40,7 @@ class ProviderAccessSpec extends IOWordSpec {
 
     "release concurrency permits after both failure and cancellation" in
       (for
-        access       <- ProviderAccess.make[IO](budgets, quality)
+        access       <- ProviderAccess.make[IO](budgets)
         started      <- Deferred[IO, Unit]
         active       <- access.run("test", fast)(started.complete(()).void >> IO.never[Unit]).start
         _            <- started.get
@@ -59,10 +59,10 @@ class ProviderAccessSpec extends IOWordSpec {
     "pause authentication failures until the access service is recreated" in {
       val repository = budgets
       (for
-        access    <- ProviderAccess.make[IO](repository, quality)
+        access    <- ProviderAccess.make[IO](repository)
         first     <- access.run("test", fast)(IO.raiseError[Unit](AppError.ProviderConfiguration("test", "unauthorized"))).attempt
         second    <- access.run("test", fast)(IO.unit).attempt
-        restarted <- ProviderAccess.make[IO](repository, quality)
+        restarted <- ProviderAccess.make[IO](repository)
         resumed   <- restarted.run("test", fast)(IO.pure(1)).attempt
       yield (first, second, resumed)).asserting { case (first, second, resumed) =>
         first.left.toOption.exists(_.isInstanceOf[AppError.ProviderConfiguration]) mustBe true
@@ -79,7 +79,7 @@ class ProviderAccessSpec extends IOWordSpec {
       when(repository.reserve(anyString, any[Instant], any[Long], any[Int], any[Option[String]]))
         .thenReturn(IO.raiseError(new java.io.IOException("offline")), IO.pure(None))
       (for
-        access    <- ProviderAccess.make[IO](repository, quality)
+        access    <- ProviderAccess.make[IO](repository)
         failed    <- access.run("test", fast)(IO.unit).attempt
         recovered <- access.run("test", fast)(IO.pure(1)).attempt
       yield (failed, recovered)).asserting { case (failed, recovered) =>
@@ -90,13 +90,13 @@ class ProviderAccessSpec extends IOWordSpec {
 
     "reject invalid quota configuration" in
       List(fast.copy(requestsPerMinute = 0), fast.copy(maxConcurrent = 0), fast.copy(dailyAllowance = -1))
-        .traverse(limits => ProviderAccess.make[IO](budgets, quality).flatMap(_.validateLimits("test", limits)).attempt)
+        .traverse(limits => ProviderAccess.make[IO](budgets).flatMap(_.validateLimits("test", limits)).attempt)
         .asserting(results => results.forall(_.left.toOption.exists(_.isInstanceOf[IllegalArgumentException])) mustBe true)
 
     "isolate concurrency and credential pauses between providers and accounts" in {
       val repository = budgets
       (for
-        access        <- ProviderAccess.make[IO](repository, quality)
+        access        <- ProviderAccess.make[IO](repository)
         started       <- Deferred[IO, Unit]
         active        <- access.run("TwelveData", fast, Some("first"))(started.complete(()).void >> IO.never[Unit]).start
         _             <- started.get
@@ -143,7 +143,7 @@ class ProviderAccessSpec extends IOWordSpec {
         started <- Deferred[IO, Unit]
         _ = when(repository.reserve(anyString, any[Instant], any[Long], any[Int], any[Option[String]]))
           .thenReturn(started.complete(()).void >> IO.never[Option[Instant]], IO.pure(None))
-        access <- ProviderAccess.make[IO](repository, quality)
+        access <- ProviderAccess.make[IO](repository)
         active <- access.run("test", fast)(IO.unit).start
         _      <- started.get
         _      <- active.cancel

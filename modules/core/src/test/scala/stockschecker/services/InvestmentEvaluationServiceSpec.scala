@@ -3,7 +3,7 @@ package stockschecker.services
 import cats.effect.{IO, Ref}
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
-import stockschecker.actions.Action
+import stockschecker.actions.EvaluationPriceJobs
 import stockschecker.domain.*
 import stockschecker.utils.InvestmentEvaluator
 import stockschecker.domain.errors.AppError
@@ -48,7 +48,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
           evaluations,
           plans,
           prices,
-          mock[JobRepository[IO]]
+          mock[EvaluationPriceJobs[IO]]
         )
         evaluated <- service.evaluate(run.id)
       yield evaluated
@@ -60,7 +60,6 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
     }
     "keep failed ticker and benchmark jobs retryable without freezing an incomplete month" in {
       val createdAt = Instant.parse("2026-09-01T00:00:00Z")
-      val from      = LocalDate.parse("2026-09-01")
       val through   = LocalDate.parse("2026-09-30")
       val run       = InvestmentScreenRun(
         InvestmentScreenId("retryable"),
@@ -74,7 +73,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       val evaluations = mock[InvestmentEvaluationRepository[IO]]
       val plans       = mock[EvaluationCapturePlanRepository[IO]]
       val prices      = mock[EvaluationPriceHistory[IO]]
-      val jobs        = mock[JobRepository[IO]]
+      val jobs        = mock[EvaluationPriceJobs[IO]]
       val plan        = EvaluationCapturePlan(run.id, "2026-10", through, now)
       when(plans.all).thenReturnIO(List(plan))
       when(evaluations.unsettled).thenReturnIO(Nil)
@@ -83,9 +82,8 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       when(plans.find(run.id, "2026-10")).thenReturnSome(plan)
       when(evaluations.findMonthly(run.id, "2026-10")).thenReturnNone
       when(prices.cached(any[Ticker], any[DateRange])).thenReturnNone
-      when(jobs.find(any[JobId]))
-        .thenReturnSome(Job(JobId("failed"), Action.RefreshEvaluationPrices(AAPL, from, through), now, now, state = Job.Failed))
-      when(jobs.retryTerminal(any[JobId], any[Instant])).thenReturnIO(true)
+      when(jobs.pending(any[Ticker], any[LocalDate])).thenReturnNone
+      when(jobs.ensure(any[Ticker], any[LocalDate], any[Instant])).thenReturnSome(JobId("retry"))
       val result = for
         state   <- Ref.of[IO, List[InvestmentScreenHeader]](List(InvestmentScreenHeader.from(run)))
         service <- InvestmentEvaluationService.make(
@@ -103,7 +101,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         report.settled mustBe Some(false)
         report.dataThrough mustBe Some(through)
         saved mustBe 0
-        verify(jobs, times(2)).retryTerminal(any[JobId], any[Instant])
+        verify(jobs, times(2)).ensure(any[Ticker], any[LocalDate], any[Instant])
         verify(evaluations, never).saveMonthly(any[InvestmentEvaluation])
         verify(prices, never).history(any[Ticker], any[DateRange])
         succeed
@@ -135,7 +133,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       val evaluations = mock[InvestmentEvaluationRepository[IO]]
       val plans       = mock[EvaluationCapturePlanRepository[IO]]
       val prices      = mock[EvaluationPriceHistory[IO]]
-      val jobs        = mock[JobRepository[IO]]
+      val jobs        = mock[EvaluationPriceJobs[IO]]
       val oldPlan     = EvaluationCapturePlan(run.id, "2026-09", through, Instant.parse("2026-09-01T12:00:00Z"))
       val incomplete  =
         InvestmentEvaluator.evaluate(run.id, createdAt, now, run.cohorts, Map.empty, Some(through)).copy(captureMonth = Some("2026-09"))
@@ -203,7 +201,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       val evaluations = mock[InvestmentEvaluationRepository[IO]]
       val plans       = mock[EvaluationCapturePlanRepository[IO]]
       val prices      = mock[EvaluationPriceHistory[IO]]
-      val jobs        = mock[JobRepository[IO]]
+      val jobs        = mock[EvaluationPriceJobs[IO]]
       val failure     = new IllegalStateException("evaluation write failed")
       val series      = EvaluationPriceSeries(
         AAPL,
@@ -245,7 +243,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       val evaluations = mock[InvestmentEvaluationRepository[IO]]
       val plans       = mock[EvaluationCapturePlanRepository[IO]]
       val prices      = mock[EvaluationPriceHistory[IO]]
-      val jobs        = mock[JobRepository[IO]]
+      val jobs        = mock[EvaluationPriceJobs[IO]]
       when(screens.ids).thenReturnIO(Nil)
       when(plans.all).thenReturnIO(List(plan))
       when(plans.retire(id, plan.month)).thenReturnUnit
@@ -281,7 +279,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       val evaluations = mock[InvestmentEvaluationRepository[IO]]
       val plans       = mock[EvaluationCapturePlanRepository[IO]]
       val prices      = mock[EvaluationPriceHistory[IO]]
-      val jobs        = mock[JobRepository[IO]]
+      val jobs        = mock[EvaluationPriceJobs[IO]]
       when(evaluations.findMonthly(any[InvestmentScreenId], any[String])).thenReturnNone
       when(plans.all).thenReturnIO(Nil)
       when(evaluations.unsettled).thenReturnIO(Nil)
@@ -290,8 +288,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         IO.pure(invocation.getArgument[EvaluationCapturePlan](0))
       )
       when(prices.cached(any[Ticker], any[DateRange])).thenReturnNone
-      when(jobs.find(any[JobId])).thenReturnNone
-      when(jobs.enqueue(any[Job])).thenReturnUnit
+      when(jobs.ensure(any[Ticker], any[LocalDate], any[Instant])).thenReturnSome(JobId("pending"))
       val result = for
         state   <- Ref.of[IO, List[InvestmentScreenHeader]](screens.map(InvestmentScreenHeader.from))
         service <- InvestmentEvaluationService.make(
@@ -305,14 +302,9 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       yield saved
       result.asserting { saved =>
         saved mustBe 0
-        val captor = org.mockito.ArgumentCaptor.forClass(classOf[Job])
-        verify(jobs, times(4)).enqueue(captor.capture())
-        import scala.jdk.CollectionConverters.*
-        captor.getAllValues.asScala.map(_.id).distinct.size mustBe 2
-        captor.getAllValues.asScala.map(_.action).toSet mustBe Set(
-          Action.RefreshEvaluationPrices(AAPL, through.minusYears(13), through),
-          Action.RefreshEvaluationPrices(InvestmentEvaluator.Benchmark, through.minusYears(13), through)
-        )
+        verify(jobs, times(2)).ensure(AAPL, through, now)
+        verify(jobs, times(2)).ensure(InvestmentEvaluator.Benchmark, through, now)
+        succeed
       }
     }
     "read evaluations without creating plans, jobs or reports" in {
@@ -329,11 +321,11 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       val evaluations = mock[InvestmentEvaluationRepository[IO]]
       val plans       = mock[EvaluationCapturePlanRepository[IO]]
       val prices      = mock[EvaluationPriceHistory[IO]]
-      val jobs        = mock[JobRepository[IO]]
+      val jobs        = mock[EvaluationPriceJobs[IO]]
       when(evaluations.findMonthly(run.id, "2026-10")).thenReturnNone
       when(plans.find(run.id, "2026-10")).thenReturnNone
       when(prices.cached(any[Ticker], any[DateRange])).thenReturnNone
-      when(jobs.find(any[JobId])).thenReturnNone
+      when(jobs.pending(any[Ticker], any[LocalDate])).thenReturnNone
       val result = for
         state   <- Ref.of[IO, List[InvestmentScreenHeader]](List(InvestmentScreenHeader.from(run)))
         service <- InvestmentEvaluationService.make(
@@ -351,8 +343,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         verify(plans, never).getOrCreate(any[EvaluationCapturePlan])
         verify(plans, never).retire(any[InvestmentScreenId], any[String])
         verify(evaluations, never).saveMonthly(any[InvestmentEvaluation])
-        verify(jobs, never).enqueue(any[Job])
-        verify(jobs, never).retryTerminal(any[JobId], any[Instant])
+        verify(jobs, never).ensure(any[Ticker], any[LocalDate], any[Instant])
         verify(prices, never).history(any[Ticker], any[DateRange])
         succeed
       }
@@ -375,7 +366,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         val evaluations = mock[InvestmentEvaluationRepository[IO]]
         val plans       = mock[EvaluationCapturePlanRepository[IO]]
         val prices      = mock[EvaluationPriceHistory[IO]]
-        val jobs        = mock[JobRepository[IO]]
+        val jobs        = mock[EvaluationPriceJobs[IO]]
         when(plans.all).thenReturnIO(Nil)
         when(evaluations.unsettled).thenReturnIO(Nil)
         when(evaluations.finishedScreenIds).thenReturnIO(Set.empty[InvestmentScreenId])
@@ -383,9 +374,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
         when(plans.retire(run.id, "2026-10")).thenReturnUnit
         if exhausted then {
           when(prices.cached(any[Ticker], any[DateRange])).thenReturnNone
-          when(jobs.find(any[JobId]))
-            .thenReturnSome(Job(JobId("failed"), Action.RefreshEvaluationPrices(AAPL, from, through), now, now, state = Job.Failed))
-          when(jobs.retryTerminal(any[JobId], any[Instant])).thenReturnIO(false)
+          when(jobs.ensure(any[Ticker], any[LocalDate], any[Instant])).thenReturnNone
         } else {
           val series = EvaluationPriceSeries(
             AAPL,
@@ -428,7 +417,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
           verify(prices, times(2)).cached(any[Ticker], any[DateRange])
           if exhausted then {
             report.horizons.flatMap(_.issues).mkString must include("repair attempts exhausted")
-            verify(jobs, times(2)).retryTerminal(any[JobId], any[Instant])
+            verify(jobs, times(2)).ensure(any[Ticker], any[LocalDate], any[Instant])
           } else verifyNoInteractions(jobs)
           succeed
       }
@@ -452,7 +441,7 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec:
       val evaluations = mock[InvestmentEvaluationRepository[IO]]
       val plans       = mock[EvaluationCapturePlanRepository[IO]]
       val prices      = mock[EvaluationPriceHistory[IO]]
-      val jobs        = mock[JobRepository[IO]]
+      val jobs        = mock[EvaluationPriceJobs[IO]]
       when(plans.all).thenReturnIO(Nil)
       when(evaluations.unsettled).thenReturnIO(Nil)
       when(evaluations.finishedScreenIds).thenReturnIO(Set(run.id))

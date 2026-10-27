@@ -12,6 +12,15 @@ object InvestmentEvaluator:
   // Shift the next-day fallback before adding years; fourteen extra days also cover leap-day crossings.
   def finalCaptureThrough(formedDate: LocalDate): LocalDate = formedDate.plusDays(1).plusYears(5).plusDays(14)
 
+  def isFinished(evaluation: InvestmentEvaluation): Boolean =
+    evaluation.isSettled && evaluation.horizons.nonEmpty &&
+      evaluation.dataThrough.exists(through =>
+        evaluation.horizons.forall { horizon =>
+          val lastPossibleExit = horizon.targetDate.plusDays(if horizon.entryDate.isEmpty then 14 else 7)
+          horizon.exitDate.exists(date => !date.isAfter(through)) || !lastPossibleExit.isAfter(through)
+        }
+      )
+
   private def round(n: BigDecimal): BigDecimal                       = n.setScale(4, RoundingMode.HALF_UP)
   private def annualized(growth: BigDecimal, years: Int): BigDecimal =
     if growth <= 0 then BigDecimal(-100)

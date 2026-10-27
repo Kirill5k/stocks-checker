@@ -1,6 +1,7 @@
-package stockschecker.domain
+package stockschecker.utils
 
 import cats.data.NonEmptyList
+import stockschecker.domain.{PriceCandle, Ticker}
 import org.scalacheck.Gen
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -8,7 +9,7 @@ import org.scalatestplus.scalacheck.ScalaCheckPropertyChecks
 
 import java.time.LocalDate
 
-class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckPropertyChecks {
+class PriceAnalyticsCalculatorSpec extends AnyWordSpec with Matchers with ScalaCheckPropertyChecks {
 
   // ── Generators ─────────────────────────────────────────────────────────────
 
@@ -37,12 +38,12 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
 
   private val ticker = Ticker("AAPL")
 
-  "PriceAnalytics.from" when {
+  "PriceAnalyticsCalculator.from" when {
 
     "given a single price candle" should {
       "return analytics with no period changes and minimal metrics" in {
         val candle    = PriceCandle(LocalDate.of(2024, 1, 1), 100, 105, 95, 102, 1000000)
-        val analytics = PriceAnalytics.from(ticker, NonEmptyList.one(candle))
+        val analytics = PriceAnalyticsCalculator.from(ticker, NonEmptyList.one(candle))
 
         analytics.ticker.mustBe(ticker)
 
@@ -96,7 +97,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           PriceCandle(LocalDate.of(2023, 12, 1), 100, 105, 95, 100, 1000000) // 12 months ago/oldest
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
         // Performance summary
         val summary = analytics.performanceSummary
@@ -135,7 +136,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
         val metrics   = analytics.metrics
 
         metrics.cagr3Year.must(be(defined))
@@ -163,7 +164,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
         val metrics   = analytics.metrics
 
         metrics.cagr3Year.must(be(defined))
@@ -205,7 +206,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
         val metrics   = analytics.metrics
 
         metrics.volatility.must(be(defined))
@@ -229,7 +230,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
         val metrics   = analytics.metrics
 
         metrics.cagr3Year.must(be(defined))
@@ -264,7 +265,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           )
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
         val metrics   = analytics.metrics
 
         metrics.maxDrawdown.must(be(defined))
@@ -284,7 +285,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
             PriceCandle(LocalDate.of(2024, 1, 1), 0, 0, 0, 0, 1000000)
           )
 
-          val analytics = PriceAnalytics.from(ticker, candles)
+          val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
           analytics.performanceSummary.oneMonthChange.mustBe(None)
           analytics.performanceSummary.maxChange.mustBe(None)
@@ -298,7 +299,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
             PriceCandle(LocalDate.of(2024, 1, 1), 100, 105, 95, 10, 1000000)
           )
 
-          val analytics = PriceAnalytics.from(ticker, candles)
+          val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
           // (1000 - 10) / 10 * 100 = 9900.00
           analytics.performanceSummary.oneMonthChange.mustBe(Some(BigDecimal("9900.00")))
@@ -312,7 +313,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
             PriceCandle(LocalDate.of(2024, 1, 1), 100, 105, 95, BigDecimal("100.00"), 1000000)
           )
 
-          val analytics = PriceAnalytics.from(ticker, candles)
+          val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
           // (100.01 - 100.00) / 100.00 * 100 = 0.01
           analytics.performanceSummary.oneMonthChange.mustBe(Some(BigDecimal("0.01")))
@@ -334,7 +335,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
         // CAGR > 30% should result in score of 100
         analytics.scores.cagrScore.mustBe(BigDecimal(100.00))
@@ -352,7 +353,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
         // Very low volatility < 10% should give score of 100
         analytics.scores.volatilityScore.mustBe(BigDecimal(100.00))
@@ -371,7 +372,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
         val scores    = analytics.scores
 
         val expectedOverall = (
@@ -396,7 +397,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
         // All Y values equal → ssTotal = 0 → rSquared guarded to 0.0
         analytics.metrics.consistencyScore mustBe Some(BigDecimal("0.0000"))
@@ -418,7 +419,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
         analytics.metrics.cagr3Year mustBe Some(BigDecimal("0.00"))
         analytics.scores.cagrScore mustBe BigDecimal(0)
@@ -445,7 +446,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
         // startPrice = prices(36) = -86 ≤ 0 → CAGR guard returns 0
         analytics.metrics.cagr3Year mustBe Some(BigDecimal("0.00"))
@@ -477,7 +478,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val analytics = PriceAnalytics.from(ticker, candles)
+        val analytics = PriceAnalyticsCalculator.from(ticker, candles)
 
         // prices(60) = -100 ≤ 0 → cagr5Year guard returns 0
         analytics.metrics.cagr5Year mustBe Some(BigDecimal("0.00"))
@@ -503,7 +504,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        PriceAnalytics.from(ticker, candles).metrics.cagr3Year mustBe None
+        PriceAnalyticsCalculator.from(ticker, candles).metrics.cagr3Year mustBe None
       }
     }
 
@@ -522,7 +523,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           }.toList
         )
 
-        val metrics = PriceAnalytics.from(ticker, candles).metrics
+        val metrics = PriceAnalyticsCalculator.from(ticker, candles).metrics
         metrics.cagr5Year mustBe None
         metrics.cagr3Year mustBe defined
       }
@@ -534,8 +535,8 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
         val older  = makeCandleList(
           (0 to 72).toList.map(i => if i <= 60 then BigDecimal(200 - i) else if i == 61 then BigDecimal(1) else BigDecimal(1000))
         )
-        val short = PriceAnalytics.from(ticker, recent)
-        val long  = PriceAnalytics.from(ticker, older)
+        val short = PriceAnalyticsCalculator.from(ticker, recent)
+        val long  = PriceAnalyticsCalculator.from(ticker, older)
         long.metrics mustBe short.metrics
         long.scores mustBe short.scores
         long.performanceSummary.maxChange must not be short.performanceSummary.maxChange
@@ -553,7 +554,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           candle("2023-10-19", 100),
           candle("2023-10-31", 300)
         )
-        val analytics = PriceAnalytics.fromDaily(ticker, daily)
+        val analytics = PriceAnalyticsCalculator.fromDaily(ticker, daily)
         analytics.performanceSummary.oneMonthChange mustBe Some(BigDecimal(200))
         analytics.performanceSummary.threeYearChange mustBe Some(BigDecimal(500))
         analytics.metrics.cagr3Year.get.toDouble mustBe (81.69 +- 0.02)
@@ -566,7 +567,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           val price = BigDecimal(200 - i)
           PriceCandle(today.minusMonths(i.toLong), price, price, price, price, 1L)
         })
-        val analytics = PriceAnalytics.fromDaily(ticker, daily)
+        val analytics = PriceAnalyticsCalculator.fromDaily(ticker, daily)
         analytics.performanceSummary.latestPrice mustBe BigDecimal(200)
         analytics.performanceSummary.fiveYearChange mustBe defined
         analytics.metrics.cagr5Year mustBe defined
@@ -585,8 +586,8 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
           val price = BigDecimal(200 - i)
           PriceCandle(today.minusMonths(i.toLong), price, price, price, price, 1L)
         })
-        val current    = PriceAnalytics.fromDaily(ticker, candles((0 to 60).toList))
-        val historical = PriceAnalytics.fromDaily(ticker, candles((0 to 72).toList.filterNot(_ == 66)))
+        val current    = PriceAnalyticsCalculator.fromDaily(ticker, candles((0 to 60).toList))
+        val historical = PriceAnalyticsCalculator.fromDaily(ticker, candles((0 to 72).toList.filterNot(_ == 66)))
         historical.metrics mustBe current.metrics
         historical.metrics.volatility mustBe defined
         historical.metrics.consistencyScore mustBe defined
@@ -596,7 +597,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
       "leave a horizon unavailable when no observation is close to its target date" in {
         def candle(date: String, value: Int): PriceCandle = PriceCandle(LocalDate.parse(date), value, value, value, value, 1L)
         val daily     = NonEmptyList.of(candle("2026-10-19", 600), candle("2026-09-30", 400), candle("2023-10-31", 300))
-        val analytics = PriceAnalytics.fromDaily(ticker, daily)
+        val analytics = PriceAnalyticsCalculator.fromDaily(ticker, daily)
         analytics.performanceSummary.oneMonthChange mustBe None
         analytics.metrics.cagr3Year mustBe None
       }
@@ -608,7 +609,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
 
       "all scores are in [0, 100] for any positive-price candle list" in
         forAll(positiveSmallCandlesGen) { candles =>
-          val scores = PriceAnalytics.from(ticker, candles).scores
+          val scores = PriceAnalyticsCalculator.from(ticker, candles).scores
 
           scores.cagrScore must (be >= BigDecimal(0) and be <= BigDecimal(100))
           scores.volatilityScore must (be >= BigDecimal(0) and be <= BigDecimal(100))
@@ -619,7 +620,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
 
       "all scores are in [0, 100] for any mixed-sign price candle list" in
         forAll(anySmallCandlesGen) { candles =>
-          val scores = PriceAnalytics.from(ticker, candles).scores
+          val scores = PriceAnalyticsCalculator.from(ticker, candles).scores
 
           scores.cagrScore must (be >= BigDecimal(0) and be <= BigDecimal(100))
           scores.volatilityScore must (be >= BigDecimal(0) and be <= BigDecimal(100))
@@ -630,7 +631,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
 
       "no BigDecimal field contains NaN or Infinity for any price input" in
         forAll(anySmallCandlesGen) { candles =>
-          val a = PriceAnalytics.from(ticker, candles)
+          val a = PriceAnalyticsCalculator.from(ticker, candles)
 
           val allDecimals: List[BigDecimal] =
             List(
@@ -658,7 +659,7 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
       "a single-candle list always produces None for every period change and CAGR" in
         forAll(positivePriceGen) { price =>
           val candle    = PriceCandle(LocalDate.of(2024, 1, 1), price, price, price, price, 1_000_000L)
-          val analytics = PriceAnalytics.from(ticker, NonEmptyList.one(candle))
+          val analytics = PriceAnalyticsCalculator.from(ticker, NonEmptyList.one(candle))
           val summary   = analytics.performanceSummary
           val metrics   = analytics.metrics
 
@@ -678,34 +679,34 @@ class PriceAnalyticsSpec extends AnyWordSpec with Matchers with ScalaCheckProper
       "fewer than 37 candles always produce cagr3Year = None" in {
         val gen = Gen.choose(1, 36).flatMap(n => Gen.listOfN(n, positivePriceGen)).map(makeCandleList)
         forAll(gen) { candles =>
-          PriceAnalytics.from(ticker, candles).metrics.cagr3Year mustBe None
+          PriceAnalyticsCalculator.from(ticker, candles).metrics.cagr3Year mustBe None
         }
       }
 
       "exactly 37 candles always produce a defined cagr3Year" in {
         val gen = Gen.listOfN(37, positivePriceGen).map(makeCandleList)
         forAll(gen) { candles =>
-          PriceAnalytics.from(ticker, candles).metrics.cagr3Year mustBe defined
+          PriceAnalyticsCalculator.from(ticker, candles).metrics.cagr3Year mustBe defined
         }
       }
 
       "fewer than 61 candles always produce cagr5Year = None" in {
         val gen = Gen.choose(1, 60).flatMap(n => Gen.listOfN(n, positivePriceGen)).map(makeCandleList)
         forAll(gen) { candles =>
-          PriceAnalytics.from(ticker, candles).metrics.cagr5Year mustBe None
+          PriceAnalyticsCalculator.from(ticker, candles).metrics.cagr5Year mustBe None
         }
       }
 
       "exactly 61 candles always produce a defined cagr5Year" in {
         val gen = Gen.listOfN(61, positivePriceGen).map(makeCandleList)
         forAll(gen) { candles =>
-          PriceAnalytics.from(ticker, candles).metrics.cagr5Year mustBe defined
+          PriceAnalyticsCalculator.from(ticker, candles).metrics.cagr5Year mustBe defined
         }
       }
 
       "overallScore equals the documented weighted formula for any candle list" in
         forAll(positiveSmallCandlesGen) { candles =>
-          val scores   = PriceAnalytics.from(ticker, candles).scores
+          val scores   = PriceAnalyticsCalculator.from(ticker, candles).scores
           val expected = (
             scores.cagrScore * 0.30 +
               scores.volatilityScore * 0.25 +

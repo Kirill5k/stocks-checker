@@ -6,7 +6,8 @@ import cats.syntax.functor.*
 import fs2.Stream
 import io.circe.{Codec, JsonObject}
 import io.circe.fs2.{byteArrayParser, decoder}
-import stockschecker.clients.ProviderAccess
+import stockschecker.clients.{DatasetAvailabilityObserver, ProviderAccess}
+import kirill5k.common.cats.Clock
 import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, Exchange, FinancialData, FinancialMetrics, Security, SecurityKind, Ticker}
@@ -27,16 +28,18 @@ trait FinnhubClient[F[_]]:
 final private class LiveFinnhubClient[F[_]](
     private val config: FinnhubClientConfig,
     private val backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-    private val access: ProviderAccess[F]
+    private val access: ProviderAccess[F],
+    private val availability: DatasetAvailabilityObserver[F]
 )(using
-    F: Async[F]
+    F: Async[F],
+    C: Clock[F]
 ) extends FinnhubClient[F] {
 
   override def getFinancialData(ticker: Ticker): F[Option[FinancialData]] =
-    access.observed(ticker, "Finnhub", "financials")(access.run("Finnhub", config.limits)(fetchFinancialData(ticker)))(_.nonEmpty)
+    availability.observed(ticker, "Finnhub", "financials")(access.run("Finnhub", config.limits)(fetchFinancialData(ticker)))(_.nonEmpty)
 
   override def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] =
-    access.observed(ticker, "Finnhub", "profile")(access.run("Finnhub", config.limits)(fetchCompanyProfile(ticker)))(_.nonEmpty)
+    availability.observed(ticker, "Finnhub", "profile")(access.run("Finnhub", config.limits)(fetchCompanyProfile(ticker)))(_.nonEmpty)
 
   override def getListedSecurities(exchange: Exchange): Stream[F, Security] =
     Stream.eval(access.run("Finnhub", config.limits)(fetchListedSecurities(exchange).compile.toList)).flatMap(Stream.emits)
@@ -50,7 +53,7 @@ final private class LiveFinnhubClient[F[_]](
     backend.send(request).flatMap { response =>
       response.body match
         case Right(body) =>
-          F.realTimeInstant.flatMap { now =>
+          C.now.flatMap { now =>
             F.fromEither(
               FinnhubFinancialMapping
                 .decode(body, ticker, now)
@@ -126,7 +129,7 @@ final private class LiveFinnhubClient[F[_]](
   }
 
   private def deferred[A](retryAfter: Option[String]): F[A] =
-    F.realTimeInstant.flatMap { now =>
+    C.now.flatMap { now =>
       F.raiseError(AppError.ProviderDeferred("Finnhub", stockschecker.clients.RetryAfter.deadline(retryAfter, now), "rate-limited"))
     }
 
@@ -228,10 +231,11 @@ object FinnhubClient {
       )
   }
 
-  def make[F[_]: Async](
+  def make[F[_]: {Async, Clock}](
       config: FinnhubClientConfig,
       backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-      access: ProviderAccess[F]
+      access: ProviderAccess[F],
+      availability: DatasetAvailabilityObserver[F]
   ): F[FinnhubClient[F]] =
-    access.validateLimits("Finnhub", config.limits).as(LiveFinnhubClient[F](config, backend, access))
+    access.validateLimits("Finnhub", config.limits).as(LiveFinnhubClient[F](config, backend, access, availability))
 }
