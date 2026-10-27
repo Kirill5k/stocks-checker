@@ -2,7 +2,7 @@ package stockschecker.domain.investment
 
 import stockschecker.domain.*
 
-import java.time.{Instant, LocalDate, ZoneOffset}
+import java.time.{Instant, LocalDate, YearMonth, ZoneOffset}
 import scala.math.BigDecimal.RoundingMode
 
 /** Buy-and-hold evaluation of a frozen universe. Every constituent retains its original weight. */
@@ -21,19 +21,20 @@ object InvestmentEvaluator:
       evaluatedAt: Instant,
       cohorts: List[InvestmentCohort],
       histories: Map[Ticker, EvaluationPriceSeries],
-      dataThrough: Option[LocalDate] = None
+      month: YearMonth,
+      through: LocalDate
   ): InvestmentEvaluation =
     val formedDate = formedAt.atZone(ZoneOffset.UTC).toLocalDate
-    val today      = dataThrough.getOrElse(evaluatedAt.atZone(ZoneOffset.UTC).toLocalDate)
     val benchmark  = histories.get(Benchmark)
     // VTI is the common US trading calendar. Entry is strictly AFTER the completed screen's date.
     val benchmarkDates =
-      benchmark.toList.flatMap(_.closes.map(_.date)).distinct.sorted.filter(d => d.isAfter(formedDate) && !d.isAfter(today))
+      benchmark.toList.flatMap(_.closes.map(_.date)).distinct.filter(d => d.isAfter(formedDate) && !d.isAfter(through)).sorted
     val allCohorts =
-      InvestmentCohort(CohortName.Vti, List(Benchmark), Some(InvestmentConcentration(1, 100, Map.empty, Map.empty, 1))) :: cohorts.filterNot(
-        _.name == CohortName.Vti
-      )
-    val horizons = List(3, 5).map(evaluateHorizon(_, formedDate, today, benchmarkDates, allCohorts, histories))
+      InvestmentCohort(CohortName.Vti, List(Benchmark), Some(InvestmentConcentration(1, 100, Map.empty, Map.empty, 1))) :: cohorts
+        .filterNot(
+          _.name == CohortName.Vti
+        )
+    val horizons = List(3, 5).map(evaluateHorizon(_, formedDate, through, benchmarkDates, allCohorts, histories))
     InvestmentEvaluation(
       screenId,
       evaluatedAt,
@@ -44,7 +45,8 @@ object InvestmentEvaluator:
       histories.values.toList
         .sortBy(_.ticker.value)
         .map(h => EvaluationPriceEvidence(h.ticker, h.source, h.fetchedAt, h.adjustment, h.audited, h.snapshotIds)),
-      dataThrough = dataThrough
+      dataThrough = through,
+      captureMonth = month
     )
 
   private def evaluateHorizon(
@@ -55,7 +57,7 @@ object InvestmentEvaluator:
       cohorts: List[InvestmentCohort],
       histories: Map[Ticker, EvaluationPriceSeries]
   ): HorizonEvaluation =
-    val entry = benchmarkDates.headOption.filter(d => !d.isAfter(formedDate.plusDays(7)))
+    val entry  = benchmarkDates.headOption.filter(d => !d.isAfter(formedDate.plusDays(7)))
     val target = entry.getOrElse(formedDate.plusDays(1)).plusYears(years)
     if today.isBefore(target) then
       val progress = (entry, benchmarkDates.lastOption) match
@@ -109,7 +111,15 @@ object InvestmentEvaluator:
             Nil
           )
         case _ =>
-          HorizonEvaluation(years, EvaluationStatus.Incomplete, entry, target, exit, Nil, List("Auditable benchmark entry/exit session is missing"))
+          HorizonEvaluation(
+            years,
+            EvaluationStatus.Incomplete,
+            entry,
+            target,
+            exit,
+            Nil,
+            List("Auditable benchmark entry/exit session is missing")
+          )
 
   private def evaluateCohort(
       cohort: InvestmentCohort,

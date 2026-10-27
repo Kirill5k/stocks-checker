@@ -1,6 +1,7 @@
 package stockschecker.repositories
 
 import cats.effect.IO
+import cats.syntax.traverse.*
 import mongo4cats.operations.Filter
 import stockschecker.domain.*
 import stockschecker.fixtures.*
@@ -36,16 +37,15 @@ class InvestmentRankingRepositorySpec extends RepositorySpec:
 
     "preserve supplied candidates and scorecard evidence without transforming them" in
       withEmbeddedMongoDatabase { db =>
-        val observation = FinancialObservation("fcfMargin", LocalDate.parse("2025-12-31"), BigDecimal("0.2"), "ratio")
+        val observation = FinancialObservation(FinancialMetric.FreeCashFlowMargin, LocalDate.parse("2025-12-31"), BigDecimal("0.2"))
         val snapshot    = FinancialSnapshot(
           "snapshot",
           AAPL,
           Provider.Finnhub,
           now,
-          Map("peTTM" -> BigDecimal(10), "irrelevant" -> BigDecimal(123)),
+          Map(FinancialMetric.PriceToEarningsTtm -> BigDecimal(10), FinancialMetric.RevenueGrowth5Y -> BigDecimal(123)),
           List(observation),
           List(observation),
-          "raw provider response",
           "hash",
           "mapping",
           Nil
@@ -55,7 +55,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec:
           now,
           "mapping",
           "hash",
-          Map("fcfMargin" -> List(observation.period)),
+          Map(FinancialMetric.FreeCashFlowMargin -> List(observation.period)),
           List(observation),
           None,
           None,
@@ -70,6 +70,34 @@ class InvestmentRankingRepositorySpec extends RepositorySpec:
           _     <- repo.save(ranking, List(value))
           saved <- repo.findEntries(ranking.id)
         yield saved mustBe List(value)
+      }
+
+    "prune only old rankings without a referencing screen and remove their inputs" in
+      withEmbeddedMongoDatabase { db =>
+        val before     = now.minusSeconds(30L * 86400)
+        val referenced = ranking.copy(createdAt = before.minusSeconds(1))
+        val obsolete   = ranking.copy(id = InvestmentRankingId("obsolete"), createdAt = before.minusSeconds(1))
+        val boundary   = ranking.copy(id = InvestmentRankingId("boundary"), createdAt = before)
+        for
+          repo           <- InvestmentRankingRepository.make[IO](db)
+          screens        <- InvestmentScreenRepository.make[IO](db)
+          _              <- List(referenced, obsolete, boundary).traverse(value => repo.save(value, entries))
+          _              <- screens.save(screen)
+          _              <- screens.save(screen.copy(id = InvestmentScreenId("second-reference")))
+          _              <- repo.prune(before)
+          retained       <- repo.find(referenced.id)
+          retainedInputs <- repo.findEntries(referenced.id)
+          removed        <- repo.find(obsolete.id)
+          removedInputs  <- repo.findEntries(obsolete.id)
+          atBoundary     <- repo.find(boundary.id)
+          boundaryInputs <- repo.findEntries(boundary.id)
+        yield
+          retained mustBe Some(referenced)
+          retainedInputs mustBe entries
+          removed mustBe None
+          removedInputs mustBe Nil
+          atBoundary mustBe Some(boundary)
+          boundaryInputs mustBe entries
       }
 
     "leave metadata unpublished if an input batch fails" in

@@ -1,6 +1,6 @@
-package stockschecker.services
+package stockschecker.clients
 
-import stockschecker.domain.DatasetStatus
+import stockschecker.domain.{Dataset, DatasetStatus}
 import stockschecker.domain.Provider
 import cats.effect.IO
 import cats.syntax.traverse.*
@@ -12,23 +12,23 @@ import stockschecker.repositories.DataQualityRepository
 
 import java.time.Instant
 
-class DataQualityObservationSpec extends IOWordSpec {
+class DatasetObserverSpec extends IOWordSpec {
   private val now = Instant.parse("2026-10-01T12:00:00Z")
   given Clock[IO] = Clock.mock(now)
 
-  "DataQualityService observation" should {
+  "DatasetObserver" should {
     "record present and absent results using the injected clock without changing the results" in {
       val quality = mock[DataQualityRepository[IO]]
-      when(quality.record(AAPL, Provider.Finnhub, "prices", DatasetStatus.Available, now, None)).thenReturnUnit
-      when(quality.record(AAPL, Provider.Finnhub, "prices", DatasetStatus.Unavailable, now, None)).thenReturnUnit
+      when(quality.record(AAPL, Provider.Finnhub, Dataset.CompanyProfile, DatasetStatus.Available, now, None)).thenReturnUnit
+      when(quality.record(AAPL, Provider.Finnhub, Dataset.CompanyProfile, DatasetStatus.Unavailable, now, None)).thenReturnUnit
       (for
-        observer <- DataQualityService.make[IO](quality, mock[stockschecker.repositories.SecurityRepository[IO]], mock[InvestmentRankingService[IO]])
-        present  <- observer.observe(AAPL, Provider.Finnhub, "prices")(IO.pure(Option(1)))(_.nonEmpty)
-        absent   <- observer.observe(AAPL, Provider.Finnhub, "prices")(IO.pure(Option.empty[Int]))(_.nonEmpty)
+        observer <- DatasetObserver.make[IO](quality)
+        present  <- observer.observe(Provider.Finnhub, Dataset.CompanyProfile, AAPL)(IO.pure(Option(1)))(_.nonEmpty)
+        absent   <- observer.observe(Provider.Finnhub, Dataset.CompanyProfile, AAPL)(IO.pure(Option.empty[Int]))(_.nonEmpty)
       yield (present, absent)).asserting { result =>
         result mustBe (Some(1), None)
-        verify(quality).record(AAPL, Provider.Finnhub, "prices", DatasetStatus.Available, now, None)
-        verify(quality).record(AAPL, Provider.Finnhub, "prices", DatasetStatus.Unavailable, now, None)
+        verify(quality).record(AAPL, Provider.Finnhub, Dataset.CompanyProfile, DatasetStatus.Available, now, None)
+        verify(quality).record(AAPL, Provider.Finnhub, Dataset.CompanyProfile, DatasetStatus.Unavailable, now, None)
         verifyNoMoreInteractions(quality)
         succeed
       }
@@ -47,13 +47,15 @@ class DataQualityObservationSpec extends IOWordSpec {
       cases
         .traverse { case (error, status, summary) =>
           val quality = mock[DataQualityRepository[IO]]
-          when(quality.record(AAPL, Provider.Finnhub, "prices", status, now, Some(summary))).thenReturnUnit
+          when(quality.record(AAPL, Provider.Finnhub, Dataset.CompanyProfile, status, now, Some(summary))).thenReturnUnit
           (for
-            observer <- DataQualityService.make[IO](quality, mock[stockschecker.repositories.SecurityRepository[IO]], mock[InvestmentRankingService[IO]])
-            result   <- observer.observe(AAPL, Provider.Finnhub, "prices")(IO.raiseError[Option[Int]](error))(_.nonEmpty).attempt
+            observer <- DatasetObserver.make[IO](quality)
+            result   <- observer
+              .observe(Provider.Finnhub, Dataset.CompanyProfile, AAPL)(IO.raiseError[Option[Int]](error))(_.nonEmpty)
+              .attempt
           yield result).map { result =>
             result mustBe Left(error)
-            verify(quality).record(AAPL, Provider.Finnhub, "prices", status, now, Some(summary))
+            verify(quality).record(AAPL, Provider.Finnhub, Dataset.CompanyProfile, status, now, Some(summary))
             verifyNoMoreInteractions(quality)
             succeed
           }
@@ -65,8 +67,8 @@ class DataQualityObservationSpec extends IOWordSpec {
       val quality = mock[DataQualityRepository[IO]]
       val error   = AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(60), "cooldown")
       (for
-        observer <- DataQualityService.make[IO](quality, mock[stockschecker.repositories.SecurityRepository[IO]], mock[InvestmentRankingService[IO]])
-        result   <- observer.observe(AAPL, Provider.Finnhub, "prices")(IO.raiseError[Option[Int]](error))(_.nonEmpty).attempt
+        observer <- DatasetObserver.make[IO](quality)
+        result   <- observer.observe(Provider.Finnhub, Dataset.CompanyProfile, AAPL)(IO.raiseError[Option[Int]](error))(_.nonEmpty).attempt
       yield result).asserting { result =>
         result mustBe Left(error)
         verifyNoInteractions(quality)

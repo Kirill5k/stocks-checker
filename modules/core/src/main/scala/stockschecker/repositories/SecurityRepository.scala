@@ -30,8 +30,7 @@ trait SecurityRepository[F[_]]:
   def getAllTickers: F[List[Ticker]]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
   def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit]
-  def deactivate(ticker: Ticker): F[Unit]
-  def activate(ticker: Ticker): F[Unit]
+  def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit]
   def reconcile(exchange: Exchange, securities: List[Security]): F[Unit]
 
 final private class LiveSecurityRepository[F[_]](
@@ -113,22 +112,21 @@ final private class LiveSecurityRepository[F[_]](
         .void
     }
 
-  override def deactivate(ticker: Ticker): F[Unit] =
-    collection
-      .updateOne(
-        Filter.idEq(ticker.value),
-        Update.set(Field.IsActive, false).set(Field.ExclusionReason, "user-excluded").currentDate(Field.UpdatedAt)
-      )
-      .void
-
-  override def activate(ticker: Ticker): F[Unit] =
-    collection.updateOne(Filter.idEq(ticker.value), Update.set(Field.ExclusionReason, Option.empty[String])).void >>
+  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit] =
+    val newerRequest = Filter.idEq(ticker.value) &&
+      (Filter.isNull(Field.ActiveChangedAt) || Filter.lt(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt)))
+    val update = Update
+      .set(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))
+      .set(Field.ExclusionReason, Option.when(!active)("user-excluded"))
+      .currentDate(Field.UpdatedAt)
+    if active then
       collection
-        .updateOne(
-          Filter.idEq(ticker.value) && Filter.ne(Field.ListingStatus, ListingStatus.Delisted.print),
-          Update.set(Field.IsActive, true).currentDate(Field.UpdatedAt)
-        )
-        .void
+        .updateOne(newerRequest && Filter.ne(Field.ListingStatus, ListingStatus.Delisted.print), update.set(Field.IsActive, true))
+        .void >>
+        collection
+          .updateOne(newerRequest && Filter.eq(Field.ListingStatus, ListingStatus.Delisted.print), update.set(Field.IsActive, false))
+          .void
+    else collection.updateOne(newerRequest, update.set(Field.IsActive, false)).void
 
   override def reconcile(exchange: Exchange, securities: List[Security]): F[Unit] =
     F.whenA(securities.nonEmpty) {
@@ -180,6 +178,7 @@ object SecurityRepository extends MongoJsonCodecs:
     val Name                        = "name"
     val Kind                        = "kind"
     val IsActive                    = "isActive"
+    val ActiveChangedAt             = "activeChangedAt"
     val ExclusionReason             = "exclusionReason"
     val ListingStatus               = "listingStatus"
     val CompanyProfileLastUpdatedAt = "companyProfileLastUpdatedAt"

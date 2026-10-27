@@ -4,33 +4,36 @@ import io.circe.Codec
 
 import java.time.{Instant, LocalDate}
 
-/** A provider observation dated by fiscal period; the source does not supply publication timestamps. */
+/** A canonical observation dated by fiscal period; the source does not supply publication timestamps. */
 final case class FinancialObservation(
-    metric: String,
+    metric: FinancialMetric,
     period: LocalDate,
-    value: BigDecimal,
-    unit: String
-) derives Codec.AsObject
+    value: BigDecimal
+) derives Codec.AsObject:
+  def unit: MetricUnit = metric.unit
 
-/** Immutable fetch vintage, including the original response for subsequent mapping audits. */
+enum FinancialSnapshotIssue derives Codec.AsObject:
+  case InvalidSeries(frequency: String, metric: FinancialMetric)
+  case InvalidObservation(frequency: String, metric: FinancialMetric)
+  case DuplicatePeriod(frequency: String, metric: FinancialMetric)
+  case SymbolMismatch
+
+/** Immutable canonical fetch vintage, with source provenance for mapping audits. */
 final case class FinancialSnapshot(
     id: String,
     ticker: Ticker,
     provider: Provider,
     observedAt: Instant,
-    metrics: Map[String, BigDecimal],
+    metrics: Map[FinancialMetric, BigDecimal],
     annual: List[FinancialObservation],
     quarterly: List[FinancialObservation],
-    rawPayload: String,
     payloadHash: String,
     mappingVersion: String,
-    validationErrors: List[String]
+    issues: List[FinancialSnapshotIssue]
 ) derives Codec.AsObject
-
-object FinancialSnapshot:
-  val FinnhubMappingVersion = "finnhub-basic-financials-v1"
 
 final case class FinancialData(
     metrics: FinancialMetrics,
-    snapshot: FinancialSnapshot
+    snapshot: FinancialSnapshot,
+    rawPayload: String
 ) derives Codec.AsObject

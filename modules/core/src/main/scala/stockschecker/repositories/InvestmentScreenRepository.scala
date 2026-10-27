@@ -7,18 +7,17 @@ import cats.syntax.option.*
 import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort}
+import mongo4cats.operations.{Filter, Index, Sort}
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.entities.{InvestmentRankingReference, InvestmentScreenEntity}
+import stockschecker.repositories.entities.InvestmentScreenEntity
 
 trait InvestmentScreenRepository[F[_]]:
   def save(screen: InvestmentScreen): F[Unit]
   def find(id: InvestmentScreenId): F[InvestmentScreen]
   def get(id: InvestmentScreenId): F[Option[InvestmentScreen]]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
-  def ids: F[List[InvestmentScreenId]]
-  def rankingIds: F[Set[InvestmentRankingId]]
+  def all: F[List[InvestmentScreen]]
 
 final private class LiveInvestmentScreenRepository[F[_]](
     private val collection: MongoCollection[F, InvestmentScreenEntity]
@@ -37,28 +36,22 @@ final private class LiveInvestmentScreenRepository[F[_]](
     get(id).flatMap(_.liftTo[F](AppError.EntityDoesNotExist("Investment screen", id.value)))
 
   override def list(limit: Int): F[List[InvestmentScreenSummary]] =
-    collection.find.sort(Sort.desc(Field.createdAt)).limit(limit).all.mapList(_.summary)
+    collection.find.sort(Sort.desc(Field.CreatedAt)).limit(limit).all.mapList(_.summary)
 
-  override def ids: F[List[InvestmentScreenId]] =
-    collection.find.sort(Sort.asc(Field.createdAt)).all.mapList(_._id)
-
-  override def rankingIds: F[Set[InvestmentRankingId]] =
-    collection
-      .aggregate[InvestmentRankingReference](Aggregate.project(Projection.include(Field.rankingId)))
-      .all
-      .mapList(_.rankingId)
-      .map(_.toSet)
+  override def all: F[List[InvestmentScreen]] =
+    collection.find.sort(Sort.asc(Field.CreatedAt)).all.mapList(_.toDomain)
 }
 
 object InvestmentScreenRepository:
   val CollectionName = "investment-screens"
 
   object Field:
-    val createdAt = "createdAt"
-    val rankingId = "rankingId"
+    val CreatedAt = "createdAt"
+    val RankingId = "rankingId"
 
   def make[F[_]: MonadThrow](db: MongoDatabase[F]): F[InvestmentScreenRepository[F]] =
     for
       collection <- db.getCollectionWithCodec[InvestmentScreenEntity](CollectionName)
-      _          <- collection.createIndex(Index.descending(Field.createdAt))
-    yield LiveInvestmentScreenRepository[F](collection.withAddedCodec[InvestmentRankingReference])
+      _          <- collection.createIndex(Index.descending(Field.CreatedAt))
+      _          <- collection.createIndex(Index.ascending(Field.RankingId))
+    yield LiveInvestmentScreenRepository[F](collection)

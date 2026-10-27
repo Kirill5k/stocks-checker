@@ -6,7 +6,7 @@ import java.time.Instant
 final case class DatasetAvailability(
     ticker: Ticker,
     provider: Provider,
-    dataset: String,
+    dataset: Dataset,
     status: DatasetStatus,
     lastAttemptAt: Instant,
     lastSuccessAt: Option[Instant],

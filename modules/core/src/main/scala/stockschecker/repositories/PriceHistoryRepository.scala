@@ -25,10 +25,10 @@ final private class LivePriceHistoryRepository[F[_]: Concurrent](collection: Mon
     .updateOne(
       Filter.idEq(snapshot.id),
       Update
-        .setOnInsert(Field.id, snapshot.id)
-        .setOnInsert(Field.ticker, snapshot.ticker)
-        .setOnInsert(Field.adjustment, snapshot.adjustment)
-        .setOnInsert(Field.data, snapshot),
+        .setOnInsert(Field.Id, snapshot.id)
+        .setOnInsert(Field.Ticker, snapshot.ticker)
+        .setOnInsert(Field.Adjustment, snapshot.adjustment)
+        .setOnInsert(Field.Data, snapshot),
       UpdateOptions(upsert = true)
     )
     .void >> retainRecent(snapshot.ticker, snapshot.adjustment)
@@ -37,14 +37,14 @@ final private class LivePriceHistoryRepository[F[_]: Concurrent](collection: Mon
   // Raw candles retain three recent vintages plus the broadest cached history; older IDs may no longer resolve.
   // Keep each vintage intact; merging adjusted series across corporate actions is unsafe.
   private def retainRecent(ticker: Ticker, adjustment: PriceAdjustment): F[Unit] = {
-    val matching  = Filter.eq(Field.ticker, ticker) && Filter.eq(Field.adjustment, adjustment)
-    val reference = Projection.include(Field.id).computed(Field.snapshotFetchedAt, "$" + Field.fetchedAt)
+    val matching  = Filter.eq(Field.Ticker, ticker) && Filter.eq(Field.Adjustment, adjustment)
+    val reference = Projection.include(Field.Id).computed(Field.SnapshotFetchedAt, "$" + Field.FetchedAt)
     for
       recent <- collection
         .aggregate[PriceHistorySnapshotRef](
           Aggregate
             .matchBy(matching)
-            .sort(Sort.desc(Field.fetchedAt))
+            .sort(Sort.desc(Field.FetchedAt))
             .limit(3)
             .project(reference)
         )
@@ -53,32 +53,34 @@ final private class LivePriceHistoryRepository[F[_]: Concurrent](collection: Mon
         .aggregate[PriceHistorySnapshotRef](
           Aggregate
             .matchBy(matching)
-            .sort(Sort.asc(Field.rangeFrom).desc(Field.fetchedAt))
+            .sort(Sort.asc(Field.RangeFrom).desc(Field.FetchedAt))
             .limit(1)
             .project(reference)
         )
         .first
       retained = recent.map(_._id).toList ++ broadest.map(_._id).toList
       _ <- recent.headOption.traverse_(newest =>
-        collection.deleteMany(matching && Filter.nin(Field.id, retained) && Filter.lte(Field.fetchedAt, newest.fetchedAt)).void
+        collection.deleteMany(matching && Filter.nin(Field.Id, retained) && Filter.lte(Field.FetchedAt, newest.fetchedAt)).void
       )
     yield ()
   }
 
   override def latest(ticker: Ticker, adjustment: PriceAdjustment): F[Option[PriceHistorySnapshot]] =
     collection
-      .find(Filter.eq(Field.ticker, ticker) && Filter.eq(Field.adjustment, adjustment))
-      .sort(Sort.desc(Field.fetchedAt))
+      .find(Filter.eq(Field.Ticker, ticker) && Filter.eq(Field.Adjustment, adjustment))
+      .sort(Sort.desc(Field.FetchedAt))
       .first
       .map(_.map(_.data))
 
   override def latestCovering(ticker: Ticker, adjustment: PriceAdjustment, range: DateRange): F[Option[PriceHistorySnapshot]] =
     collection
       .find(
-        Filter.eq(Field.ticker, ticker) && Filter.eq(Field.adjustment, adjustment) &&
-          Filter.lte(Field.rangeFrom, range.from.toString) && Filter.gte(Field.rangeThrough, range.through.toString)
+        Filter.eq(Field.Ticker, ticker) &&
+          Filter.eq(Field.Adjustment, adjustment) &&
+          Filter.lte(Field.RangeFrom, range.from.toString) &&
+          Filter.gte(Field.RangeThrough, range.through.toString)
       )
-      .sort(Sort.desc(Field.fetchedAt))
+      .sort(Sort.desc(Field.FetchedAt))
       .first
       .map(_.map(_.data))
 }
@@ -87,20 +89,20 @@ object PriceHistoryRepository extends MongoJsonCodecs {
   val CollectionName = "price-observations"
 
   object Field:
-    val id                = "_id"
-    val ticker            = "ticker"
-    val adjustment        = "adjustment"
-    val data              = "data"
-    val fetchedAt         = "data.fetchedAt"
-    val rangeFrom         = "data.requestedRange.from"
-    val rangeThrough      = "data.requestedRange.through"
-    val snapshotFetchedAt = "fetchedAt"
+    val Id                = "_id"
+    val Ticker            = "ticker"
+    val Adjustment        = "adjustment"
+    val Data              = "data"
+    val FetchedAt         = "data.fetchedAt"
+    val RangeFrom         = "data.requestedRange.from"
+    val RangeThrough      = "data.requestedRange.through"
+    val SnapshotFetchedAt = "fetchedAt"
 
   def make[F[_]: Concurrent](db: MongoDatabase[F]): F[PriceHistoryRepository[F]] =
     for
       collection <- db.getCollectionWithCodec[PriceHistoryEntity](CollectionName)
-      _          <- collection.createIndex(Index.ascending(List(Field.ticker, Field.adjustment, Field.fetchedAt)))
-      _          <- collection.createIndex(Index.ascending(List(Field.ticker, Field.adjustment, Field.rangeFrom, Field.fetchedAt)))
+      _          <- collection.createIndex(Index.ascending(List(Field.Ticker, Field.Adjustment, Field.FetchedAt)))
+      _          <- collection.createIndex(Index.ascending(List(Field.Ticker, Field.Adjustment, Field.RangeFrom, Field.FetchedAt)))
     yield new LivePriceHistoryRepository[F](
       collection
         .withAddedCodec[Ticker]

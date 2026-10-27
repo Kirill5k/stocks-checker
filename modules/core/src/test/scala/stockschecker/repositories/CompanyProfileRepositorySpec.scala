@@ -3,8 +3,8 @@ package stockschecker.repositories
 import cats.data.NonEmptyList
 import cats.effect.IO
 import org.scalatest.wordspec.AsyncWordSpec
-import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
-import stockschecker.fixtures.{AAPL, AAPLCompanyProfile, MSFT, MSFTCompanyProfile}
+import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Sector, Ticker}
+import stockschecker.fixtures.{ts, AAPL, AAPLCompanyProfile, MSFT, MSFTCompanyProfile}
 
 import java.time.LocalDate
 import scala.concurrent.Future
@@ -16,13 +16,14 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
 
   "A CompanyProfileRepository" when {
     "save" should {
-      "save company profile in the repository" in
+      "save company profile with its canonical sector in the repository" in
         withEmbeddedMongoDatabase { db =>
+          val profile = AAPLCompanyProfile.copy(sector = Some(Sector.Technology))
           for
             repo <- CompanyProfileRepository.make[IO](db)
-            _    <- repo.save(AAPLCompanyProfile)
+            _    <- repo.save(profile)
             res  <- repo.find(AAPL)
-          yield res mustBe Some(AAPLCompanyProfile)
+          yield res mustBe Some(profile)
         }
 
       "be able to save and update same company profile in the repository" in
@@ -34,6 +35,34 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             _    <- repo.save(AAPLCompanyProfile.copy(marketCap = 1L))
             res  <- repo.find(AAPL)
           yield res.map(_.marketCap) mustBe Some(1L)
+        }
+    }
+
+    "setActive" should {
+      "ignore older and duplicate requests within the same millisecond" in
+        withEmbeddedMongoDatabase { db =>
+          val newer = ts.plusNanos(2)
+          for
+            repo   <- CompanyProfileRepository.make[IO](db)
+            _      <- repo.save(AAPLCompanyProfile)
+            _      <- repo.setActive(AAPL, false, ts)
+            _      <- repo.setActive(AAPL, true, newer)
+            _      <- repo.setActive(AAPL, false, ts.plusNanos(1))
+            _      <- repo.setActive(AAPL, false, newer)
+            active <- repo.findTickersBy(CompanyProfileFilter.IsActive(true), None)
+          yield active mustBe List(AAPL)
+        }
+
+      "keep a newer deactivation after a provider refresh and older activation" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo     <- CompanyProfileRepository.make[IO](db)
+            _        <- repo.save(AAPLCompanyProfile)
+            _        <- repo.setActive(AAPL, false, ts.plusNanos(2))
+            _        <- repo.save(AAPLCompanyProfile)
+            _        <- repo.setActive(AAPL, true, ts.plusNanos(1))
+            inactive <- repo.findTickersBy(CompanyProfileFilter.IsActive(false), None)
+          yield inactive mustBe List(AAPL)
         }
     }
 

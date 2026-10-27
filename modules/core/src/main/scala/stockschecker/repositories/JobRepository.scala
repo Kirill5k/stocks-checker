@@ -35,7 +35,7 @@ trait JobRepository[F[_]] {
   def pause(job: Job, provider: Provider, error: String): F[Unit]
   def resumePaused(provider: Provider, now: Instant): F[Unit]
   def cancelObsolete(commandId: CommandId, currentVersion: Long): F[Unit]
-  def pruneCompleted(now: Instant, protectedIds: Set[JobId]): F[Unit]
+  def pruneCompleted(now: Instant): F[Unit]
 }
 
 final private class LiveJobRepository[F[_]](
@@ -46,19 +46,19 @@ final private class LiveJobRepository[F[_]](
   import JobRepository.{ClaimIndexFields, Field, Retention}
 
   private def owned(job: Job): Filter =
-    Filter.idEq(job.id.value) && Filter.eq(Field.state, Job.Running.value) && Filter.eq(Field.leaseToken, job.leaseToken)
+    Filter.idEq(job.id.value) && Filter.eq(Field.State, Job.Running.value) && Filter.eq(Field.LeaseToken, job.leaseToken)
 
-  private def release: Update = Update.set(Field.leaseToken, Option.empty[String]).set(Field.leaseUntil, Option.empty[Instant])
+  private def release: Update = Update.set(Field.LeaseToken, Option.empty[String]).set(Field.LeaseUntil, Option.empty[Instant])
 
-  private val terminal = Filter.in(Field.state, Job.terminalStates.map(_.value))
+  private val terminal = Filter.in(Field.State, Job.terminalStates.map(_.value))
 
   override def enqueue(job: Job, priority: Int): F[Unit] =
     collection
       .updateOne(
         Filter.idEq(job.id.value),
         Update
-          .setOnInsert(Field.job, job)
-          .setOnInsert(Field.priority, priority),
+          .setOnInsert(Field.Job, job)
+          .setOnInsert(Field.Priority, priority),
         UpdateOptions(upsert = true)
       )
       .void
@@ -71,8 +71,8 @@ final private class LiveJobRepository[F[_]](
       collection
         .aggregate[JobStateCount](
           Aggregate
-            .matchBy(Filter.in(Field.id, ids.map(_.value)))
-            .group("$" + Field.state, Accumulator.sum(Field.count, 1))
+            .matchBy(Filter.in(Field.Id, ids.map(_.value)))
+            .group("$" + Field.State, Accumulator.sum(Field.Count, 1))
         )
         .all
         .map(rows => JobStatusSummary(rows.map(row => row._id -> row.count).toMap))
@@ -83,23 +83,23 @@ final private class LiveJobRepository[F[_]](
       collection
         .aggregate[JobIdEntity](
           Aggregate
-            .matchBy(Filter.in(Field.id, ids.map(_.value)) && Filter.nin(Field.state, Job.terminalStates.map(_.value)))
-            .project(Projection.include(Field.id))
+            .matchBy(Filter.in(Field.Id, ids.map(_.value)) && Filter.nin(Field.State, Job.terminalStates.map(_.value)))
+            .project(Projection.include(Field.Id))
         )
         .all
         .map(_.map(_._id).toSet)
 
   override def claim(now: Instant, lease: FiniteDuration): F[Option[Job]] =
     Async[F].delay(UUID.randomUUID().toString).flatMap { token =>
-      val ready   = Filter.in(Field.state, List(Job.Pending.value, Job.Waiting.value)) && Filter.lte(Field.availableAt, now)
-      val expired = Filter.eq(Field.state, Job.Running.value) && Filter.lte(Field.leaseUntil, now)
+      val ready   = Filter.in(Field.State, List(Job.Pending.value, Job.Waiting.value)) && Filter.lte(Field.AvailableAt, now)
+      val expired = Filter.eq(Field.State, Job.Running.value) && Filter.lte(Field.LeaseUntil, now)
       collection
         .findOneAndUpdate(
           ready || expired,
-          Update.set(Field.state, Job.Running.value).set(Field.leaseToken, token).set(Field.leaseUntil, now.plusMillis(lease.toMillis)),
+          Update.set(Field.State, Job.Running.value).set(Field.LeaseToken, token).set(Field.LeaseUntil, now.plusMillis(lease.toMillis)),
           FindOneAndUpdateOptions(
             returnDocument = ReturnDocument.AFTER,
-            sort = Some(Sort.asc(Field.priority, Field.availableAt, Field.createdAt, Field.id))
+            sort = Some(Sort.asc(Field.Priority, Field.AvailableAt, Field.CreatedAt, Field.Id))
             // Without this hint Mongo may choose the lease index and sort the entire ready backlog.
             // The ordered index merges the three state scans and stops after the first eligible job.
           ).hint(Indexes.ascending(ClaimIndexFields.asJava))
@@ -108,23 +108,23 @@ final private class LiveJobRepository[F[_]](
     }
 
   override def renew(job: Job, now: Instant, lease: FiniteDuration): F[Boolean] =
-    collection.updateOne(owned(job), Update.set(Field.leaseUntil, now.plusMillis(lease.toMillis))).map(_.getMatchedCount == 1)
+    collection.updateOne(owned(job), Update.set(Field.LeaseUntil, now.plusMillis(lease.toMillis))).map(_.getMatchedCount == 1)
 
   override def finish(job: Job, state: JobState, error: Option[String]): F[Unit] =
-    collection.updateOne(owned(job), release.set(Field.state, state.value).set(Field.error, error).currentDate(Field.completedAt)).void
+    collection.updateOne(owned(job), release.set(Field.State, state.value).set(Field.Error, error).currentDate(Field.CompletedAt)).void
 
   override def savePlan(job: Job, plan: JobPlan): F[Boolean] =
-    collection.updateOne(owned(job), Update.set(Field.plan, plan)).map(_.getMatchedCount == 1)
+    collection.updateOne(owned(job), Update.set(Field.Plan, plan)).map(_.getMatchedCount == 1)
 
   override def waitForChildren(job: Job, children: List[JobId], availableAt: Instant): F[Unit] =
     collection
       .updateOne(
         owned(job),
         release
-          .set(Field.state, Job.Waiting.value)
-          .set(Field.children, children.map(_.value))
-          .set(Field.availableAt, availableAt)
-          .set(Field.waitCount, job.waitCount + 1)
+          .set(Field.State, Job.Waiting.value)
+          .set(Field.Children, children.map(_.value))
+          .set(Field.AvailableAt, availableAt)
+          .set(Field.WaitCount, job.waitCount + 1)
       )
       .void
 
@@ -133,51 +133,50 @@ final private class LiveJobRepository[F[_]](
       .updateOne(
         owned(job),
         release
-          .set(Field.state, Job.Pending.value)
-          .set(Field.availableAt, until)
-          .set(Field.error, error)
-          .set(Field.retries, job.retries + (if (countRetry) 1 else 0))
-          .set(Field.waitCount, job.waitCount + 1)
+          .set(Field.State, Job.Pending.value)
+          .set(Field.AvailableAt, until)
+          .set(Field.Error, error)
+          .set(Field.Retries, job.retries + (if (countRetry) 1 else 0))
+          .set(Field.WaitCount, job.waitCount + 1)
       )
       .void
 
   override def pause(job: Job, provider: Provider, error: String): F[Unit] =
     collection
-      .updateOne(owned(job), release.set(Field.state, Job.Paused.value).set(Field.pausedProvider, provider.print).set(Field.error, error))
+      .updateOne(owned(job), release.set(Field.State, Job.Paused.value).set(Field.PausedProvider, provider.print).set(Field.Error, error))
       .void
 
   override def resumePaused(provider: Provider, now: Instant): F[Unit] =
     collection
       .updateMany(
-        Filter.eq(Field.state, Job.Paused.value) && Filter.eq(Field.pausedProvider, provider.print),
-        Update.set(Field.state, Job.Pending.value).set(Field.availableAt, now).set(Field.pausedProvider, Option.empty[Provider])
+        Filter.eq(Field.State, Job.Paused.value) && Filter.eq(Field.PausedProvider, provider.print),
+        Update.set(Field.State, Job.Pending.value).set(Field.AvailableAt, now).set(Field.PausedProvider, Option.empty[Provider])
       )
       .void
 
   override def cancelObsolete(commandId: CommandId, currentVersion: Long): F[Unit] =
     collection
       .updateMany(
-        Filter.eq(Field.commandId, commandId.value) && Filter.lt(Field.commandVersion, currentVersion) &&
-          Filter.in(Field.state, List(Job.Pending.value, Job.Waiting.value, Job.Paused.value)),
-        release.set(Field.state, Job.Cancelled.value).set(Field.error, "Command changed or deactivated").currentDate(Field.completedAt)
+        Filter.eq(Field.CommandId, commandId.value) && Filter.lt(Field.CommandVersion, currentVersion) &&
+          Filter.in(Field.State, List(Job.Pending.value, Job.Waiting.value, Job.Paused.value)),
+        release.set(Field.State, Job.Cancelled.value).set(Field.Error, "Command changed or deactivated").currentDate(Field.CompletedAt)
       )
       .void
 
-  override def pruneCompleted(now: Instant, protectedIds: Set[JobId]): F[Unit] = {
-    val expired = terminal && Filter.lte(Field.completedAt, now.minusSeconds(Retention.toSeconds))
+  override def pruneCompleted(now: Instant): F[Unit] = {
+    val expired = terminal && Filter.lte(Field.CompletedAt, now.minusSeconds(Retention.toSeconds))
     // Fan-out IDs are rooted at '<root>/<index>'. Retain every child until its root has finished,
     // even when a provider budget leaves that root waiting for weeks.
     collection
       .aggregate[JobIdEntity](
         Aggregate
-          .matchBy(expired && Filter.regex(Field.id, "^[^/]+$"))
-          .matchBy(Filter.nin(Field.id, protectedIds.toList.map(_.value)))
-          .project(Projection.include(Field.id))
+          .matchBy(expired && Filter.regex(Field.Id, "^[^/]+$"))
+          .project(Projection.include(Field.Id))
       )
       .stream
       .evalMap { root =>
         // Keep the root as a recovery marker until its descendants have gone.
-        collection.deleteMany(Filter.regex(Field.id, s"^${Pattern.quote(root._id.value)}/")).void >>
+        collection.deleteMany(Filter.regex(Field.Id, s"^${Pattern.quote(root._id.value)}/")).void >>
           collection.deleteOne(Filter.idEq(root._id.value) && expired).void
       }
       .compile
@@ -189,27 +188,27 @@ object JobRepository extends MongoJsonCodecs {
   val CollectionName = "jobs"
 
   object Field:
-    val id             = "_id"
-    val job            = "job"
-    val priority       = "priority"
-    val state          = "job.state"
-    val leaseToken     = "job.leaseToken"
-    val leaseUntil     = "job.leaseUntil"
-    val availableAt    = "job.availableAt"
-    val createdAt      = "job.createdAt"
-    val completedAt    = "job.completedAt"
-    val error          = "job.error"
-    val plan           = "job.plan"
-    val children       = "job.children"
-    val waitCount      = "job.waitCount"
-    val retries        = "job.retries"
-    val pausedProvider = "job.pausedProvider"
-    val commandId      = "job.command.commandId"
-    val commandVersion = "job.command.version"
-    val count          = "count"
+    val Id             = "_id"
+    val Job            = "job"
+    val Priority       = "priority"
+    val State          = "job.state"
+    val LeaseToken     = "job.leaseToken"
+    val LeaseUntil     = "job.leaseUntil"
+    val AvailableAt    = "job.availableAt"
+    val CreatedAt      = "job.createdAt"
+    val CompletedAt    = "job.completedAt"
+    val Error          = "job.error"
+    val Plan           = "job.plan"
+    val Children       = "job.children"
+    val WaitCount      = "job.waitCount"
+    val Retries        = "job.retries"
+    val PausedProvider = "job.pausedProvider"
+    val CommandId      = "job.command.commandId"
+    val CommandVersion = "job.command.version"
+    val Count          = "count"
 
   val Retention                              = 30.days
-  private[repositories] val ClaimIndexFields = List(Field.state, Field.priority, Field.availableAt, Field.createdAt, Field.id)
+  private[repositories] val ClaimIndexFields = List(Field.State, Field.Priority, Field.AvailableAt, Field.CreatedAt, Field.Id)
   // The API codec encodes Instants as JSON strings; Mongo claims and updates use BSON dates.
   private given Codec.AsObject[Job] = Codec.AsObject.derived[Job]
 
@@ -217,9 +216,9 @@ object JobRepository extends MongoJsonCodecs {
     for {
       collection <- db.getCollectionWithCodec[JobEntity](CollectionName)
       _          <- collection.createIndex(Index.ascending(ClaimIndexFields))
-      _          <- collection.createIndex(Index.ascending(List(Field.state, Field.leaseUntil)))
-      _          <- collection.createIndex(Index.ascending(Field.commandId))
-      _          <- collection.createIndex(Index.ascending(List(Field.state, Field.completedAt)))
+      _          <- collection.createIndex(Index.ascending(List(Field.State, Field.LeaseUntil)))
+      _          <- collection.createIndex(Index.ascending(Field.CommandId))
+      _          <- collection.createIndex(Index.ascending(List(Field.State, Field.CompletedAt)))
     } yield new LiveJobRepository(
       collection
         .withAddedCodec[Provider]

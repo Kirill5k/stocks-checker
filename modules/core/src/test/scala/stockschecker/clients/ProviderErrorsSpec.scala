@@ -15,19 +15,22 @@ class ProviderErrorsSpec extends IOWordSpec {
 
   "ProviderErrors" should {
     "apply the same retry, authentication and HTTP failure policy to both providers" in
-      Provider.values.toList.traverse { provider =>
-        for
-          deferred <- ProviderErrors.fromStatus[IO](provider, 429, Some("120"), "response body")
-          unauthorized <- ProviderErrors.fromStatus[IO](provider, 401, message = "response body")
-          forbidden <- ProviderErrors.fromStatus[IO](provider, 403, message = "response body")
-          unavailable <- ProviderErrors.fromStatus[IO](provider, 503, message = "sanitized context")
-        yield
-          deferred mustBe AppError.ProviderDeferred(provider, now.plusSeconds(120), "rate-limited")
-          List(unauthorized, forbidden).foreach { error =>
-            error mustBe a[AppError.ProviderConfiguration]
-            error.message must not include "response body"
-          }
-          unavailable mustBe AppError.HttpClient(provider.print, 503, "sanitized context")
-      }.asserting(_ => succeed)
+      Provider.values.toList
+        .traverse { provider =>
+          for
+            deferred     <- ProviderErrors.fromStatus[IO](provider, 429, Some("120"), "sanitized context")
+            unauthorized <- ProviderErrors.fromStatus[IO](provider, 401, message = "sanitized context")
+            forbidden    <- ProviderErrors.fromStatus[IO](provider, 403, message = "sanitized context")
+            unavailable  <- ProviderErrors.fromStatus[IO](provider, 503, message = "sanitized context")
+          yield
+            deferred mustBe AppError.ProviderDeferred(provider, now.plusSeconds(120), "sanitized context; rate-limited")
+            List(unauthorized, forbidden).foreach { error =>
+              error mustBe a[AppError.ProviderConfiguration]
+              error.message must include("sanitized context")
+              error.message must include("check credentials and subscription")
+            }
+            unavailable mustBe AppError.HttpClient(provider.print, 503, "sanitized context")
+        }
+        .asserting(_ => succeed)
   }
 }

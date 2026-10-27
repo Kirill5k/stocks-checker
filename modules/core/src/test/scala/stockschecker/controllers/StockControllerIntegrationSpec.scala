@@ -8,7 +8,8 @@ import org.http4s.implicits.*
 import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
 import stockschecker.fixtures.*
-import stockschecker.repositories.{CompanyProfileRepository, RepositorySpec, SecurityRepository, StockRepository}
+import stockschecker.actions.ActionDispatcher
+import stockschecker.repositories.{JobRepository, RepositorySpec, StockRepository}
 import stockschecker.services.StockService
 
 class StockControllerIntegrationSpec extends RepositorySpec {
@@ -31,9 +32,9 @@ class StockControllerIntegrationSpec extends RepositorySpec {
       withEmbeddedMongoDatabase(seed) { db =>
         for
           repo       <- StockRepository.make[IO](db)
-          securities <- SecurityRepository.make[IO](db)
-          profiles   <- CompanyProfileRepository.make[IO](db)
-          service    <- StockService.make(repo, securities, profiles)
+          jobs       <- JobRepository.make[IO](db)
+          dispatcher <- ActionDispatcher.make[IO](jobs)
+          service    <- StockService.make(repo, dispatcher)
           controller <- StockController.make(service, config)
           response   <- controller.routes.orNotFound.run(
             Request[IO](uri = Uri.unsafeFromString("/stocks?minConsistencyScore=70&limit=20")).withHeaders(authHeader)
@@ -50,9 +51,9 @@ class StockControllerIntegrationSpec extends RepositorySpec {
       withEmbeddedMongoDatabase { db =>
         for
           repo       <- StockRepository.make[IO](db)
-          securities <- SecurityRepository.make[IO](db)
-          profiles   <- CompanyProfileRepository.make[IO](db)
-          service    <- StockService.make(repo, securities, profiles)
+          jobs       <- JobRepository.make[IO](db)
+          dispatcher <- ActionDispatcher.make[IO](jobs)
+          service    <- StockService.make(repo, dispatcher)
           controller <- StockController.make(service, config)
           statuses   <- List(
             "minConsistencyScore=101",

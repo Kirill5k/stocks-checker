@@ -42,15 +42,15 @@ final private class LiveProviderBudgetRepository[F[_]: Async](collection: MongoC
       case Some(record) => record.budget.pure[F]
       case None         =>
         collection
-          .updateOne(Filter.idEq(budgetId(provider, account)), Update.setOnInsert(Field.budget, emptyBudget), UpdateOptions(upsert = true))
+          .updateOne(Filter.idEq(budgetId(provider, account)), Update.setOnInsert(Field.Budget, emptyBudget), UpdateOptions(upsert = true))
           .void >> read(provider, account)
     }
 
   private def replace(account: String, before: ProviderBudget, after: ProviderBudget): F[Boolean] =
     collection
       .updateOne(
-        Filter.idEq(account) && Filter.eq(Field.version, before.version),
-        Update.set(Field.budget, after.copy(version = before.version + 1))
+        Filter.idEq(account) && Filter.eq(Field.Version, before.version),
+        Update.set(Field.Budget, after.copy(version = before.version + 1))
       )
       .map(_.getMatchedCount == 1)
 
@@ -93,8 +93,8 @@ object ProviderBudgetRepository extends MongoJsonCodecs {
   val CollectionName = "provider-budgets"
 
   object Field:
-    val budget  = "budget"
-    val version = "budget.version"
+    val Budget  = "budget"
+    val Version = "budget.version"
 
   def make[F[_]: Async](db: MongoDatabase[F]): F[ProviderBudgetRepository[F]] =
     db.getCollectionWithCodec[ProviderBudgetEntity](CollectionName)

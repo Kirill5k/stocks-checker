@@ -41,7 +41,6 @@ class CommandRepositorySpec extends RepositorySpec {
             ready      <- repo.initializeNextRun(command, ts)
             occurrence <- repo.reserve(ready.get, ts)
             before     <- repo.find(command.id)
-            activeIds  <- repo.activeRunIds
             raw        <- db.getCollection(CommandRepository.CollectionName)
             stored     <- raw
               .find(
@@ -54,7 +53,6 @@ class CommandRepositorySpec extends RepositorySpec {
           yield
             occurrence must not be empty
             stored must not be empty
-            activeIds mustBe occurrence.flatMap(_.activeRunId).toSet
             before mustBe occurrence.get
             after mustBe before
         }

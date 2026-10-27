@@ -1,6 +1,7 @@
 package stockschecker.actions
 
-import cats.Monad
+import cats.MonadThrow
+import cats.syntax.applicativeError.*
 import cats.data.NonEmptyList
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
@@ -10,6 +11,7 @@ import stockschecker.services.{
   FinancialMetricsService,
   InvestmentEvaluationService,
   InvestmentScreenService,
+  PriceHistoryService,
   PriceService,
   SecurityService,
   Services
@@ -30,7 +32,7 @@ final private class LiveActionHandler[F[_]](
     financials: FinancialMetricsService[F],
     screens: InvestmentScreenService[F],
     evaluations: InvestmentEvaluationService[F]
-)(using F: Monad[F])
+)(using F: MonadThrow[F])
     extends ActionHandler[F]:
   private def completed(effect: F[Unit]): F[ActionResult]                              = effect.as(ActionResult.Completed)
   private def expand(actions: List[Action], sequential: Boolean = false): ActionResult =
@@ -38,6 +40,10 @@ final private class LiveActionHandler[F[_]](
 
   private def perTicker(tickers: List[Ticker])(action: NonEmptyList[Ticker] => Action): ActionResult =
     expand(tickers.map(ticker => action(NonEmptyList.one(ticker))))
+
+  private def update(tickers: NonEmptyList[Ticker])(action: NonEmptyList[Ticker] => Action)(run: Ticker => F[Unit]): F[ActionResult] =
+    if tickers.tail.isEmpty then completed(run(tickers.head))
+    else F.pure(perTicker(tickers.toList)(action))
 
   override def execute(action: Action): F[ActionResult] = action match
     case Action.Sequence(actions)                   => F.pure(expand(actions.toList, sequential = true))
@@ -48,21 +54,27 @@ final private class LiveActionHandler[F[_]](
       profiles.findTickersBy(filter, limit).map(perTicker(_)(Action.UpdatePriceAnalytics(_)))
     case Action.FetchFinancialMetrics(filter, limit) =>
       profiles.findTickersBy(filter, limit).map(perTicker(_)(Action.UpdateFinancialMetrics(_)))
-    case Action.UpdateCompanyProfiles(tickers) if tickers.size == 1  => completed(profiles.get(tickers.head, true).void)
-    case Action.UpdatePriceAnalytics(tickers) if tickers.size == 1   => completed(prices.findPriceAnalytics(tickers.head, true).void)
-    case Action.UpdateFinancialMetrics(tickers) if tickers.size == 1 => completed(financials.find(tickers.head, true).void)
-    case Action.UpdateCompanyProfiles(tickers)                       => F.pure(perTicker(tickers.toList)(Action.UpdateCompanyProfiles(_)))
-    case Action.UpdatePriceAnalytics(tickers)                        => F.pure(perTicker(tickers.toList)(Action.UpdatePriceAnalytics(_)))
-    case Action.UpdateFinancialMetrics(tickers)                      =>
-      F.pure(perTicker(tickers.toList)(Action.UpdateFinancialMetrics(_)))
-    case Action.RefreshInvestmentResearch => completed(screens.generateScheduledScreen >> evaluations.captureMonthlyEvaluations.void)
-    case Action.RefreshEvaluationPrices(ticker, from, through) => completed(evaluations.refreshHistory(ticker, DateRange(from, through)))
-    case Action.DeactivateSecurity(ticker)                     => completed(security.deactivate(ticker))
-    case Action.DeactivateCompanyProfile(ticker)               => completed(profiles.deactivate(ticker))
+    case Action.UpdateCompanyProfiles(tickers) =>
+      update(tickers)(Action.UpdateCompanyProfiles(_))(ticker => profiles.get(ticker, true).void)
+    case Action.UpdatePriceAnalytics(tickers) =>
+      update(tickers)(Action.UpdatePriceAnalytics(_))(ticker => prices.findPriceAnalytics(ticker, true).void)
+    case Action.UpdateFinancialMetrics(tickers) =>
+      update(tickers)(Action.UpdateFinancialMetrics(_))(ticker => financials.find(ticker, true).void)
+    case Action.RefreshInvestmentResearch =>
+      completed(screens.generateScheduledScreen.attempt.flatMap { generated =>
+        evaluations.captureMonthlyEvaluations >> F.fromEither(generated).void
+      })
+    case Action.RefreshEvaluationPrices(ticker, through) =>
+      completed(evaluations.refreshHistory(ticker, DateRange(through.minus(PriceHistoryService.SharedHistoryLookback), through)))
+    case Action.RecordCompanyProfileUpdate(tickers)                  => completed(security.recordCompanyProfileUpdate(tickers))
+    case Action.RecordPriceAnalyticsUpdate(tickers)                  => completed(profiles.recordPriceAnalyticsUpdate(tickers))
+    case Action.RecordFinancialMetricsUpdate(tickers)                => completed(profiles.recordFinancialMetricsUpdate(tickers))
+    case Action.SetSecurityActive(ticker, active, requestedAt)       => completed(security.setActive(ticker, active, requestedAt))
+    case Action.SetCompanyProfileActive(ticker, active, requestedAt) => completed(profiles.setActive(ticker, active, requestedAt))
 
 object ActionHandler:
-  def make[F[_]: Monad](services: Services[F]): F[ActionHandler[F]] =
-    Monad[F].pure(
+  def make[F[_]: MonadThrow](services: Services[F]): F[ActionHandler[F]] =
+    MonadThrow[F].pure(
       LiveActionHandler(
         services.security,
         services.companyProfile,

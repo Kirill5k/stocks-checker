@@ -5,7 +5,7 @@ import cats.syntax.either.*
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
-import stockschecker.actions.ActionDispatcher
+import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.domain.{Command, CommandId, CreateCommand, JobCommand, Schedule, UpdateCommand}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.CommandRepository
@@ -22,17 +22,18 @@ trait CommandService[F[_]]:
 
 final private class LiveCommandService[F[_]](
     private val actionDispatcher: ActionDispatcher[F],
-    private val repo: CommandRepository[F]
+    private val repository: CommandRepository[F]
 )(using
     F: Temporal[F],
     C: Clock[F]
 ) extends CommandService[F] {
 
-  private def validate(schedule: Schedule, maxExecutions: Option[Int]): F[Unit] =
-    F.raiseWhen(maxExecutions.exists(_ <= 0) || (schedule match {
-      case Schedule.Periodic(period) => period.toMillis < 1000L
-      case _                         => false
-    }))(AppError.FailedValidation("Schedule period must be at least one second and maxExecutions must be positive")) >>
+  private def validate(action: Action, schedule: Schedule, maxExecutions: Option[Int]): F[Unit] =
+    F.raiseUnless(action.isSchedulable)(AppError.FailedValidation("Internal actions cannot be scheduled")) >>
+      F.raiseWhen(maxExecutions.exists(_ <= 0) || (schedule match {
+        case Schedule.Periodic(period) => period.toMillis < 1000L
+        case _                         => false
+      }))(AppError.FailedValidation("Schedule period must be at least one second and maxExecutions must be positive")) >>
       C.now.flatMap(now =>
         F.fromEither(
           Try(schedule.nextExecutionTime(now)).toEither.leftMap(_ => AppError.FailedValidation("Schedule has no valid next execution"))
@@ -41,29 +42,29 @@ final private class LiveCommandService[F[_]](
 
   override def create(cc: CreateCommand): F[Command] =
     for
-      _           <- validate(cc.schedule, cc.maxExecutions)
+      _           <- validate(cc.action, cc.schedule, cc.maxExecutions)
       now         <- C.now
-      cmd         <- repo.create(cc)
-      initialized <- repo.initializeNextRun(cmd, now)
+      cmd         <- repository.create(cc)
+      initialized <- repository.initializeNextRun(cmd, now)
     yield initialized.getOrElse(cmd)
 
   override def executeManually(cid: CommandId): F[Unit] =
-    repo.find(cid).flatMap(cmd => actionDispatcher.dispatch(cmd.action))
+    repository.find(cid).flatMap(cmd => actionDispatcher.dispatch(cmd.action))
 
-  override def getAll: F[List[Command]] = repo.all
+  override def getAll: F[List[Command]] = repository.all
 
   private def refresh(command: Command): F[Unit] =
     actionDispatcher.cancelObsolete(command.id, command.version) >>
-      C.now.flatMap(repo.initializeNextRun(command, _)).void
+      C.now.flatMap(repository.initializeNextRun(command, _)).void
 
   override def activate(cid: CommandId, isActive: Boolean): F[Unit] =
-    repo.setActive(cid, isActive).flatMap(refresh)
+    repository.setActive(cid, isActive).flatMap(refresh)
 
   override def update(uc: UpdateCommand): F[Command] =
-    validate(uc.schedule, uc.maxExecutions) >> repo.update(uc).flatTap(refresh)
+    validate(uc.action, uc.schedule, uc.maxExecutions) >> repository.update(uc).flatTap(refresh)
 
   override def isCurrent(command: JobCommand): F[Boolean] =
-    repo.find(command.commandId).map(c => c.isActive && c.version == command.version)
+    repository.find(command.commandId).map(c => c.isActive && c.version == command.version)
 }
 
 object CommandService:

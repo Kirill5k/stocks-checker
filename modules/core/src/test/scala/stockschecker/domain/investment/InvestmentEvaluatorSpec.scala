@@ -4,7 +4,7 @@ import stockschecker.domain.*
 
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
-import java.time.{Instant, LocalDate}
+import java.time.{Instant, LocalDate, YearMonth}
 
 class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
   private val formed  = Instant.parse("2020-01-01T23:00:00Z")
@@ -29,7 +29,9 @@ class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
       formed,
       now,
       List(InvestmentCohort(CohortName.Investment, cohort)),
-      histories + (InvestmentEvaluator.Benchmark -> vti)
+      histories + (InvestmentEvaluator.Benchmark -> vti),
+      YearMonth.of(2025, 1),
+      LocalDate.parse("2025-01-03")
     )
 
   "Forward investment evaluation" should {
@@ -39,21 +41,20 @@ class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
       val horizon = HorizonEvaluation(5, EvaluationStatus.Incomplete, entry, target, None, Nil, Nil)
       val report  = evaluate(List(tickerA), Map.empty).copy(horizons = List(horizon), settled = true)
 
-      report.copy(dataThrough = Some(target.plusDays(6))).isFinished mustBe false
-      report.copy(dataThrough = Some(target.plusDays(7))).isFinished mustBe true
+      report.copy(dataThrough = target.plusDays(6)).isFinished mustBe false
+      report.copy(dataThrough = target.plusDays(7)).isFinished mustBe true
 
       val missingEntry = report.copy(horizons = List(horizon.copy(entryDate = None)))
-      missingEntry.copy(dataThrough = Some(target.plusDays(13))).isFinished mustBe false
-      missingEntry.copy(dataThrough = Some(target.plusDays(14))).isFinished mustBe true
+      missingEntry.copy(dataThrough = target.plusDays(13)).isFinished mustBe false
+      missingEntry.copy(dataThrough = target.plusDays(14)).isFinished mustBe true
 
       val observedExit = report.copy(horizons = List(horizon.copy(exitDate = Some(target.plusDays(2)))))
-      observedExit.copy(dataThrough = Some(target.plusDays(1))).isFinished mustBe false
-      observedExit.copy(dataThrough = Some(target.plusDays(2))).isFinished mustBe true
+      observedExit.copy(dataThrough = target.plusDays(1)).isFinished mustBe false
+      observedExit.copy(dataThrough = target.plusDays(2)).isFinished mustBe true
 
-      val finished = report.copy(dataThrough = Some(target.plusDays(7)))
+      val finished = report.copy(dataThrough = target.plusDays(7))
       finished.copy(settled = false).isFinished mustBe false
       finished.copy(horizons = Nil).isFinished mustBe false
-      finished.copy(dataThrough = None).isFinished mustBe false
       finished.copy(horizons = List(horizon, horizon.copy(targetDate = target.plusYears(1)))).isFinished mustBe false
     }
 
@@ -85,7 +86,15 @@ class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
     }
     "keep future horizons pending without inventing historical returns" in {
       val report =
-        InvestmentEvaluator.evaluate(InvestmentScreenId("new"), now, now, List(InvestmentCohort(CohortName.Investment, List(tickerA))), Map.empty)
+        InvestmentEvaluator.evaluate(
+          InvestmentScreenId("new"),
+          now,
+          now,
+          List(InvestmentCohort(CohortName.Investment, List(tickerA))),
+          Map.empty,
+          YearMonth.of(2025, 1),
+          LocalDate.parse("2025-01-03")
+        )
       report.horizons.map(_.status) mustBe List(EvaluationStatus.Pending, EvaluationStatus.Pending)
       report.horizons.flatMap(_.cohorts).forall(_.totalReturnPercent.isEmpty) mustBe true
       report.horizons.head.cohorts.find(_.name == CohortName.Investment).get.constituents mustBe List(tickerA)
@@ -100,6 +109,9 @@ class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
     "refuse missing intermediate sessions even if entry and exit exist" in {
       val gap =
         series(tickerA, List(100, 100, 100, 150, 200)).copy(closes = List(EvaluationClose(dates(1), 100), EvaluationClose(dates(3), 150)))
-      evaluate(List(tickerA), Map(tickerA -> gap)).horizons.head.cohorts.find(_.name == CohortName.Investment).get.status mustBe EvaluationStatus.Incomplete
+      evaluate(List(tickerA), Map(tickerA -> gap)).horizons.head.cohorts
+        .find(_.name == CohortName.Investment)
+        .get
+        .status mustBe EvaluationStatus.Incomplete
     }
   }

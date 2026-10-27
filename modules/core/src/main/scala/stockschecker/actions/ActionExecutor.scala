@@ -22,7 +22,6 @@ final private class LiveActionExecutor[F[_]](
     jobs: JobRepository[F],
     handler: ActionHandler[F],
     isCurrent: JobCommand => F[Boolean],
-    protectedJobIds: F[Set[JobId]],
     config: ActionExecutorConfig
 )(using F: Async[F], clock: Clock[F], logger: Logger[F])
     extends ActionExecutor[F] {
@@ -36,7 +35,7 @@ final private class LiveActionExecutor[F[_]](
         Stream
           .repeatEval(
             clock.now
-              .flatMap(now => protectedJobIds.flatMap(jobs.pruneCompleted(now, _)))
+              .flatMap(jobs.pruneCompleted)
               .handleErrorWith(error => logger.error(s"Job retention failed: ${AppError.safeSummary(error)}"))
           )
           .metered(RetentionInterval)
@@ -137,7 +136,6 @@ object ActionExecutor:
       jobs: JobRepository[F],
       handler: ActionHandler[F],
       isCurrent: JobCommand => F[Boolean],
-      protectedJobIds: F[Set[JobId]],
       config: ActionExecutorConfig
   ): F[ActionExecutor[F]] =
-    Async[F].pure(new LiveActionExecutor(jobs, handler, isCurrent, protectedJobIds, config))
+    Async[F].pure(new LiveActionExecutor(jobs, handler, isCurrent, config))

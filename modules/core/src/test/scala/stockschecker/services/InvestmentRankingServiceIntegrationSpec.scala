@@ -5,6 +5,7 @@ import cats.syntax.traverse.*
 import kirill5k.common.cats.Clock
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.Filter
+import stockschecker.actions.ActionDispatcher
 import stockschecker.domain.*
 import stockschecker.repositories.*
 import stockschecker.repositories.InvestmentRepositoryFixtures.*
@@ -16,11 +17,12 @@ class InvestmentRankingServiceIntegrationSpec extends RepositorySpec:
 
   private def rankingService(db: MongoDatabase[IO]): IO[InvestmentRankingService[IO]] =
     for
-      stocks   <- StockRepository.make[IO](db)
-      history  <- FinancialHistoryRepository.make[IO](db)
-      rankings <- InvestmentRankingRepository.make[IO](db)
-      screens  <- InvestmentScreenRepository.make[IO](db)
-      service  <- InvestmentRankingService.make(stocks, history, rankings, screens)
+      stocks       <- StockRepository.make[IO](db)
+      rankings     <- InvestmentRankingRepository.make[IO](db)
+      jobs         <- JobRepository.make[IO](db)
+      dispatcher   <- ActionDispatcher.make(jobs)
+      stockService <- StockService.make(stocks, dispatcher)
+      service      <- InvestmentRankingService.make(stockService, rankings)
     yield service
 
   "An InvestmentRankingService with MongoDB repositories" should {
@@ -30,18 +32,18 @@ class InvestmentRankingServiceIntegrationSpec extends RepositorySpec:
           service     <- rankingService(db)
           repository  <- InvestmentRankingRepository.make[IO](db)
           _           <- repository.save(ranking, entries)
-          published   <- service.get(ranking.id)
+          published   <- service.find(ranking.id)
           values      <- service.entries(ranking.id)
           raw         <- db.getCollection(InvestmentRankingRepository.CollectionName)
           _           <- raw.deleteOne(Filter.idEq(ranking.id.value))
           unavailable <- service.latestAvailable
-          missing     <- service.get(ranking.id).attempt
+          missing     <- service.find(ranking.id)
           orphaned    <- repository.findEntries(ranking.id)
         yield
-          published mustBe ranking
+          published mustBe Some(ranking)
           values mustBe entries
           unavailable mustBe None
-          missing.isLeft mustBe true
+          missing mustBe None
           orphaned mustBe entries
       }
 
@@ -65,18 +67,18 @@ class InvestmentRankingServiceIntegrationSpec extends RepositorySpec:
           raw             <- db.getCollection(InvestmentRankingRepository.CollectionName)
           _               <- raw.deleteMany(Filter.in("_id", List("interrupted", "in-flight")))
           _               <- service.prune(now.minusSeconds(30L * 86400))
-          retained        <- service.get(screen.rankingId)
+          retained        <- service.find(screen.rankingId)
           retainedEntries <- service.entries(screen.rankingId)
           obsolete        <- repo.find(InvestmentRankingId("obsolete"))
-          recent          <- service.get(InvestmentRankingId("recent"))
+          recent          <- service.find(InvestmentRankingId("recent"))
           rawInputs       <- db.getCollection(InvestmentRankingRepository.InputsCollectionName)
           rows            <- rawInputs.find.all
           retainedRows    <- rawInputs.find(Filter.in("rankingId", List(screen.rankingId.value, "recent", "in-flight"))).all
         yield
-          retained mustBe referenced
+          retained mustBe Some(referenced)
           retainedEntries mustBe entries
           obsolete mustBe None
-          recent.id mustBe InvestmentRankingId("recent")
+          recent.map(_.id) mustBe Some(InvestmentRankingId("recent"))
           rows.size mustBe 3
           retainedRows.size mustBe rows.size
       }

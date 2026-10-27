@@ -12,13 +12,14 @@ import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Aggregate, Filter, Sort}
-import stockschecker.domain.{Exchange, SecurityKind, Stock, StockFilters, StockSortField, Ticker}
-import stockschecker.repositories.entities.StockEntity
+import stockschecker.domain.{Exchange, InvestmentCandidate, SecurityKind, Stock, StockFilters, StockSortField, Ticker}
+import stockschecker.repositories.entities.{InvestmentCandidateEntity, StockEntity}
 
 trait StockRepository[F[_]]:
   def find(ticker: Ticker): F[Option[Stock]]
   def findAll(filters: StockFilters, limit: Option[Int]): F[List[Stock]]
   def findByTickers(tickers: NonEmptyList[Ticker]): F[List[Stock]]
+  def findInvestmentCandidates: F[List[InvestmentCandidate]]
 
 final private class LiveStockRepository[F[_]](
     private val collection: MongoCollection[F, StockEntity]
@@ -27,7 +28,7 @@ final private class LiveStockRepository[F[_]](
 ) extends StockRepository[F] {
   import StockRepository.Field
 
-  private def buildAggregation(securityFilter: Filter, filters: StockFilters, limit: Int): Aggregate =
+  private def buildAggregation(securityFilter: Filter, filters: StockFilters, limit: Option[Int]): Aggregate =
     val sortField = filters.sortBy match
       case Some(StockSortField.MarketCap)       => s"${Field.Profile}.${CompanyProfileRepository.Field.MarketCap}"
       case Some(StockSortField.OverallScore)    => s"${Field.PriceAnalytics}.${PriceAnalyticsRepository.Field.Scores.OverallScore}"
@@ -35,33 +36,57 @@ final private class LiveStockRepository[F[_]](
       case Some(StockSortField.VolatilityScore) => s"${Field.PriceAnalytics}.${PriceAnalyticsRepository.Field.Scores.VolatilityScore}"
       case None                                 => s"${Field.Profile}.${CompanyProfileRepository.Field.MarketCap}"
 
-    Aggregate
+    val joined = Aggregate
       .matchBy(securityFilter)
-      .replaceWith(Document("security" := "$$ROOT"))
-      .lookup(CompanyProfileRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.Profile)
+      .replaceWith(Document(Field.Security := "$$ROOT"))
+      .lookup(CompanyProfileRepository.CollectionName, s"${Field.Security}.${Field.Id}", Field.Id, Field.Profile)
       .matchBy(filters.toProfileFilter)
-      .lookup(PriceAnalyticsRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.PriceAnalytics)
+      .lookup(PriceAnalyticsRepository.CollectionName, s"${Field.Security}.${Field.Id}", Field.Id, Field.PriceAnalytics)
       .matchBy(filters.toPriceAnalyticsFilter)
-      .lookup(FinancialMetricsRepository.CollectionName, s"security.${Field.Id}", Field.Id, Field.FinancialMetrics)
+      .lookup(FinancialMetricsRepository.CollectionName, s"${Field.Security}.${Field.Id}", Field.Id, Field.FinancialMetrics)
       .matchBy(filters.toFinancialMetricsFilter)
-      .sort(Sort.desc(sortField))
-      .limit(limit)
+    limit.fold(joined)(n => joined.sort(Sort.desc(sortField)).limit(n))
 
   override def find(ticker: Ticker): F[Option[Stock]] =
     collection
-      .aggregate[StockEntity](buildAggregation(Filter.idEq(ticker.value), StockFilters(), 1))
+      .aggregate[StockEntity](buildAggregation(Filter.idEq(ticker.value), StockFilters(), Some(1)))
       .first
       .mapOpt(_.toDomain)
 
   override def findAll(filters: StockFilters, limit: Option[Int]): F[List[Stock]] =
     collection
-      .aggregate[StockEntity](buildAggregation(filters.toSecurityFilter, filters, limit.getOrElse(Int.MaxValue)))
+      .aggregate[StockEntity](buildAggregation(filters.toSecurityFilter, filters, Some(limit.getOrElse(Int.MaxValue))))
       .all
       .mapList(_.toDomain)
 
   override def findByTickers(tickers: NonEmptyList[Ticker]): F[List[Stock]] =
     collection
-      .aggregate[StockEntity](buildAggregation(Filter.in(Field.Id, tickers.toList.map(_.value)), StockFilters(), tickers.size))
+      .aggregate[StockEntity](buildAggregation(Filter.in(Field.Id, tickers.toList.map(_.value)), StockFilters(), Some(tickers.size)))
+      .all
+      .mapList(_.toDomain)
+
+  override def findInvestmentCandidates: F[List[InvestmentCandidate]] =
+    val history                 = FinancialHistoryRepository.Field
+    val latestFinancialSnapshot = Document(
+      "$lookup" := Document(
+        "from"     := FinancialHistoryRepository.CollectionName,
+        "let"      := Document("ticker" := s"$$${Field.Stock}.${Field.Security}.${Field.Id}"),
+        "pipeline" := List(
+          Document("$match"   := Document("$expr" := Document("$eq" := List(s"$$${history.Ticker}", "$$ticker")))),
+          Document("$sort"    := Document(history.ObservedAt := -1, history.Id := -1)),
+          Document("$limit"   := 1),
+          Document("$project" := Document(history.RawPayload := 0))
+        ),
+        "as" := Field.FinancialSnapshots
+      )
+    )
+    collection
+      .aggregate[InvestmentCandidateEntity](
+        buildAggregation(Filter.empty, StockFilters(), None)
+          .replaceWith(Document(Field.Stock := "$$ROOT"))
+          .combinedWith(new Aggregate(List(latestFinancialSnapshot)))
+          .sort(Sort.asc(s"${Field.Stock}.${Field.Security}.${Field.Id}"))
+      )
       .all
       .mapList(_.toDomain)
 
@@ -147,13 +172,16 @@ final private class LiveStockRepository[F[_]](
 
 object StockRepository extends MongoJsonCodecs:
   object Field:
-    val Id               = "_id"
-    val Profile          = "profile"
-    val PriceAnalytics   = "priceAnalytics"
-    val FinancialMetrics = "financialMetrics"
+    val Security           = "security"
+    val Id                 = "_id"
+    val Profile            = "profile"
+    val PriceAnalytics     = "priceAnalytics"
+    val FinancialMetrics   = "financialMetrics"
+    val Stock              = "stock"
+    val FinancialSnapshots = "financialSnapshots"
 
   def make[F[_]: Concurrent](database: MongoDatabase[F]): F[StockRepository[F]] =
     database
       .getCollectionWithCodec[StockEntity](SecurityRepository.CollectionName)
-      .map(_.withAddedCodec[Exchange].withAddedCodec[SecurityKind])
+      .map(_.withAddedCodec[Exchange].withAddedCodec[SecurityKind].withAddedCodec[InvestmentCandidateEntity])
       .map(LiveStockRepository[F](_))

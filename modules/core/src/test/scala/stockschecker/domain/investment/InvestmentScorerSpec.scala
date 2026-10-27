@@ -12,16 +12,19 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
   private val now    = Instant.parse("2026-01-15T12:00:00Z")
   private val recipe = InvestmentRecipe(minIndustryPeers = 2, minSectorPeers = 3)
 
-  private def candidate(symbol: String, strength: Int = 1, industry: String = "Technology"): InvestmentCandidate =
+  private def candidate(
+      symbol: String,
+      strength: Int = 1,
+      industry: String = "Technology",
+      sector: Sector = Sector.Technology
+  ): InvestmentCandidate =
     val ticker       = Ticker(symbol)
     val observations = (0 until 6).toList.flatMap { i =>
       val period = LocalDate.of(2025 - i, 9, 30)
       List(
-        FinancialObservation("roa", period, BigDecimal("0.1") * strength, "ratio"),
-        FinancialObservation("fcfMargin", period, BigDecimal("0.1") * strength, "ratio"),
-        FinancialObservation("totalDebtToTotalAsset", period, BigDecimal("0.6") / strength, "ratio"),
-        FinancialObservation("eps", period, BigDecimal(10 - i), "reporting-currency-per-share"),
-        FinancialObservation("salesPerShare", period, BigDecimal(100 - 10 * i), "reporting-currency-per-share")
+        FinancialObservation(FinancialMetric.ReturnOnAssets, period, BigDecimal("0.1") * strength),
+        FinancialObservation(FinancialMetric.FreeCashFlowMargin, period, BigDecimal("0.1") * strength),
+        FinancialObservation(FinancialMetric.DebtToAssets, period, BigDecimal("0.6") / strength)
       )
     }
     val snapshot = FinancialSnapshot(
@@ -30,17 +33,16 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       Provider.Finnhub,
       now,
       Map(
-        "peTTM"           -> (BigDecimal(20) / strength),
-        "pfcfShareTTM"    -> (BigDecimal(30) / strength),
-        "epsTTM"          -> BigDecimal(10),
-        "revenueGrowth5Y" -> BigDecimal(10 * strength),
-        "epsGrowth5Y"     -> BigDecimal(15 * strength)
+        FinancialMetric.PriceToEarningsTtm     -> (BigDecimal(20) / strength),
+        FinancialMetric.PriceToFreeCashFlowTtm -> (BigDecimal(30) / strength),
+        FinancialMetric.EpsTtm                 -> BigDecimal(10),
+        FinancialMetric.RevenueGrowth5Y        -> (BigDecimal("0.1") * strength),
+        FinancialMetric.EpsGrowth5Y            -> (BigDecimal("0.15") * strength)
       ),
       observations,
-      List(FinancialObservation("fcfPerShareTTM", LocalDate.of(2025, 9, 30), BigDecimal(5), "reporting-currency-per-share")),
-      "{}",
+      List(FinancialObservation(FinancialMetric.FreeCashFlowPerShareTtm, LocalDate.of(2025, 9, 30), BigDecimal(5))),
       "hash",
-      FinancialSnapshot.FinnhubMappingVersion,
+      "canonical-test-v1",
       Nil
     )
     val analytics = AAPLPriceAnalytics.copy(
@@ -48,7 +50,11 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(latestPriceDate = LocalDate.of(2026, 1, 15))
     )
     InvestmentCandidate(
-      Stock(AAPLSecurity.copy(ticker = ticker), Some(AAPLCompanyProfile.copy(ticker = ticker, industry = industry)), Some(analytics)),
+      Stock(
+        AAPLSecurity.copy(ticker = ticker),
+        Some(AAPLCompanyProfile.copy(ticker = ticker, industry = industry, sector = Some(sector))),
+        Some(analytics)
+      ),
       Some(snapshot)
     )
 
@@ -59,7 +65,7 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       cards.head.score mustBe Some(BigDecimal(100))
       cards.last.score mustBe Some(BigDecimal(0))
       cards.head.pillars.keySet mustBe Set(Pillar.Quality, Pillar.Value, Pillar.Growth, Pillar.Resilience)
-      cards.head.features("revenueGrowth5Y") mustBe BigDecimal("0.2")
+      cards.head.features(ScoringFeature.RevenueGrowth5Y) mustBe BigDecimal("0.2")
       cards.head.warnings must contain("publication-time-unknown")
       cards.head.contributions mustBe Map(
         Pillar.Quality    -> BigDecimal(35),
@@ -72,10 +78,10 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       val evidence = cards.head.evidence.get
       evidence.provider mustBe Provider.Finnhub
       evidence.observedAt mustBe now
-      evidence.annualPeriods("roa") mustBe (2025 to 2021 by -1).toList.map(year => LocalDate.of(year, 9, 30))
-      evidence.financialObservations.count(_.metric == "totalDebtToTotalAsset") mustBe 1
+      evidence.annualPeriods(FinancialMetric.ReturnOnAssets) mustBe (2025 to 2021 by -1).toList.map(year => LocalDate.of(year, 9, 30))
+      evidence.financialObservations.count(_.metric == FinancialMetric.DebtToAssets) mustBe 1
       evidence.latestFreeCashFlowPerShareTtm.map(_.value) mustBe Some(BigDecimal(5))
-      cards.head.featureUnits("epsTtm") mustBe "reporting-currency-per-share"
+      cards.head.featureUnits(ScoringFeature.EpsTtm) mustBe "reporting-currency-per-share"
     }
 
     "give tied observations midrank and order tied tickers deterministically" in {
@@ -103,29 +109,31 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
     "exclude missing value inputs instead of redistributing their weights" in {
       val incomplete = candidate("MISSING", 2)
       val modified   =
-        incomplete.copy(financialSnapshot = incomplete.financialSnapshot.map(s => s.copy(metrics = s.metrics - "pfcfShareTTM")))
+        incomplete.copy(financialSnapshot =
+          incomplete.financialSnapshot.map(s => s.copy(metrics = s.metrics - FinancialMetric.PriceToFreeCashFlowTtm))
+        )
       val cards    = InvestmentScorer.rank(List(candidate("A"), candidate("B"), modified), now, recipe)
       val excluded = cards.find(_.ticker == Ticker("MISSING")).get
       excluded.score mustBe None
-      excluded.exclusions must contain("missing-metric:pfcfShareTTM")
+      excluded.exclusions must contain("missing-metric:price-to-free-cash-flow-ttm")
       cards.filter(_.eligible).forall(_.peerCount == 2) mustBe true
     }
 
     "exclude unavailable reported revenue growth rather than substituting sales per share" in {
       val input    = candidate("A")
-      val modified = input.copy(financialSnapshot = input.financialSnapshot.map(s => s.copy(metrics = s.metrics - "revenueGrowth5Y")))
-      val card     = InvestmentScorer.rank(List(modified), now, recipe).head
-      card.features must not contain key("salesPerShare5YCagr")
-      card.exclusions must contain("missing-metric:revenueGrowth5Y")
+      val modified =
+        input.copy(financialSnapshot = input.financialSnapshot.map(s => s.copy(metrics = s.metrics - FinancialMetric.RevenueGrowth5Y)))
+      val card = InvestmentScorer.rank(List(modified), now, recipe).head
+      card.exclusions must contain("missing-metric:revenue-growth5y")
       card.score mustBe None
     }
 
-    "ignore malformed unused series while rejecting malformed required observations" in {
-      val input                        = candidate("A")
-      def ranked(errors: List[String]) = InvestmentScorer
+    "reject typed validation issues on canonical observations" in {
+      val input                                        = candidate("A")
+      def ranked(issues: List[FinancialSnapshotIssue]) = InvestmentScorer
         .rank(
           List(
-            input.copy(financialSnapshot = input.financialSnapshot.map(_.copy(validationErrors = errors))),
+            input.copy(financialSnapshot = input.financialSnapshot.map(_.copy(issues = issues))),
             candidate("B")
           ),
           now,
@@ -133,24 +141,26 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
         )
         .find(_.ticker == Ticker("A"))
         .get
-      ranked(List("invalid-observation:annual:unused", "duplicate-period:annual:eps")).eligible mustBe true
-      ranked(List("invalid-observation:annual:roa")).exclusions must contain("invalid-provider-observations")
-      ranked(List("response-symbol-mismatch")).exclusions must contain("invalid-provider-observations")
+      ranked(Nil).eligible mustBe true
+      ranked(List(FinancialSnapshotIssue.InvalidObservation("annual", FinancialMetric.ReturnOnAssets))).exclusions must contain(
+        "invalid-provider-observations"
+      )
+      ranked(List(FinancialSnapshotIssue.SymbolMismatch)).exclusions must contain("invalid-provider-observations")
     }
 
-    "reject stale fetches, invalid mappings and incomplete fiscal histories" in {
+    "reject stale fetches and incomplete fiscal histories without interpreting mapping versions" in {
       val input    = candidate("A")
       val modified = input.copy(financialSnapshot =
         input.financialSnapshot.map(s =>
           s.copy(
             observedAt = now.minusSeconds(15L * 86400),
             mappingVersion = "unknown",
-            annual = s.annual.filterNot(p => p.metric == "roa" && p.period.getYear == 2023)
+            annual = s.annual.filterNot(p => p.metric == FinancialMetric.ReturnOnAssets && p.period.getYear == 2023)
           )
         )
       )
       val card = InvestmentScorer.rank(List(modified), now, recipe).head
-      card.exclusions must contain allOf ("stale-financial-snapshot", "unverified-financial-mapping", "insufficient-annual-history:roa")
+      card.exclusions must contain allOf ("stale-financial-snapshot", "insufficient-annual-history:return-on-assets")
       card.score mustBe None
     }
 
@@ -159,14 +169,12 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       val modified = input.copy(financialSnapshot =
         input.financialSnapshot.map(s =>
           s.copy(
-            metrics = s.metrics.updated("epsTTM", BigDecimal(-1)),
-            annual = s.annual.map(p => if p.metric == "eps" && p.period.getYear == 2020 then p.copy(value = BigDecimal(-1)) else p)
+            metrics = s.metrics.updated(FinancialMetric.EpsTtm, BigDecimal(-1))
           )
         )
       )
       val card = InvestmentScorer.rank(List(modified), now, recipe).head
-      card.exclusions must contain("nonpositive-metric:epsTTM")
-      card.features must not contain key("epsHistory5YCagr")
+      card.exclusions must contain("nonpositive-metric:eps-ttm")
     }
 
     "require quality histories to cover the same fiscal periods" in {
@@ -174,29 +182,29 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       val modified = input.copy(financialSnapshot =
         input.financialSnapshot.map(s =>
           s.copy(
-            annual = s.annual.map(p => if p.metric == "fcfMargin" then p.copy(period = p.period.minusYears(1)) else p)
+            annual =
+              s.annual.map(p => if p.metric == FinancialMetric.FreeCashFlowMargin then p.copy(period = p.period.minusYears(1)) else p)
           )
         )
       )
       val card = InvestmentScorer.rank(List(modified), now, recipe).head
       card.exclusions must contain("misaligned-quality-fiscal-periods")
-      card.exclusions must not contain "insufficient-annual-history:fcfMargin"
+      card.exclusions must not contain "insufficient-annual-history:free-cash-flow-margin"
       card.score mustBe None
     }
 
-    "reject incompatible required metric units before calculating ranks" in {
+    "derive observation units from their canonical metrics" in {
+      val snapshot = candidate("A").financialSnapshot.get
+      snapshot.annual.map(_.unit).distinct mustBe List(MetricUnit.Ratio)
+      snapshot.quarterly.map(_.unit).distinct mustBe List(MetricUnit.PerShare)
+    }
+
+    "accept canonical snapshots with opaque provider provenance and mapping versions" in {
       val input    = candidate("A")
       val modified = input.copy(financialSnapshot =
-        input.financialSnapshot.map(s =>
-          s.copy(
-            annual = s.annual.map(p => if p.metric == "roa" then p.copy(unit = "percent") else p),
-            quarterly = s.quarterly.map(_.copy(unit = "provider-defined"))
-          )
-        )
+        input.financialSnapshot.map(_.copy(provider = Provider.TwelveData, mappingVersion = "another-mapping"))
       )
-      val card = InvestmentScorer.rank(List(modified), now, recipe).head
-      card.exclusions must contain allOf ("unverified-unit:roa", "unverified-unit:fcfPerShareTTM")
-      card.features must not contain key("returnOnAssets5YMedian")
+      InvestmentScorer.rank(List(modified, candidate("B")), now, recipe).forall(_.eligible) mustBe true
     }
 
     "warn separately about missing price risk history without changing financial eligibility" in {
@@ -212,27 +220,27 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       cards.head.warnings must contain("reporting-currency-unknown-no-cross-currency-yields-computed")
     }
 
-    "not exclude a company because optional EPS and sales history or older debt observations are missing" in {
+    "not exclude a company because older debt observations are missing" in {
       val input    = candidate("A")
       val modified = input.copy(financialSnapshot =
         input.financialSnapshot.map(s =>
           s.copy(
-            annual = s.annual.filterNot(p =>
-              Set("salesPerShare", "eps")(p.metric) || (p.metric == "totalDebtToTotalAsset" && p.period.getYear < 2025)
-            )
+            annual = s.annual.filterNot(p => p.metric == FinancialMetric.DebtToAssets && p.period.getYear < 2025)
           )
         )
       )
       val cards = InvestmentScorer.rank(List(modified, candidate("B")), now, recipe)
       cards.forall(_.eligible) mustBe true
-      cards.head.featureUnits("earningsYield") mustBe "ratio"
+      cards.head.featureUnits(ScoringFeature.EarningsYield) mustBe "ratio"
     }
 
-    "keep financial-sector companies and inactive securities out of industrial cohorts" in {
-      val input    = candidate("BANK", industry = "Banks")
-      val modified = input.copy(stock = input.stock.copy(security = input.stock.security.copy(isActive = false)))
-      val card     = InvestmentScorer.rank(List(modified), now, recipe).head
-      card.exclusions must contain allOf ("specialist-sector-model-required", "inactive-security")
+    List("Banks" -> Sector.Financials, "REIT" -> Sector.RealEstate).foreach { case (industry, sector) =>
+      s"keep $industry companies and inactive securities out of industrial cohorts" in {
+        val input    = candidate("SPECIALIST", industry = industry, sector = sector)
+        val modified = input.copy(stock = input.stock.copy(security = input.stock.security.copy(isActive = false)))
+        val card     = InvestmentScorer.rank(List(modified), now, recipe).head
+        card.exclusions must contain allOf ("specialist-sector-model-required", "inactive-security")
+      }
     }
 
     "not reward an attractive historical chart independently of fundamentals" in {
@@ -261,32 +269,37 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
     }
 
     "retain valid features and every independent reason when several financial inputs fail validation" in {
-      val input = candidate("INVALID")
-      val modified = input.copy(financialSnapshot = input.financialSnapshot.map(snapshot => snapshot.copy(
-        observedAt = now.minusSeconds(15L * 86400),
-        mappingVersion = "unverified",
-        validationErrors = List("response-symbol-mismatch"),
-        metrics = (snapshot.metrics - "peTTM" - "revenueGrowth5Y")
-          .updated("pfcfShareTTM", BigDecimal(-1)).updated("epsTTM", BigDecimal(0)),
-        annual = snapshot.annual.filterNot(_.metric == "roa").map { observation =>
-          if observation.metric == "fcfMargin" then observation.copy(unit = "percent") else observation
-        },
-        quarterly = Nil
-      )))
+      val input    = candidate("INVALID")
+      val modified = input.copy(financialSnapshot =
+        input.financialSnapshot.map(snapshot =>
+          snapshot.copy(
+            observedAt = now.minusSeconds(15L * 86400),
+            mappingVersion = "unverified",
+            issues = List(FinancialSnapshotIssue.SymbolMismatch),
+            metrics = (snapshot.metrics - FinancialMetric.PriceToEarningsTtm - FinancialMetric.RevenueGrowth5Y)
+              .updated(FinancialMetric.PriceToFreeCashFlowTtm, BigDecimal(-1))
+              .updated(FinancialMetric.EpsTtm, BigDecimal(0)),
+            annual = snapshot.annual.filterNot(_.metric == FinancialMetric.ReturnOnAssets),
+            quarterly = Nil
+          )
+        )
+      )
       val card = InvestmentScorer.rank(List(modified), now, recipe).head
       card.exclusions mustBe List(
-        "unverified-financial-mapping",
         "invalid-provider-observations",
         "stale-financial-snapshot",
-        "insufficient-annual-history:roa",
-        "unverified-unit:fcfMargin",
-        "missing-metric:peTTM",
-        "nonpositive-metric:pfcfShareTTM",
-        "nonpositive-metric:epsTTM",
-        "missing-metric:revenueGrowth5Y",
+        "insufficient-annual-history:return-on-assets",
+        "missing-metric:price-to-earnings-ttm",
+        "nonpositive-metric:price-to-free-cash-flow-ttm",
+        "nonpositive-metric:eps-ttm",
+        "missing-metric:revenue-growth5y",
         "missing-current-free-cash-flow"
       )
-      card.features mustBe Map("epsGrowth5Y" -> BigDecimal("0.15"), "debtToAssets" -> BigDecimal("0.6"))
+      card.features mustBe Map(
+        ScoringFeature.EpsGrowth5Y                -> BigDecimal("0.15"),
+        ScoringFeature.DebtToAssets               -> BigDecimal("0.6"),
+        ScoringFeature.FreeCashFlowMargin5YMedian -> BigDecimal("0.1")
+      )
       card.score mustBe None
     }
 
@@ -299,7 +312,7 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       )
       cases.foreach { case (negativeYears, eligible, count) =>
         val snapshot = input.financialSnapshot.get.copy(annual = input.financialSnapshot.get.annual.map { observation =>
-          if observation.metric == "fcfMargin" && negativeYears(observation.period.getYear) then
+          if observation.metric == FinancialMetric.FreeCashFlowMargin && negativeYears(observation.period.getYear) then
             observation.copy(value = BigDecimal("-0.1"))
           else observation
         })
@@ -313,7 +326,7 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
         if eligible then Eligibility.explainExclusion(scored, Some(snapshot)) mustBe None
         else
           scored.exclusions mustBe List("insufficient-cash-flow-durability")
-          val compact     = snapshot.copy(annual = Nil, quarterly = Nil, rawPayload = "")
+          val compact     = snapshot.copy(annual = Nil, quarterly = Nil)
           val explanation = Eligibility.explainExclusion(scored, Some(compact)).get
           explanation must include(count)
           explanation must include("requires latest > 0 and at least 4/5 positive years")

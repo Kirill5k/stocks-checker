@@ -6,7 +6,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Provider, Ticker}
+import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
 import stockschecker.repositories.PriceHistoryRepository
 
 import java.time.{Duration, Instant, LocalDate, Period, ZoneOffset}
@@ -18,8 +18,7 @@ trait PriceHistoryService[F[_]]:
 
 final private class LivePriceHistoryService[F[_]](
     private val client: MarketDataClient[F],
-    private val repository: PriceHistoryRepository[F],
-    private val quality: DataQualityService[F]
+    private val repository: PriceHistoryRepository[F]
 )(using F: Sync[F], C: Clock[F])
     extends PriceHistoryService[F] {
   private val maxSnapshotAge = Duration.ofDays(1)
@@ -32,24 +31,22 @@ final private class LivePriceHistoryService[F[_]](
       !snapshot.fetchedAt.isBefore(range.through.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant)
 
   private def fetch(ticker: Ticker, range: DateRange, adjustment: PriceAdjustment): F[PriceHistorySnapshot] =
-    val dataset = adjustment match
-      case PriceAdjustment.SplitsAndDividends => "daily-prices-all"
-      case other                              => s"daily-prices-${other.print}"
-    quality
-      .observe(ticker, Provider.TwelveData, dataset)(client.getDailyPriceHistory(ticker, range, adjustment))(_.candles.nonEmpty)
-      .flatTap(repository.save)
+    client.getDailyPriceHistory(ticker, range, adjustment).flatTap(repository.save)
 
   override def recent(ticker: Ticker, range: DateRange, adjustment: PriceAdjustment, asOf: Instant): F[PriceHistorySnapshot] = {
     val cached = adjustment match
       case PriceAdjustment.Unadjusted => repository.latest(ticker, adjustment)
       case _                          => repository.latestCovering(ticker, adjustment, range)
-    cached.flatMap(
-      _.filter(snapshot =>
-        snapshot.ticker == ticker && snapshot.adjustment == adjustment && snapshot.currency.trim.nonEmpty &&
+    cached
+      .flatMap {
+        _.filter { snapshot =>
+          snapshot.ticker == ticker && snapshot.adjustment == adjustment && snapshot.currency.trim.nonEmpty &&
           fresh(snapshot, asOf) && !snapshot.requestedRange.from.isAfter(range.from) &&
           !snapshot.requestedRange.through.isBefore(range.through)
-      ).fold(fetch(ticker, range, adjustment))(_.pure[F])
-    )
+
+        }.map(_.pure[F])
+          .getOrElse(fetch(ticker, range, adjustment))
+      }
   }
 
   override def cachedHistorical(ticker: Ticker, range: DateRange): F[Option[PriceHistorySnapshot]] =
@@ -78,7 +75,6 @@ object PriceHistoryService:
 
   def make[F[_]: {Sync, Clock}](
       client: MarketDataClient[F],
-      repository: PriceHistoryRepository[F],
-      quality: DataQualityService[F]
+      repository: PriceHistoryRepository[F]
   ): F[PriceHistoryService[F]] =
-    Sync[F].pure(LivePriceHistoryService(client, repository, quality))
+    Sync[F].pure(LivePriceHistoryService(client, repository))

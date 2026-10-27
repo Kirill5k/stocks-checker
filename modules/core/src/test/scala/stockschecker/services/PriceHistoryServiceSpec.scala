@@ -35,7 +35,7 @@ class PriceHistoryServiceSpec extends IOWordSpec {
     when(repo.save(any[PriceHistorySnapshot])).thenReturnUnit
     when(client.getDailyPriceHistory(ticker, range, PriceAdjustment.SplitsAndDividends)).thenReturnIO(fetched)
 
-    def service: IO[PriceHistoryService[IO]] = PriceHistoryService.make(client, repo, DataQualityServiceStub)
+    def service: IO[PriceHistoryService[IO]] = PriceHistoryService.make(client, repo)
   }
 
   "Price history acquisition" should {

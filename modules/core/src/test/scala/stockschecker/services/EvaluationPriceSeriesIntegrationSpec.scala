@@ -16,7 +16,7 @@ class EvaluationPriceSeriesIntegrationSpec extends IOWordSpec {
   given Clock[IO]      = Clock.mock(fixedNow)
 
   private def makeHistory(client: MarketDataClient[IO], repo: PriceHistoryRepository[IO]): IO[PriceHistoryService[IO]] =
-    PriceHistoryService.make(client, repo, DataQualityServiceStub)
+    PriceHistoryService.make(client, repo)
 
   private val ticker   = Ticker("AAA")
   private val from     = LocalDate.parse("2025-01-01")
@@ -39,13 +39,14 @@ class EvaluationPriceSeriesIntegrationSpec extends IOWordSpec {
       val repo   = mock[PriceHistoryRepository[IO]]
       val client = mock[MarketDataClient[IO]]
       when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(snapshot))
-      makeHistory(client, repo).flatMap(_.cachedHistorical(ticker, range).map(_.map(EvaluationPriceSeries.from(_, range)))).asserting { result =>
-        result.get.snapshotIds mustBe List(snapshot.id)
-        result.get.fetchedAt mustBe snapshot.fetchedAt
-        result.get.audited mustBe true
-        result.get.issues mustBe Nil
-        verifyNoInteractions(client)
-        succeed
+      makeHistory(client, repo).flatMap(_.cachedHistorical(ticker, range).map(_.map(EvaluationPriceSeries.from(_, range)))).asserting {
+        result =>
+          result.get.snapshotIds mustBe List(snapshot.id)
+          result.get.fetchedAt mustBe snapshot.fetchedAt
+          result.get.audited mustBe true
+          result.get.issues mustBe Nil
+          verifyNoInteractions(client)
+          succeed
       }
     }
 
@@ -89,7 +90,9 @@ class EvaluationPriceSeriesIntegrationSpec extends IOWordSpec {
           .thenReturnIO(Some(shared))
         history <- makeHistory(client, repo)
         first   <- history.historical(ticker, range).map(EvaluationPriceSeries.from(_, range))
-        second  <- history.historical(ticker, range.copy(from = from.plusDays(10))).map(EvaluationPriceSeries.from(_, range.copy(from = from.plusDays(10))))
+        second  <- history
+          .historical(ticker, range.copy(from = from.plusDays(10)))
+          .map(EvaluationPriceSeries.from(_, range.copy(from = from.plusDays(10))))
       yield (first, second)).asserting { case (first, second) =>
         first.snapshotIds mustBe second.snapshotIds
         verifyNoInteractions(client)
@@ -130,25 +133,27 @@ class EvaluationPriceSeriesIntegrationSpec extends IOWordSpec {
         val repo   = mock[PriceHistoryRepository[IO]]
         val client = mock[MarketDataClient[IO]]
         when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(invalid))
-        makeHistory(client, repo).flatMap(_.cachedHistorical(ticker, range).map(_.map(EvaluationPriceSeries.from(_, range)))).map { result =>
-          val series = result.get
-          series.audited mustBe false
-          series.issues must contain(issue)
-          val report = InvestmentEvaluator.evaluate(
-            InvestmentScreenId("invalid-prices"),
-            from.atStartOfDay(ZoneOffset.UTC).toInstant,
-            snapshot.fetchedAt,
-            List(InvestmentCohort(CohortName.Investment, List(ticker))),
-            Map(ticker -> series, InvestmentEvaluator.Benchmark -> series.copy(ticker = InvestmentEvaluator.Benchmark)),
-            Some(through)
-          )
-          report.horizons.flatMap(_.cohorts).foreach { cohort =>
-            cohort.status mustBe EvaluationStatus.Incomplete
-            cohort.totalReturnPercent mustBe None
-            cohort.observedReturnPercent mustBe None
-            cohort.issues.mkString must include(issue)
-          }
-          verifyNoInteractions(client)
+        makeHistory(client, repo).flatMap(_.cachedHistorical(ticker, range).map(_.map(EvaluationPriceSeries.from(_, range)))).map {
+          result =>
+            val series = result.get
+            series.audited mustBe false
+            series.issues must contain(issue)
+            val report = InvestmentEvaluator.evaluate(
+              InvestmentScreenId("invalid-prices"),
+              from.atStartOfDay(ZoneOffset.UTC).toInstant,
+              snapshot.fetchedAt,
+              List(InvestmentCohort(CohortName.Investment, List(ticker))),
+              Map(ticker -> series, InvestmentEvaluator.Benchmark -> series.copy(ticker = InvestmentEvaluator.Benchmark)),
+              java.time.YearMonth.from(through),
+              through
+            )
+            report.horizons.flatMap(_.cohorts).foreach { cohort =>
+              cohort.status mustBe EvaluationStatus.Incomplete
+              cohort.totalReturnPercent mustBe None
+              cohort.observedReturnPercent mustBe None
+              cohort.issues.mkString must include(issue)
+            }
+            verifyNoInteractions(client)
         }
       }.asserting(_ => succeed)
     }

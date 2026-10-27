@@ -44,6 +44,7 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
       "name"                          := profile.name,
       "country"                       := profile.country,
       "industry"                      := profile.industry,
+      "sector"                        := profile.sector,
       "description"                   := profile.description,
       "website"                       := profile.website,
       "ipoDate"                       := profile.ipoDate,

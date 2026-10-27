@@ -1,12 +1,14 @@
 package stockschecker.services
 
 import stockschecker.domain.Provider
+import cats.data.NonEmptyList
 import cats.effect.IO
+import stockschecker.actions.{Action, ActionDispatcher}
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{FinancialData, FinancialMetrics, FinancialSnapshot, Ticker}
+import stockschecker.domain.{FinancialData, FinancialMetrics, FinancialSnapshot}
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{CompanyProfileRepository, FinancialHistoryRepository, FinancialMetricsRepository}
+import stockschecker.repositories.{FinancialHistoryRepository, FinancialMetricsRepository}
 import stockschecker.fixtures.*
 
 class FinancialMetricsServiceSpec extends IOWordSpec {
@@ -19,82 +21,81 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
       Map.empty,
       Nil,
       Nil,
-      "{}",
       "hash",
-      FinancialSnapshot.FinnhubMappingVersion,
+      "canonical-test-v1",
       Nil
     )
 
   "FinancialMetricsService" should {
-    "persist financial evidence before publishing metrics and record the update directly" in {
-      val (repo, client, profiles, history) = mocks
-      when(client.getFinancialData(AAPL)).thenReturnSome(FinancialData(AAPLFinancialMetrics, snapshot))
-      when(history.save(snapshot)).thenReturnUnit
+    "persist financial evidence before publishing metrics and dispatch the update event" in {
+      val (repo, client, dispatcher, history) = mocks
+      when(client.getFinancialData(AAPL)).thenReturnSome(FinancialData(AAPLFinancialMetrics, snapshot, "raw response"))
+      when(history.save(snapshot, "raw response")).thenReturnUnit
       when(repo.save(anyList[FinancialMetrics])).thenReturnUnit
-      when(profiles.updateFinancialMetricsLastUpdated(anyList[Ticker])).thenReturnUnit
+      when(dispatcher.dispatch(any[Action])).thenReturnUnit
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
+        service <- FinancialMetricsService.make(repo, client, dispatcher, history)
         result  <- service.find(AAPL, true)
       yield result).asserting { result =>
         result mustBe AAPLFinancialMetrics
-        verify(history).save(snapshot)
+        verify(history).save(snapshot, "raw response")
         verify(repo).save(List(AAPLFinancialMetrics))
-        verify(profiles).updateFinancialMetricsLastUpdated(List(AAPL))
+        verify(dispatcher).dispatch(Action.RecordFinancialMetricsUpdate(NonEmptyList.one(AAPL)))
         succeed
       }
     }
 
     "not publish metrics when financial evidence cannot be saved" in {
-      val (repo, client, profiles, history) = mocks
-      val error                             = new RuntimeException("History unavailable")
-      when(client.getFinancialData(AAPL)).thenReturnSome(FinancialData(AAPLFinancialMetrics, snapshot))
-      when(history.save(snapshot)).thenRaiseError(error)
+      val (repo, client, dispatcher, history) = mocks
+      val error                               = new RuntimeException("History unavailable")
+      when(client.getFinancialData(AAPL)).thenReturnSome(FinancialData(AAPLFinancialMetrics, snapshot, "raw response"))
+      when(history.save(snapshot, "raw response")).thenRaiseError(error)
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
+        service <- FinancialMetricsService.make(repo, client, dispatcher, history)
         result  <- service.find(AAPL, true)
       yield result).attempt.asserting { result =>
         result mustBe Left(error)
-        verifyNoInteractions(repo, profiles)
+        verifyNoInteractions(repo, dispatcher)
         succeed
       }
     }
 
     "propagate provider deferrals without recording an update" in {
-      val (repo, client, profiles, history) = mocks
-      val deferred                          = AppError.ProviderDeferred(Provider.Finnhub, ts.plusSeconds(60), "rate-limited")
+      val (repo, client, dispatcher, history) = mocks
+      val deferred                            = AppError.ProviderDeferred(Provider.Finnhub, ts.plusSeconds(60), "rate-limited")
       when(client.getFinancialData(AAPL)).thenRaiseError(deferred)
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
+        service <- FinancialMetricsService.make(repo, client, dispatcher, history)
         result  <- service.find(AAPL, true)
       yield result).attempt.asserting { result =>
         result mustBe Left(deferred)
-        verifyNoInteractions(repo, profiles, history)
+        verifyNoInteractions(repo, dispatcher, history)
         succeed
       }
     }
 
     "read cached metrics without contacting the provider" in {
-      val (repo, client, profiles, history) = mocks
+      val (repo, client, dispatcher, history) = mocks
       when(repo.find(AAPL)).thenReturnSome(AAPLFinancialMetrics)
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
+        service <- FinancialMetricsService.make(repo, client, dispatcher, history)
         result  <- service.find(AAPL, false)
       yield result).asserting { result =>
         result mustBe AAPLFinancialMetrics
-        verifyNoInteractions(client, profiles, history)
+        verifyNoInteractions(client, dispatcher, history)
         succeed
       }
     }
 
     "report an unavailable financial dataset without writing empty metrics" in {
-      val (repo, client, profiles, history) = mocks
+      val (repo, client, dispatcher, history) = mocks
       when(client.getFinancialData(AAPL)).thenReturnNone
       (for
-        service <- FinancialMetricsService.make(repo, client, profiles, history, DataQualityServiceStub)
+        service <- FinancialMetricsService.make(repo, client, dispatcher, history)
         result  <- service.find(AAPL, true)
       yield result).attempt.asserting { result =>
         result mustBe Left(AppError.FinancialMetricsNotFound(AAPL))
-        verifyNoInteractions(repo, profiles, history)
+        verifyNoInteractions(repo, dispatcher, history)
         succeed
       }
     }
@@ -103,7 +104,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
   private def mocks = (
     mock[FinancialMetricsRepository[IO]],
     mock[MarketDataClient[IO]],
-    mock[CompanyProfileRepository[IO]],
+    mock[ActionDispatcher[IO]],
     mock[FinancialHistoryRepository[IO]]
   )
 }

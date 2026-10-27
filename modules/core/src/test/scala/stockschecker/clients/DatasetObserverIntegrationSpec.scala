@@ -1,8 +1,6 @@
-package stockschecker.services
+package stockschecker.clients
 
-import stockschecker.clients.{ProviderAccess, ProviderLimits}
-
-import stockschecker.domain.DatasetStatus
+import stockschecker.domain.{Dataset, DatasetStatus}
 import stockschecker.domain.Provider
 import kirill5k.common.cats.Clock
 import cats.effect.{IO, Ref}
@@ -14,7 +12,7 @@ import stockschecker.repositories.{DataQualityRepository, ProviderBudgetReposito
 import java.time.{Instant, LocalDate}
 import scala.concurrent.duration.*
 
-class ProviderAvailabilitySpec extends RepositorySpec {
+class DatasetObserverIntegrationSpec extends RepositorySpec {
   given Clock[IO]        = Clock.make[IO]
   override def port: Int = 12158
   private val from       = LocalDate.parse("2025-01-01")
@@ -31,10 +29,12 @@ class ProviderAvailabilitySpec extends RepositorySpec {
   )
   private val limits = ProviderLimits(60000, 0, 1)
 
-  private def observed(access: ProviderAccess[IO], availability: DataQualityService[IO], ticker: Ticker)(
+  private def observed(access: ProviderAccess[IO], availability: DatasetObserver[IO], ticker: Ticker)(
       request: IO[PriceHistorySnapshot]
   ): IO[PriceHistorySnapshot] =
-    availability.observe(ticker, Provider.TwelveData, "daily-prices-all")(access.run(Provider.TwelveData, limits)(request))(
+    availability.observe(Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, ticker)(
+      access.run(Provider.TwelveData, limits)(request)
+    )(
       _.candles.nonEmpty
     )
 
@@ -45,10 +45,10 @@ class ProviderAvailabilitySpec extends RepositorySpec {
           quality        <- DataQualityRepository.make[IO](db)
           budgets        <- ProviderBudgetRepository.make[IO](db)
           access         <- ProviderAccess.make[IO](budgets)
-          availability   <- DataQualityService.make[IO](quality, org.mockito.Mockito.mock(classOf[SecurityRepository[IO]]), org.mockito.Mockito.mock(classOf[InvestmentRankingService[IO]]))
+          availability   <- DatasetObserver.make[IO](quality)
           securities     <- SecurityRepository.make[IO](db)
           _              <- securities.save(List(AAPLSecurity, MSFTSecurity))
-          _              <- securities.deactivate(AAPL)
+          _              <- securities.setActive(AAPL, false, snapshot.fetchedAt)
           appleCalls     <- Ref.of[IO, Int](0)
           microsoftCalls <- Ref.of[IO, Int](0)
           apple = observed(access, availability, AAPL)(appleCalls.getAndUpdate(_ + 1).flatMap {
@@ -98,12 +98,12 @@ class ProviderAvailabilitySpec extends RepositorySpec {
           quality      <- DataQualityRepository.make[IO](db)
           budgets      <- ProviderBudgetRepository.make[IO](db)
           access       <- ProviderAccess.make[IO](budgets)
-          availability <- DataQualityService.make[IO](quality, org.mockito.Mockito.mock(classOf[SecurityRepository[IO]]), org.mockito.Mockito.mock(classOf[InvestmentRankingService[IO]]))
+          availability <- DatasetObserver.make[IO](quality)
           now          <- IO.realTimeInstant
-          _            <- quality.record(AAPL, Provider.TwelveData, "daily-prices-all", DatasetStatus.Available, now, None)
-          _            <- quality.record(MSFT, Provider.TwelveData, "daily-prices-all", DatasetStatus.Failed, now, Some("HTTP 503"))
-          before       <- quality.all
-          first        <- observed(access, availability, AAPL)(
+          _ <- quality.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, now, None)
+          _ <- quality.record(MSFT, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Failed, now, Some("HTTP 503"))
+          before <- quality.all
+          first  <- observed(access, availability, AAPL)(
             IO.raiseError(AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(300), "Retry-After"))
           ).attempt
           second <- observed(access, availability, MSFT)(IO.raiseError(new AssertionError("Deferred request ran"))).attempt

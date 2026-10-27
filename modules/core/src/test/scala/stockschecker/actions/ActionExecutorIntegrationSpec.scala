@@ -30,7 +30,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
   override def port: Int                                                 = 12210
   given Clock[IO]                                                        = Clock.make[IO]
   given Logger[IO]                                                       = Slf4jLogger.getLogger[IO]
-  private val action                                                     = Action.DeactivateSecurity(AAPL)
+  private val action                                                     = Action.SetSecurityActive(AAPL, false, java.time.Instant.EPOCH)
   private def enqueue(jobs: JobRepository[IO])(job: Job): IO[Unit]       = jobs.enqueue(job, ActionPriority.forAction(job.action))
   private def awaitTerminal(repo: JobRepository[IO], id: JobId): IO[Job] =
     repo
@@ -44,9 +44,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
   private def makeExecutor(jobs: JobRepository[IO], services: Services[IO], config: ActionExecutorConfig): IO[ActionExecutor[IO]] =
     ActionHandler
       .make(services)
-      .flatMap(handler =>
-        ActionExecutor.make(jobs, handler, command => services.command.isCurrent(command), IO.pure(Set.empty[JobId]), config)
-      )
+      .flatMap(handler => ActionExecutor.make(jobs, handler, command => services.command.isCurrent(command), config))
 
   "An action executor" should {
     "run ready work with sixteen future schedules and no free timer workers" in withEmbeddedMongoDatabase { db =>
@@ -54,7 +52,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       val services = mock(classOf[Services[IO]])
       val security = mock(classOf[SecurityService[IO]])
       when(services.security).thenReturn(security)
-      when(security.deactivate(AAPL)).thenReturn(IO.unit)
+      when(security.setActive(AAPL, false, java.time.Instant.EPOCH)).thenReturn(IO.unit)
       for {
         jobs     <- JobRepository.make[IO](db)
         _        <- (1 to 16).toList.traverse_(n => enqueue(jobs)(Job(JobId(s"timer-$n"), action, now.plusSeconds(86400), now)))
@@ -163,7 +161,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         release <- Deferred[IO, Unit]
         second  <- Ref.of[IO, Boolean](false)
         _ = when(profiles.get(AAPL, true)).thenReturn(started.complete(()).void >> release.get.as(AAPLCompanyProfile))
-        _ = when(security.deactivate(AAPL)).thenReturn(second.set(true))
+        _ = when(security.setActive(AAPL, false, java.time.Instant.EPOCH)).thenReturn(second.set(true))
         jobs <- JobRepository.make[IO](db)
         now  <- IO.realTimeInstant
         _    <- enqueue(jobs)(
@@ -217,7 +215,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       val services = mock(classOf[Services[IO]])
       val profiles = mock(classOf[CompanyProfileService[IO]])
       when(services.companyProfile).thenReturn(profiles)
-      when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.DataUnavailable(Provider.Finnhub, MSFT, "missing session")))
+      when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.DataUnavailable(MSFT, "missing session")))
       for {
         jobs           <- JobRepository.make[IO](db)
         commands       <- CommandRepository.make[IO](db)
@@ -276,7 +274,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.CompanyProfileNotFound(MSFT)))
       for {
         ran <- Ref.of[IO, Boolean](false)
-        _ = when(security.deactivate(AAPL)).thenReturn(ran.set(true))
+        _ = when(security.setActive(AAPL, false, java.time.Instant.EPOCH)).thenReturn(ran.set(true))
         jobs <- JobRepository.make[IO](db)
         now  <- IO.realTimeInstant
         _    <- enqueue(jobs)(
@@ -296,8 +294,8 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       }
     }
     "recover a frozen plan after only some children were materialized" in withEmbeddedMongoDatabase { db =>
-      val first  = Action.DeactivateSecurity(AAPL)
-      val second = Action.DeactivateSecurity(MSFT)
+      val first  = Action.SetSecurityActive(AAPL, false, java.time.Instant.EPOCH)
+      val second = Action.SetSecurityActive(MSFT, false, java.time.Instant.EPOCH)
       val plan   = JobPlan(List(first, second), sequential = false)
       for {
         jobs  <- JobRepository.make[IO](db)
@@ -321,7 +319,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
               .raiseUnless(action == second)(new IllegalStateException("Frozen work was recomputed"))
               .as(ActionResult.Completed)
         }
-        executor   <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), IO.pure(Set.empty[JobId]), ActionExecutorConfig(1))
+        executor   <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), ActionExecutorConfig(1))
         result     <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, parent.id))
         executed   <- calls.get
         firstChild <- jobs.find(JobId("interrupted/0")).map(_.get)

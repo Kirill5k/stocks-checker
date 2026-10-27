@@ -2,7 +2,18 @@ package stockschecker.repositories
 
 import cats.data.NonEmptyList
 import cats.effect.IO
-import stockschecker.domain.{Exchange, SecurityKind, StockFilters, Ticker, TimePeriod}
+import stockschecker.domain.{
+  Exchange,
+  FinancialMetric,
+  FinancialSnapshot,
+  InvestmentCandidate,
+  Provider,
+  SecurityKind,
+  StockFilters,
+  StockSortField,
+  Ticker,
+  TimePeriod
+}
 import stockschecker.fixtures.{
   AAPL,
   AAPLCompanyProfile,
@@ -22,6 +33,53 @@ class StockRepositorySpec extends RepositorySpec {
   override def port: Int = 12150
 
   "A StockRepository" when {
+    "findInvestmentCandidates" should {
+      "join only each ticker's latest financial snapshot without its raw payload" in {
+        val observedAt = java.time.Instant.parse("2026-10-19T12:00:00Z")
+        val latest     = FinancialSnapshot(
+          "aapl-latest",
+          AAPL,
+          Provider.Finnhub,
+          observedAt,
+          Map(FinancialMetric.RevenueGrowth5Y -> BigDecimal(100)),
+          Nil,
+          Nil,
+          "latest-hash",
+          "canonical-test-v1",
+          Nil
+        )
+        val older    = latest.copy(id = "aapl-older", observedAt = observedAt.minusSeconds(60), payloadHash = "older-hash")
+        val other    = latest.copy(id = "other-latest", ticker = Ticker("OTHER"), observedAt = observedAt.plusSeconds(60))
+        val seedData = Map(
+          SecurityRepository.CollectionName         -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          CompanyProfileRepository.CollectionName   -> List(toDoc(AAPLCompanyProfile)),
+          PriceAnalyticsRepository.CollectionName   -> List(toDoc(AAPLPriceAnalytics)),
+          FinancialMetricsRepository.CollectionName -> List(toDoc(AAPLFinancialMetrics))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            history <- FinancialHistoryRepository.make[IO](db)
+            _       <- history.save(older, "older raw provider payload")
+            _       <- history.save(latest, "latest raw provider payload")
+            _       <- history.save(other, "other raw provider payload")
+            repo    <- StockRepository.make[IO](db)
+            result  <- repo.findInvestmentCandidates
+          yield result mustBe List(
+            InvestmentCandidate(AAPLStock, Some(latest)),
+            InvestmentCandidate(MSFTStock.copy(profile = None, priceAnalytics = None, financialMetrics = None), None)
+          )
+        }
+      }
+
+      "return no candidates when there are no securities" in
+        withEmbeddedMongoDatabase(Map.empty) { db =>
+          for
+            repo   <- StockRepository.make[IO](db)
+            result <- repo.findInvestmentCandidates
+          yield result mustBe Nil
+        }
+    }
+
     "find" should {
       "return stock with all associated data" in {
         val seedData = Map(
@@ -84,6 +142,34 @@ class StockRepositorySpec extends RepositorySpec {
     }
 
     "findAll" should {
+      "honor an explicit score sort without a limit" in {
+        val lower    = AAPLPriceAnalytics.copy(scores = AAPLPriceAnalytics.scores.copy(overallScore = 40))
+        val higher   = lower.copy(ticker = MSFT, scores = lower.scores.copy(overallScore = 90))
+        val seedData = Map(
+          SecurityRepository.CollectionName       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          PriceAnalyticsRepository.CollectionName -> List(toDoc(lower), toDoc(higher))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            repo   <- StockRepository.make[IO](db)
+            stocks <- repo.findAll(StockFilters(sortBy = Some(StockSortField.OverallScore)), None)
+          yield stocks.map(_.security.ticker) mustBe List(MSFT, AAPL)
+        }
+      }
+
+      "retain the default descending market-cap sort without a limit" in {
+        val seedData = Map(
+          SecurityRepository.CollectionName       -> List(toDoc(MSFTSecurity), toDoc(AAPLSecurity)),
+          CompanyProfileRepository.CollectionName -> List(toDoc(MSFTCompanyProfile), toDoc(AAPLCompanyProfile))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            repo   <- StockRepository.make[IO](db)
+            stocks <- repo.findAll(StockFilters(), None)
+          yield stocks.map(_.security.ticker) mustBe List(AAPL, MSFT)
+        }
+      }
+
       "return all stocks with associated data" in {
         val seedData = Map(
           "securities"        -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),

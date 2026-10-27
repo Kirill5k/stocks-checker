@@ -3,7 +3,6 @@ package stockschecker
 import cats.effect.unsafe.IORuntimeConfig
 import cats.effect.{IO, IOApp}
 import cats.syntax.foldable.*
-import cats.syntax.apply.*
 import stockschecker.domain.Provider
 import fs2.Stream
 import kirill5k.common.http4s.Server
@@ -34,7 +33,7 @@ object Application extends IOApp.Simple {
           for
             repositories     <- Repositories.make(res.mongoDatabase)
             actionDispatcher <- ActionDispatcher.make[IO](repositories.jobs)
-            clients          <- Clients.make(config.clients, res.httpBackend, repositories.providerBudgets)
+            clients          <- Clients.make(config.clients, res.httpBackend, repositories.providerBudgets, repositories.dataQuality)
             services         <- Services.make(clients, repositories, actionDispatcher, config.investment)
             controllers      <- Controllers.make(services, config.api)
             actionHandler    <- ActionHandler.make(services)
@@ -42,7 +41,6 @@ object Application extends IOApp.Simple {
               repositories.jobs,
               actionHandler,
               services.command.isCurrent,
-              (repositories.command.activeRunIds, services.investmentEvaluations.protectedJobIds).mapN(_ ++ _),
               config.actionExecutor
             )
             commandScheduler <- CommandScheduler.make(repositories.command, repositories.jobs)

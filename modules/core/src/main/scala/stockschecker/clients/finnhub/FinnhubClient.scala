@@ -15,7 +15,6 @@ import stockschecker.domain.{CompanyProfile, Exchange, FinancialData, FinancialM
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 import sttp.client4.circe.asJson
-import sttp.model.StatusCode
 
 import java.time.LocalDate
 import scala.concurrent.duration.*
@@ -51,29 +50,16 @@ final private class LiveFinnhubClient[F[_]](
       .readTimeout(30.seconds)
 
     backend.send(request).flatMap { response =>
-      response.body match
-        case Right(body) =>
-          C.now.flatMap { now =>
-            F.fromEither(
-              FinnhubFinancialMapping
-                .decode(body, ticker, now)
-                .left
-                .map(err => AppError.JsonParsingFailure(body.toString, s"Error decoding financial metrics for $ticker: ${err.getMessage}"))
-            )
-          }
-        case Left(ResponseException.DeserializationException(_, error, _)) =>
-          F.raiseError(AppError.JsonParsingFailure(response.body.toString, s"Error decoding financials for $ticker: ${error.getMessage}"))
-        case Left(ResponseException.UnexpectedStatusCode(_, meta)) if meta.code == StatusCode.NotFound =>
-          F.pure(None)
-        case Left(_) =>
-          ProviderErrors
-            .fromStatus[F](
-              Provider.Finnhub,
-              response.code.code,
-              response.header("Retry-After"),
-              s"Error retrieving basic financials for $ticker"
-            )
-            .flatMap(F.raiseError)
+      handle(response, s"basic financials for $ticker") { body =>
+        C.now.flatMap { now =>
+          F.fromEither(
+            FinnhubFinancialMapping
+              .decode(body, ticker, now)
+              .left
+              .map(err => AppError.JsonParsingFailure(body.toString, s"Error decoding financial metrics for $ticker: ${err.getMessage}"))
+          )
+        }
+      }
     }
   }
 
@@ -84,24 +70,17 @@ final private class LiveFinnhubClient[F[_]](
       .readTimeout(30.seconds)
 
     backend.send(request).flatMap { response =>
-      response.body match
-        case Right(jsonObj) if jsonObj.isEmpty =>
-          F.pure(None) // Empty object returned - no profile found
-        case Right(jsonObj) =>
-          jsonObj.toJson.as[FinnhubClient.CompanyProfileResponse] match
-            case Right(profile) =>
-              F.pure(Some(profile.toDomain))
-            case Left(err) =>
-              F.raiseError(AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile for $ticker: ${err.getMessage}"))
-        case Left(_) =>
-          ProviderErrors
-            .fromStatus[F](
-              Provider.Finnhub,
-              response.code.code,
-              response.header("Retry-After"),
-              s"Error retrieving company profile for $ticker"
-            )
-            .flatMap(F.raiseError)
+      handle(response, s"company profile for $ticker") { jsonObj =>
+        if jsonObj.isEmpty then F.pure(None)
+        else
+          F.fromEither(
+            jsonObj.toJson
+              .as[FinnhubClient.CompanyProfileResponse]
+              .map(profile => Some(profile.toDomain))
+              .left
+              .map(err => AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile for $ticker: ${err.getMessage}"))
+          )
+      }
     }
   }
 
@@ -113,22 +92,32 @@ final private class LiveFinnhubClient[F[_]](
       .response(asStreamUnsafe(Fs2Streams[F]))
       .readTimeout(10.minutes)
 
-    for
-      response <- Stream.eval(backend.send(request))
-      data     <- response.body match
-        case Right(stream) =>
-          stream
-            .through(byteArrayParser[F])
-            .through(decoder[F, FinnhubClient.StockSymbol])
-            .map(_.toDomain(exchange))
-        case Left(_) =>
-          Stream.eval(
-            ProviderErrors
-              .fromStatus[F](Provider.Finnhub, response.code.code, response.header("Retry-After"), "Error retrieving traded stocks")
-              .flatMap(F.raiseError)
-          )
-    yield data
+    Stream.eval(backend.send(request).flatMap(response => handle(response, s"listed securities for $exchange")(F.pure))).flatMap { stream =>
+      stream
+        .through(byteArrayParser[F])
+        .through(decoder[F, FinnhubClient.StockSymbol])
+        .handleErrorWith {
+          case error: io.circe.Error =>
+            Stream.raiseError[F](
+              AppError.JsonParsingFailure("", s"Error decoding Finnhub listed securities for $exchange: ${error.getMessage}")
+            )
+          case error => Stream.raiseError[F](error)
+        }
+        .map(_.toDomain(exchange))
+    }
   }
+
+  private def handle[E, A, B](response: Response[Either[E, A]], context: String)(onSuccess: A => F[B]): F[B] =
+    if !response.code.isSuccess then
+      ProviderErrors
+        .fromStatus[F](Provider.Finnhub, response.code.code, response.header("Retry-After"), s"Error retrieving Finnhub $context")
+        .flatMap(F.raiseError)
+    else
+      response.body match
+        case Right(body)                                                      => onSuccess(body)
+        case Left(ResponseException.DeserializationException(body, error, _)) =>
+          F.raiseError(AppError.JsonParsingFailure(body, s"Error decoding Finnhub $context: ${error.getMessage}"))
+        case Left(_) => F.raiseError(AppError.JsonParsingFailure("", s"Error decoding Finnhub $context"))
 
   private def mapExchangeToFinnhubCode(exchange: Exchange): String = exchange match
     case Exchange.NASDAQ => "US"
@@ -224,7 +213,8 @@ object FinnhubClient {
         website = weburl,
         ipoDate = if (ipo.trim.isEmpty) None else Try(LocalDate.parse(ipo)).toOption,
         currency = estimateCurrency,
-        marketCap = (marketCapitalization * 1_000_000).longValue
+        marketCap = (marketCapitalization * 1_000_000).longValue,
+        sector = FinnhubSectorMapping.sectorFor(finnhubIndustry)
       )
   }
 

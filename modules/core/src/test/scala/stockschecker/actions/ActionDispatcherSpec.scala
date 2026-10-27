@@ -16,14 +16,14 @@ class ActionDispatcherSpec extends IOWordSpec {
   "An ActionDispatcher" should {
     "persist accepted work before returning" in {
       val jobs   = mock[JobRepository[IO]]
-      val action = Action.DeactivateSecurity(AAPL)
+      val action = Action.SetSecurityActive(AAPL, false, java.time.Instant.EPOCH)
       when(jobs.enqueue(any[Job], any[Int])).thenReturnUnit
       val captured = ArgumentCaptor.forClass(classOf[Job])
       (for {
         dispatcher <- ActionDispatcher.make(jobs)
         _          <- dispatcher.dispatch(action)
       } yield ()).asserting { _ =>
-        verify(jobs).enqueue(captured.capture(), eqTo(ActionPriority.Normal))
+        verify(jobs).enqueue(captured.capture(), eqTo(ActionPriority.Internal))
         captured.getValue.action mustBe action
         captured.getValue.availableAt mustBe ts
         captured.getValue.createdAt mustBe ts
@@ -33,7 +33,7 @@ class ActionDispatcherSpec extends IOWordSpec {
     "derive evaluation priority while preserving the caller's deterministic ID" in {
       val jobs   = mock[JobRepository[IO]]
       val id     = JobId("evaluation-job")
-      val action = Action.RefreshEvaluationPrices(AAPL, LocalDate.parse("2013-09-30"), LocalDate.parse("2026-09-30"))
+      val action = Action.RefreshEvaluationPrices(AAPL, LocalDate.parse("2026-09-30"))
       when(jobs.enqueue(any[Job], any[Int])).thenReturnUnit
       (for
         dispatcher <- ActionDispatcher.make(jobs)

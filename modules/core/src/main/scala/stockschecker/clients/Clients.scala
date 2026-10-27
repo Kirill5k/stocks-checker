@@ -7,7 +7,7 @@ import cats.syntax.functor.*
 import stockschecker.clients.finnhub.FinnhubClient
 import stockschecker.clients.twelvedata.TwelveDataClient
 import stockschecker.common.config.ClientsConfig
-import stockschecker.repositories.ProviderBudgetRepository
+import stockschecker.repositories.{DataQualityRepository, ProviderBudgetRepository}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.WebSocketStreamBackend
 
@@ -18,12 +18,14 @@ object Clients:
   def make[F[_]: {Async, Clock}](
       config: ClientsConfig,
       backend: WebSocketStreamBackend[F, Fs2Streams[F]],
-      budgets: ProviderBudgetRepository[F]
+      budgets: ProviderBudgetRepository[F],
+      quality: DataQualityRepository[F]
   ): F[Clients[F]] =
     for
       access           <- ProviderAccess.make(budgets)
+      observer         <- DatasetObserver.make(quality)
       finnhubClient    <- FinnhubClient.make[F](config.finnhub, backend, access)
       twelveDataClient <- TwelveDataClient.make(config.twelveData, backend, access)
-      marketDataClient <- MarketDataClient.make[F](finnhubClient, twelveDataClient)
+      marketDataClient <- MarketDataClient.make[F](finnhubClient, twelveDataClient, observer)
     yield new Clients[F]:
       def marketData: MarketDataClient[F] = marketDataClient

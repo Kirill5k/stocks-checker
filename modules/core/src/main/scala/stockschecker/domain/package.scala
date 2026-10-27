@@ -66,7 +66,8 @@ package object domain {
       currency: String,
       marketCap: Long,
       priceAnalyticsLastUpdatedAt: Option[Instant] = None,
-      financialMetricsLastUpdatedAt: Option[Instant] = None
+      financialMetricsLastUpdatedAt: Option[Instant] = None,
+      sector: Option[Sector] = None
   ) derives CirceCodec.AsObject
 
   final case class FinancialMetrics(

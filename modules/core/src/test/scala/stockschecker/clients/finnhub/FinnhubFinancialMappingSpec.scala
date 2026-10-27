@@ -4,7 +4,7 @@ import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
-import stockschecker.domain.{FinancialSnapshot, Ticker}
+import stockschecker.domain.*
 
 import java.time.Instant
 import scala.io.Source
@@ -17,33 +17,71 @@ class FinnhubFinancialMappingSpec extends AnyWordSpec with Matchers:
   ).toOption.get.asObject.get
 
   "FinnhubFinancialMapping" should {
-    "preserve fiscal histories without confusing cash flow and free cash flow" in {
+    "translate supported keys and units while retaining unmapped fields only in the raw response" in {
       val data = FinnhubFinancialMapping.decode(body, Ticker("AAPL"), now).toOption.flatten.get
       data.metrics.freeCashFlowPerShareTtm mustBe Some(BigDecimal("6.6855"))
-      data.snapshot.metrics("cashFlowPerShareTTM") mustBe BigDecimal("6.86253")
-      data.snapshot.annual.count(_.metric == "roa") mustBe 41
-      data.snapshot.quarterly.count(_.metric == "fcfPerShareTTM") mustBe 142
-      data.snapshot.annual.find(p => p.metric == "netMargin" && p.period.getYear == 2025).map(_.value) mustBe Some(BigDecimal("0.2692"))
-      data.metrics.profitMarginTtm mustBe Some(BigDecimal("26.92"))
-      data.snapshot.annual.find(_.metric == "netMargin").map(_.unit) mustBe Some("ratio")
-      data.snapshot.validationErrors mustBe Nil
-      data.snapshot.rawPayload must include("cashFlowPerShareTTM")
+      data.snapshot.metrics.keySet mustBe Set(
+        FinancialMetric.PriceToEarningsTtm,
+        FinancialMetric.PriceToFreeCashFlowTtm,
+        FinancialMetric.EpsTtm,
+        FinancialMetric.RevenueGrowth5Y,
+        FinancialMetric.EpsGrowth5Y
+      )
+      data.snapshot
+        .metrics(FinancialMetric.PriceToFreeCashFlowTtm) mustBe body("metric").get.hcursor.get[BigDecimal]("pfcfShareTTM").toOption.get
+      data.snapshot.metrics(FinancialMetric.RevenueGrowth5Y) mustBe BigDecimal("0.0868")
+      data.snapshot.metrics(FinancialMetric.EpsGrowth5Y) mustBe BigDecimal("0.1791")
+      data.snapshot.annual.count(_.metric == FinancialMetric.ReturnOnAssets) mustBe 41
+      data.snapshot.quarterly.count(_.metric == FinancialMetric.FreeCashFlowPerShareTtm) mustBe 142
+      data.snapshot.annual.map(_.unit).distinct mustBe List(MetricUnit.Ratio)
+      data.snapshot.quarterly.map(_.unit).distinct mustBe List(MetricUnit.PerShare)
+      FinancialMetric.PriceToFreeCashFlowTtm.unit mustBe MetricUnit.Multiple
+      data.snapshot.issues mustBe Nil
+      data.rawPayload must include("cashFlowPerShareTTM")
+      data.rawPayload must include("netMargin")
       data.snapshot.payloadHash.length mustBe 64
-      data.snapshot.mappingVersion mustBe FinancialSnapshot.FinnhubMappingVersion
-      data.snapshot.mappingVersion mustBe "finnhub-basic-financials-v1"
+      data.snapshot.mappingVersion mustBe FinnhubFinancialMapping.Version
     }
 
     "keep generic cash flow out of free cash flow when the explicit FCF series is missing" in {
       val data = FinnhubFinancialMapping.decode(body.remove("series"), Ticker("AAPL"), now).toOption.flatten.get
       data.metrics.freeCashFlowPerShareTtm mustBe None
-      data.snapshot.metrics("cashFlowPerShareTTM") mustBe BigDecimal("6.86253")
+      data.rawPayload must include("cashFlowPerShareTTM")
     }
 
-    "record malformed observations and duplicate fiscal periods as audit failures" in {
+    "record typed malformed observations, invalid series, duplicate periods and symbol mismatches" in {
       val point  = Json.obj("period" -> Json.fromString("2025-09-30"), "v" -> Json.fromBigDecimal(BigDecimal("0.2")))
-      val series = Json.obj("annual" -> Json.obj("roa" -> Json.arr(point, point, Json.obj("period" -> Json.fromString("bad")))))
-      val data   = FinnhubFinancialMapping.decode(body.add("series", series), Ticker("AAPL"), now).toOption.flatten.get
-      data.snapshot.validationErrors must contain allOf ("duplicate-period:annual:roa", "invalid-observation:annual:roa")
+      val series = Json.obj(
+        "annual" -> Json.obj(
+          "roa"       -> Json.arr(point, point, Json.obj("period" -> Json.fromString("bad"))),
+          "fcfMargin" -> Json.fromString("invalid")
+        )
+      )
+      val data = FinnhubFinancialMapping
+        .decode(body.add("series", series).add("symbol", Json.fromString("MSFT")), Ticker("AAPL"), now)
+        .toOption
+        .flatten
+        .get
+      data.snapshot.issues must contain allOf (
+        FinancialSnapshotIssue.DuplicatePeriod("annual", FinancialMetric.ReturnOnAssets),
+        FinancialSnapshotIssue.InvalidObservation("annual", FinancialMetric.ReturnOnAssets),
+        FinancialSnapshotIssue.InvalidSeries("annual", FinancialMetric.FreeCashFlowMargin),
+        FinancialSnapshotIssue.SymbolMismatch
+      )
+    }
+
+    "ignore malformed unmapped fields and unavailable null observations" in {
+      val series = Json.obj(
+        "annual" -> Json.obj(
+          "unused" -> Json.fromString("invalid"),
+          "eps"    -> Json.arr(Json.obj("period" -> Json.fromString("bad"))),
+          "roa"    -> Json.arr(Json.obj("period" -> Json.fromString("2025-09-30"), "v" -> Json.Null))
+        )
+      )
+      val data = FinnhubFinancialMapping.decode(body.add("series", series), Ticker("AAPL"), now).toOption.flatten.get
+      data.snapshot.issues mustBe Nil
+      data.snapshot.annual mustBe Nil
+      data.rawPayload must include("unused")
     }
 
     "reject a response without a metric object and preserve a valid no-data response" in {

@@ -33,12 +33,12 @@ object PriceAnalyticsAlignment:
         .filterNot(_.date.isAfter(through))
         .flatMap(candle => quotesByDate.get(candle.date).map(quote => candle -> quote))
         .nextOption()
-        .toRight(AppError.DataUnavailable(Provider.TwelveData, ticker, "adjusted and quoted histories have no common trading session"))
+        .toRight(AppError.DataUnavailable(ticker, "adjusted and quoted histories have no common trading session"))
       (endpoint, quote) = common
       _ <- Either.cond(
         ChronoUnit.DAYS.between(endpoint.date, through) <= 7,
         (),
-        AppError.DataUnavailable(Provider.TwelveData, ticker, "the latest matching trading session is more than seven days old")
+        AppError.DataUnavailable(ticker, "the latest matching trading session is more than seven days old")
       )
       aligned   = NonEmptyList(endpoint, valid.toList.filter(_.date.isBefore(endpoint.date)))
       analytics = PriceAnalyticsCalculator.fromDaily(ticker, aligned)

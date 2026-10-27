@@ -40,7 +40,8 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "currency" : "USD",
                               |  "marketCap" : 3439591971000,
                               |  "priceAnalyticsLastUpdatedAt" : null,
-                              |  "financialMetricsLastUpdatedAt" : null
+                              |  "financialMetricsLastUpdatedAt" : null,
+                              |  "sector" : null
                               |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).get(AAPL, true)
@@ -110,7 +111,8 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "currency" : "USD",
                               |  "marketCap" : 3439591971000,
                               |  "priceAnalyticsLastUpdatedAt" : null,
-                              |  "financialMetricsLastUpdatedAt" : null
+                              |  "financialMetricsLastUpdatedAt" : null,
+                              |  "sector" : null
                               |}, {
                               |  "ticker" : "MSFT",
                               |  "name" : "Microsoft Corporation",
@@ -122,7 +124,8 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "currency" : "USD",
                               |  "marketCap" : 3100000000000,
                               |  "priceAnalyticsLastUpdatedAt" : null,
-                              |  "financialMetricsLastUpdatedAt" : null
+                              |  "financialMetricsLastUpdatedAt" : null,
+                              |  "sector" : null
                               |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).getAll(None)
@@ -149,7 +152,8 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
                               |  "currency" : "USD",
                               |  "marketCap" : 3439591971000,
                               |  "priceAnalyticsLastUpdatedAt" : null,
-                              |  "financialMetricsLastUpdatedAt" : null
+                              |  "financialMetricsLastUpdatedAt" : null,
+                              |  "sector" : null
                               |}]""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).getAll(Some(1))

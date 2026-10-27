@@ -18,16 +18,13 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
   given Clock[IO]     = Clock.mock(now)
 
   private class Dependencies:
-    val stocks   = mock[StockRepository[IO]]
-    val history  = mock[FinancialHistoryRepository[IO]]
+    val stocks   = mock[StockService[IO]]
     val rankings = mock[InvestmentRankingRepository[IO]]
-    val screens  = mock[InvestmentScreenRepository[IO]]
 
-    def service: IO[InvestmentRankingService[IO]] = InvestmentRankingService.make(stocks, history, rankings, screens)
+    def service: IO[InvestmentRankingService[IO]] = InvestmentRankingService.make(stocks, rankings)
 
     def allowPruning(): Unit =
-      when(screens.rankingIds).thenReturnIO(Set.empty[InvestmentRankingId])
-      when(rankings.prune(any[Instant], any[Set[InvestmentRankingId]])).thenReturnUnit
+      when(rankings.prune(any[Instant])).thenReturnUnit
       ()
 
   "InvestmentRankingService" should {
@@ -39,7 +36,7 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
         refreshed mustBe existing
         verify(d.rankings).latest
         verifyNoMoreInteractions(d.rankings)
-        verifyNoInteractions(d.stocks, d.history, d.screens)
+        verifyNoInteractions(d.stocks)
         succeed
       }
     }
@@ -50,7 +47,7 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
       when(d.rankings.latest).thenReturnSome(existing)
       d.service.flatMap(_.refresh(date.minusDays(1))).asserting { refreshed =>
         refreshed mustBe existing
-        verifyNoInteractions(d.stocks, d.history, d.screens)
+        verifyNoInteractions(d.stocks)
         succeed
       }
     }
@@ -62,40 +59,46 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
     ).foreach { case (condition, existing) =>
       s"score the complete universe and compact its inputs before storage when there is $condition" in {
         val d           = new Dependencies
-        val observation = FinancialObservation("fcfMargin", date.minusYears(1), BigDecimal("0.2"), "ratio")
+        val observation = FinancialObservation(FinancialMetric.FreeCashFlowMargin, date.minusYears(1), BigDecimal("0.2"))
         val financial   = FinancialSnapshot(
           "facts",
           MSFT,
           Provider.Finnhub,
           now,
-          Map("peTTM" -> BigDecimal(10), "pfcfShareTTM" -> BigDecimal(12), "epsTTM" -> BigDecimal(4), "irrelevant" -> BigDecimal(999)),
+          Map(
+            FinancialMetric.PriceToEarningsTtm     -> BigDecimal(10),
+            FinancialMetric.PriceToFreeCashFlowTtm -> BigDecimal(12),
+            FinancialMetric.EpsTtm                 -> BigDecimal(4),
+            FinancialMetric.RevenueGrowth5Y        -> BigDecimal(999)
+          ),
           List(observation),
           List(observation),
-          "raw provider response",
           "hash",
           "mapping",
           Nil
         )
         when(d.rankings.latest).thenReturn(IO.pure(existing))
-        when(d.stocks.findAll(StockFilters(), None)).thenReturnIO(List(MSFTStock, AAPLStock))
-        when(d.history.findLatestAll).thenReturnIO(List(financial))
+        when(d.stocks.findInvestmentCandidates)
+          .thenReturnIO(List(InvestmentCandidate(AAPLStock, None), InvestmentCandidate(MSFTStock, Some(financial))))
         when(d.rankings.save(any[InvestmentRanking], any[List[InvestmentRankingEntry]])).thenReturnUnit
         d.allowPruning()
         d.service.flatMap(_.refresh(date)).asserting { refreshed =>
           val captured = org.mockito.ArgumentCaptor.forClass(classOf[List[InvestmentRankingEntry]])
-          val ordered  = org.mockito.Mockito.inOrder(d.rankings, d.screens)
+          val ordered  = org.mockito.Mockito.inOrder(d.rankings)
           ordered.verify(d.rankings).save(org.mockito.ArgumentMatchers.eq(refreshed), captured.capture())
-          ordered.verify(d.screens).rankingIds
-          ordered.verify(d.rankings).prune(now.minusSeconds(30L * 86400), Set.empty)
+          ordered.verify(d.rankings).prune(now.minusSeconds(30L * 86400))
           val saved = captured.getValue
           refreshed.id.value must not be empty
           refreshed.createdAt mustBe now
           refreshed.recipe mustBe recipe
           val compactFinancial = financial.copy(
-            metrics = Map("peTTM" -> BigDecimal(10), "pfcfShareTTM" -> BigDecimal(12), "epsTTM" -> BigDecimal(4)),
+            metrics = Map(
+              FinancialMetric.PriceToEarningsTtm     -> BigDecimal(10),
+              FinancialMetric.PriceToFreeCashFlowTtm -> BigDecimal(12),
+              FinancialMetric.EpsTtm                 -> BigDecimal(4)
+            ),
             annual = Nil,
-            quarterly = Nil,
-            rawPayload = ""
+            quarterly = Nil
           )
           saved.map(_.candidate) mustBe List(InvestmentCandidate(AAPLStock, None), InvestmentCandidate(MSFTStock, Some(compactFinancial)))
           saved.find(_.scorecard.ticker == MSFT).flatMap(_.scorecard.financialSnapshotId) mustBe Some(financial.id)
@@ -109,12 +112,11 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
       val d       = new Dependencies
       val failure = new RuntimeException("Input batch failed")
       when(d.rankings.latest).thenReturnNone
-      when(d.stocks.findAll(StockFilters(), None)).thenReturnIO(List(AAPLStock))
-      when(d.history.findLatestAll).thenReturnIO(Nil)
+      when(d.stocks.findInvestmentCandidates).thenReturnIO(List(InvestmentCandidate(AAPLStock, None)))
       when(d.rankings.save(any[InvestmentRanking], any[List[InvestmentRankingEntry]])).thenReturn(IO.raiseError(failure))
       d.service.flatMap(_.refresh(date)).attempt.asserting { result =>
         result mustBe Left(failure)
-        verifyNoInteractions(d.screens)
+        verify(d.rankings, never).prune(any[Instant])
         succeed
       }
     }
@@ -126,7 +128,7 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
         result mustBe Some(ranking)
         verify(d.rankings).latest
         verifyNoMoreInteractions(d.rankings)
-        verifyNoInteractions(d.stocks, d.history, d.screens)
+        verifyNoInteractions(d.stocks)
         succeed
       }
     }
@@ -166,33 +168,28 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
       when(d.rankings.findEntries(ranking.id)).thenReturnIO(List(entry))
       (for
         service  <- d.service
-        metadata <- service.get(ranking.id)
+        metadata <- service.find(ranking.id)
         entries  <- service.entries(ranking.id)
       yield (metadata, entries)).asserting { case (metadata, entries) =>
-        metadata mustBe ranking
+        metadata mustBe Some(ranking)
         entries mustBe List(entry)
       }
     }
 
-    "report when published metadata disappears" in {
+    "return no metadata when a ranking is missing" in {
       val d       = new Dependencies
       val missing = InvestmentRankingId("missing")
       when(d.rankings.find(missing)).thenReturnNone
-      d.service.flatMap(_.get(missing)).attempt.asserting { loaded =>
-        loaded.left.toOption.get mustBe a[IllegalStateException]
-        loaded.left.toOption.get.getMessage mustBe "Published investment ranking disappeared"
-      }
+      d.service.flatMap(_.find(missing)).asserting(_ mustBe None)
     }
 
-    "pass referenced rankings to repository retention" in {
-      val d          = new Dependencies
-      val before     = now.minusSeconds(30L * 86400)
-      val referenced = Set(InvestmentRankingId("screen-ranking"))
-      when(d.screens.rankingIds).thenReturnIO(referenced)
-      when(d.rankings.prune(before, referenced)).thenReturnUnit
+    "delegate pruning to the owning repository" in {
+      val d      = new Dependencies
+      val before = now.minusSeconds(30L * 86400)
+      when(d.rankings.prune(before)).thenReturnUnit
       d.service.flatMap(_.prune(before)).asserting { _ =>
-        verify(d.rankings).prune(before, referenced)
-        verifyNoInteractions(d.stocks, d.history)
+        verify(d.rankings).prune(before)
+        verifyNoInteractions(d.stocks)
         succeed
       }
     }

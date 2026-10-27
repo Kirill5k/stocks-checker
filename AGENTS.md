@@ -135,15 +135,34 @@ CommandScheduler -> CommandRepository, JobRepository
 ```
 
 *   **Resources**: Manage the HTTP client and MongoDB connection lifecycle.
-*   **Clients**: Fetch external data; dataset availability is recorded by `DataQualityService` at the service boundary. `ProviderAccess` coordinates persisted request budgets.
-*   **Repositories**: Persist and query domain data. Services own business decisions. Retention receives protected IDs for active command runs and all price jobs belonging to unsettled evaluation captures.
-*   **Services**: Coordinate repositories, clients and pure domain logic. Services access jobs through `ActionDispatcher`.
+*   **Clients**: Fetch external data; `MarketDataClient` selects providers and `DatasetObserver` records dataset availability. Provider mappings translate financial metrics and sectors into canonical domain values.
+*   **Repositories**: Persist and query domain data. Services own business decisions. Multi-collection reads use aggregate queries in the requesting service's own repository.
+*   **Services**: Coordinate repositories, clients and pure domain logic. Each aggregate repository has exactly one owning service, and services never import another aggregate's repository. Reads across aggregates go through the owning service's interface. Services access jobs through `ActionDispatcher`.
+*   **Events**: Cross-aggregate writes are internal actions dispatched through `ActionDispatcher` and delivered by `ActionHandler` to the owning service. `RecordCompanyProfileUpdate`, `RecordPriceAnalyticsUpdate`, `RecordFinancialMetricsUpdate`, `SetSecurityActive` and `SetCompanyProfileActive` update the owning aggregate when the executor handles them. These changes are eventually consistent. Activation events carry the requested state and timestamp; repositories guard updates with `activeChangedAt` to reject older requests. Internal events take priority over ordinary fan-out jobs. Internal actions cannot be scheduled as commands, including inside a `Sequence`.
 *   **Domain**: Pure investment scoring, selection and evaluation live under `domain.investment`. Price analytics live beside `PriceAnalytics`; there is no `utils` package.
 *   **Controllers**: Define Tapir endpoints and map HTTP requests and responses. Internal command scheduling state stays out of response views.
 
+Repository ownership:
+
+| Owning service | Repositories |
+| :--- | :--- |
+| `SecurityService` | `SecurityRepository` |
+| `CompanyProfileService` | `CompanyProfileRepository` |
+| `PriceService` | `PriceAnalyticsRepository`, `LatestPriceRepository` |
+| `PriceHistoryService` | `PriceHistoryRepository` |
+| `FinancialMetricsService` | `FinancialMetricsRepository`, `FinancialHistoryRepository` |
+| `StockService` | `StockRepository` (the joined stock read model) |
+| `CommandService` | `CommandRepository` |
+| `DataQualityService` | `DataQualityRepository` (availability and joined report reads) |
+| `InvestmentRankingService` | `InvestmentRankingRepository` |
+| `InvestmentScreenService` | `InvestmentScreenRepository` |
+| `InvestmentEvaluationService` | `InvestmentEvaluationRepository` |
+
+The composition root wires repositories into their owners. Job execution, command scheduling and provider-budget coordination remain infrastructure concerns handled by `ActionDispatcher`, `ActionExecutor`, `CommandScheduler` and `ProviderAccess`. `ProviderAccess` owns persisted request budgets. `DatasetObserver` records dataset availability inside `MarketDataClient` through `DataQualityRepository`; `DataQualityService` uses the same repository to aggregate availability, excluded securities and the latest published ranking into its report.
+
 ### Storage assumptions
 
-This code targets a first deployment with an empty database. Persistence entities use the current schema; there are no legacy decoders, startup backfills or migrations. Monthly evaluation documents track both pending and settled captures in `investment-evaluations`; reads do not create captures or jobs. `InvestmentRankingRepository` owns `investment-rankings` and `investment-ranking-inputs`, publishing metadata only after all entries are stored.
+This code targets a first deployment with an empty database. Persistence entities use the current schema; there are no legacy decoders, startup backfills or migrations. Monthly evaluation documents track both pending and settled captures in `investment-evaluations`; reads do not create captures or jobs. Each capture stores its dispatched history requests in an internal `requestedHistory` list, updated atomically after dispatch and preserved across report saves. Resuming that capture does not recreate pruned history jobs, so job retention does not depend on evaluations. `InvestmentRankingRepository` owns `investment-rankings` and `investment-ranking-inputs`, publishing metadata only after all entries are stored.
 
 ### Controller Security
 

@@ -36,33 +36,18 @@ object Services:
       maxQuarterlyAgeDays = investmentConfig.quarterlyFreshnessDays
     )
     for
-      _        <- Async[F].fromEither(recipe.validate.left.map(stockschecker.domain.errors.AppError.FailedValidation(_)))
-      rankings <- InvestmentRankingService.make(
-        repos.stock,
-        repos.financialHistory,
-        repos.investmentRankings,
-        repos.investmentScreens,
-        recipe
-      )
-      quality <- DataQualityService.make(repos.dataQuality, repos.security, rankings)
-      s       <- SecurityService.make(repos.security, clients.marketData)
-      cp      <- CompanyProfileService.make(repos.companyProfile, clients.marketData, repos.security, quality)
-      history <- PriceHistoryService.make(clients.marketData, repos.priceHistory, quality)
-      p       <- PriceService.make(repos.priceAnalytics, repos.latestPrice, repos.companyProfile, history)
-      c       <- CommandService.make(repos.command, ad)
-      st      <- StockService.make(repos.stock, repos.security, repos.companyProfile)
-      fm <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, repos.companyProfile, repos.financialHistory, quality)
-      evaluations <- InvestmentEvaluationService.make(
-        repos.investmentScreens,
-        repos.investmentEvaluations,
-        history,
-        ad
-      )
-      investment <- InvestmentScreenService.make(
-        repos.investmentScreens,
-        rankings,
-        recipe
-      )
+      _           <- Async[F].fromEither(recipe.validate.left.map(stockschecker.domain.errors.AppError.FailedValidation(_)))
+      st          <- StockService.make(repos.stock, ad)
+      rankings    <- InvestmentRankingService.make(st, repos.investmentRankings, recipe)
+      s           <- SecurityService.make(repos.security, clients.marketData, ad)
+      quality     <- DataQualityService.make(repos.dataQuality)
+      cp          <- CompanyProfileService.make(repos.companyProfile, clients.marketData, ad)
+      history     <- PriceHistoryService.make(clients.marketData, repos.priceHistory)
+      p           <- PriceService.make(repos.priceAnalytics, repos.latestPrice, ad, history)
+      c           <- CommandService.make(repos.command, ad)
+      fm          <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, ad, repos.financialHistory)
+      investment  <- InvestmentScreenService.make(repos.investmentScreens, rankings, recipe)
+      evaluations <- InvestmentEvaluationService.make(investment, repos.investmentEvaluations, history, ad)
     yield new Services[F]:
       override def security: SecurityService[F]                          = s
       override def companyProfile: CompanyProfileService[F]              = cp

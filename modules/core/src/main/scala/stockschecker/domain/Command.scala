@@ -37,6 +37,10 @@ final case class Command(
     nextRunAt: Option[Instant] = None,
     activeRunId: Option[JobId] = None
 ) derives Codec.AsObject {
+  def runId(at: Instant): JobId = JobId(s"${id.value}:$version:${at.toEpochMilli}")
+
+  def ownsRun(run: JobId): Boolean = run.value.startsWith(s"${id.value}:$version:")
+
   def durationUntilNextExecution(now: Instant): FiniteDuration =
     lastExecutedAt
       .map(schedule.nextExecutionTime)

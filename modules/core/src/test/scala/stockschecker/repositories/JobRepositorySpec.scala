@@ -13,14 +13,26 @@ import java.time.temporal.ChronoUnit
 import scala.concurrent.duration.*
 
 class JobRepositorySpec extends RepositorySpec {
-  override def port: Int        = 12156
-  private val action            = Action.DeactivateSecurity(AAPL)
-  private val evaluationThrough = LocalDate.parse("2026-01-01")
-  private val evaluationAction  = Action.RefreshEvaluationPrices(AAPL, LocalDate.parse("2013-01-01"), evaluationThrough)
+  override def port: Int                                           = 12156
+  private val action                                               = Action.SetSecurityActive(AAPL, false, java.time.Instant.EPOCH)
+  private val evaluationThrough                                    = LocalDate.parse("2026-01-01")
+  private val evaluationAction                                     = Action.RefreshEvaluationPrices(AAPL, evaluationThrough)
   private def enqueue(jobs: JobRepository[IO])(job: Job): IO[Unit] = jobs.enqueue(job, ActionPriority.forAction(job.action))
 
   "Durable jobs" should {
-    "retain protected completed roots until the caller releases them" in withEmbeddedMongoDatabase { db =>
+    "preserve sub-millisecond activation request timestamps through persistence and claiming" in withEmbeddedMongoDatabase { db =>
+      val event = Action.SetSecurityActive(AAPL, true, ts.plusNanos(123456))
+      for
+        jobs    <- JobRepository.make[IO](db)
+        _       <- enqueue(jobs)(Job(JobId("activation"), event, ts, ts))
+        saved   <- jobs.find(JobId("activation"))
+        claimed <- jobs.claim(ts, 2.minutes)
+      yield
+        saved.map(_.action) mustBe Some(event)
+        claimed.map(_.action) mustBe Some(event)
+    }
+
+    "prune expired evaluation history jobs without consulting domain state" in withEmbeddedMongoDatabase { db =>
       val expiredAt = ts.minusSeconds(31.days.toSeconds)
       for {
         jobs <- JobRepository.make[IO](db)
@@ -34,14 +46,9 @@ class JobRepositorySpec extends RepositorySpec {
             completedAt = Some(expiredAt)
           )
         )
-        _            <- jobs.pruneCompleted(ts, Set(JobId("needed")))
-        protectedJob <- jobs.find(JobId("needed"))
-        _            <- jobs.pruneCompleted(ts, Set.empty)
-        expired      <- jobs.find(JobId("needed"))
-      } yield {
-        protectedJob.map(_.state) mustBe Some(Job.Failed)
-        expired mustBe None
-      }
+        _       <- jobs.pruneCompleted(ts)
+        expired <- jobs.find(JobId("needed"))
+      } yield expired mustBe None
     }
 
     "aggregate child outcomes while preserving missing children as unfinished" in withEmbeddedMongoDatabase { db =>
@@ -61,23 +68,26 @@ class JobRepositorySpec extends RepositorySpec {
       }
     }
 
-    "claim normal updates before evaluation backfills and break due-time ties deterministically" in withEmbeddedMongoDatabase { db =>
-      val evaluation = Action.RefreshEvaluationPrices(AAPL, LocalDate.parse("2020-01-01"), LocalDate.parse("2026-01-01"))
-      for {
-        jobs <- JobRepository.make[IO](db)
-        _    <- List(
-          Job(JobId("z"), action, ts, ts),
-          Job(JobId("a"), action, ts, ts),
-          Job(JobId("first"), action, ts.minusSeconds(1), ts),
-          Job(JobId("evaluation"), evaluation, ts.minusSeconds(60), ts),
-          Job(JobId("future"), action, ts.plusSeconds(60), ts)
-        ).traverse_(enqueue(jobs))
-        claimed <- List.fill(4)(()).traverse(_ => jobs.claim(ts, 2.minutes))
-        none    <- jobs.claim(ts, 2.minutes)
-      } yield {
-        claimed.flatten.map(_.id) mustBe List("first", "a", "z", "evaluation").map(JobId(_))
-        none mustBe None
-      }
+    "claim internal events before fan-out work, then evaluation backfills, breaking due-time ties deterministically" in withEmbeddedMongoDatabase {
+      db =>
+        val normal     = Action.UpdatePriceAnalytics(cats.data.NonEmptyList.one(AAPL))
+        val evaluation = Action.RefreshEvaluationPrices(AAPL, LocalDate.parse("2026-01-01"))
+        for {
+          jobs <- JobRepository.make[IO](db)
+          _    <- List(
+            Job(JobId("z"), normal, ts, ts),
+            Job(JobId("a"), normal, ts, ts),
+            Job(JobId("first"), normal, ts.minusSeconds(1), ts),
+            Job(JobId("internal"), action, ts, ts),
+            Job(JobId("evaluation"), evaluation, ts.minusSeconds(60), ts),
+            Job(JobId("future"), action, ts.plusSeconds(60), ts)
+          ).traverse_(enqueue(jobs))
+          claimed <- List.fill(5)(()).traverse(_ => jobs.claim(ts, 2.minutes))
+          none    <- jobs.claim(ts, 2.minutes)
+        } yield {
+          claimed.flatten.map(_.id) mustBe List("internal", "first", "a", "z", "evaluation").map(JobId(_))
+          none mustBe None
+        }
     }
 
     "persist parent polling deadlines and wait counts without consuming execution retries" in withEmbeddedMongoDatabase { db =>
@@ -118,7 +128,7 @@ class JobRepositorySpec extends RepositorySpec {
           Job(JobId("finished/0"), action, expiredAt, expiredAt, state = Job.Failed, completedAt = Some(expiredAt)),
           Job(JobId("recent"), action, ts, ts, state = Job.Succeeded, completedAt = Some(ts))
         ).traverse_(enqueue(jobs))
-        _            <- jobs.pruneCompleted(ts, Set.empty)
+        _            <- jobs.pruneCompleted(ts)
         kept         <- jobs.find(JobId("waiting/0"))
         removedRoot  <- jobs.find(JobId("finished"))
         removedChild <- jobs.find(JobId("finished/0"))
@@ -136,7 +146,7 @@ class JobRepositorySpec extends RepositorySpec {
       for {
         jobs   <- JobRepository.make[IO](db)
         _      <- enqueue(jobs)(Job(JobId("same"), action, now, now))
-        _      <- enqueue(jobs)(Job(JobId("same"), Action.DeactivateSecurity(MSFT), now, now))
+        _      <- enqueue(jobs)(Job(JobId("same"), Action.SetSecurityActive(MSFT, false, java.time.Instant.EPOCH), now, now))
         claims <- (jobs.claim(now, 2.minutes), jobs.claim(now, 2.minutes)).parTupled
         first = List(claims._1, claims._2).flatten.head
         recovered <- jobs.claim(now.plusSeconds(121), 2.minutes).map(_.get)

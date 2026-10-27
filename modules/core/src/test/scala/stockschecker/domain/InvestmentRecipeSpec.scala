@@ -9,9 +9,9 @@ class InvestmentRecipeSpec extends AnyWordSpec with Matchers {
       val recipe = InvestmentRecipe()
       recipe.validate mustBe Right(())
       recipe.weights mustBe Map(
-        Pillar.Quality -> BigDecimal("0.35"),
-        Pillar.Value -> BigDecimal("0.30"),
-        Pillar.Growth -> BigDecimal("0.20"),
+        Pillar.Quality    -> BigDecimal("0.35"),
+        Pillar.Value      -> BigDecimal("0.30"),
+        Pillar.Growth     -> BigDecimal("0.20"),
         Pillar.Resilience -> BigDecimal("0.15")
       )
       List(

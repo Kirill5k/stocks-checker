@@ -9,7 +9,7 @@ import kirill5k.common.syntax.time.*
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.investment.InvestmentScorer
-import stockschecker.repositories.{FinancialHistoryRepository, InvestmentRankingRepository, InvestmentScreenRepository, StockRepository}
+import stockschecker.repositories.InvestmentRankingRepository
 
 import java.time.{Instant, LocalDate, ZoneOffset}
 
@@ -18,15 +18,12 @@ trait InvestmentRankingService[F[_]]:
   def latestAvailable: F[Option[InvestmentRanking]]
   def refresh(date: LocalDate): F[InvestmentRanking]
   def find(id: InvestmentRankingId): F[Option[InvestmentRanking]]
-  def get(id: InvestmentRankingId): F[InvestmentRanking]
   def entries(id: InvestmentRankingId): F[List[InvestmentRankingEntry]]
   def prune(before: Instant): F[Unit]
 
 final private class LiveInvestmentRankingService[F[_]: {Sync, Clock}](
-    stockRepository: StockRepository[F],
-    financialHistory: FinancialHistoryRepository[F],
+    stocks: StockService[F],
     rankings: InvestmentRankingRepository[F],
-    screens: InvestmentScreenRepository[F],
     recipe: InvestmentRecipe
 ) extends InvestmentRankingService[F]:
   override def latestAvailable: F[Option[InvestmentRanking]] = rankings.latest
@@ -52,12 +49,9 @@ final private class LiveInvestmentRankingService[F[_]: {Sync, Clock}](
         case Some(value) => value.pure[F]
         case None        =>
           for
-            stocks     <- stockRepository.findAll(StockFilters(), None)
-            snapshots  <- financialHistory.findLatestAll
+            candidates <- stocks.findInvestmentCandidates
             capturedAt <- Clock[F].now
             id         <- Sync[F].delay(InvestmentRankingId.gen)
-            byTicker          = snapshots.map(s => s.ticker -> s).toMap
-            candidates        = stocks.sortBy(_.security.ticker.value).map(s => InvestmentCandidate(s, byTicker.get(s.security.ticker)))
             scorecards        = InvestmentScorer.rank(candidates, capturedAt, recipe)
             candidateByTicker = candidates.map(c => c.stock.security.ticker -> c).toMap
             entries           = scorecards.map(card => InvestmentRankingEntry(candidateByTicker(card.ticker).compact, card))
@@ -69,19 +63,14 @@ final private class LiveInvestmentRankingService[F[_]: {Sync, Clock}](
 
   override def find(id: InvestmentRankingId): F[Option[InvestmentRanking]] = rankings.find(id)
 
-  override def get(id: InvestmentRankingId): F[InvestmentRanking] =
-    find(id).flatMap(Sync[F].fromOption(_, new IllegalStateException("Published investment ranking disappeared")))
-
   override def entries(id: InvestmentRankingId): F[List[InvestmentRankingEntry]] = rankings.findEntries(id)
 
-  override def prune(before: Instant): F[Unit] = screens.rankingIds.flatMap(rankings.prune(before, _))
+  override def prune(before: Instant): F[Unit] = rankings.prune(before)
 
 object InvestmentRankingService:
   def make[F[_]: {Sync, Clock}](
-      stockRepository: StockRepository[F],
-      financialHistory: FinancialHistoryRepository[F],
+      stocks: StockService[F],
       rankings: InvestmentRankingRepository[F],
-      screens: InvestmentScreenRepository[F],
       recipe: InvestmentRecipe = InvestmentRecipe()
   ): F[InvestmentRankingService[F]] =
-    Sync[F].pure(LiveInvestmentRankingService(stockRepository, financialHistory, rankings, screens, recipe))
+    Sync[F].pure(LiveInvestmentRankingService(stocks, rankings, recipe))

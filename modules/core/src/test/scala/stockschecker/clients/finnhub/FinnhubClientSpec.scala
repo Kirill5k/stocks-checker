@@ -6,7 +6,7 @@ import cats.effect.{Deferred, IO}
 import kirill5k.common.sttp.test.Sttp4WordSpec
 import stockschecker.clients.{ProviderAccess, ProviderLimits}
 import stockschecker.common.config.FinnhubClientConfig
-import stockschecker.domain.{CompanyProfile, Exchange, FinancialMetrics, Security, SecurityKind, Ticker}
+import stockschecker.domain.{CompanyProfile, Exchange, FinancialMetrics, Sector, Security, SecurityKind, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.ProviderBudgetRepository
 import sttp.client4.testing.ResponseStub
@@ -113,7 +113,8 @@ class FinnhubClientSpec extends Sttp4WordSpec {
               website = "https://www.apple.com/",
               ipoDate = Some(LocalDate.parse("1980-12-12")),
               currency = "USD",
-              marketCap = 3989245252568L
+              marketCap = 3989245252568L,
+              sector = Some(Sector.Technology)
             )
           )
         }
@@ -229,6 +230,79 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
         result.attempt.asserting { response =>
           response.left.toOption.get mustBe a[AppError.ProviderDeferred]
+        }
+      }
+    }
+
+    "response handling" should {
+      val requests: List[(String, FinnhubClient[IO] => IO[Unit])] = List(
+        "profiles"   -> (_.getCompanyProfile(Ticker("AAPL")).void),
+        "financials" -> (_.getFinancialData(Ticker("AAPL")).void),
+        "listings"   -> (_.getListedSecurities(Exchange.NASDAQ).compile.drain)
+      )
+      requests.foreach { case (name, request) =>
+        List(StatusCode.NotFound, StatusCode.Unauthorized, StatusCode.Forbidden, StatusCode.TooManyRequests, StatusCode.ServiceUnavailable)
+          .foreach { status =>
+            s"map HTTP ${status.code} for $name through provider errors" in {
+              val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust("provider failure", status))
+              (for
+                access <- providerAccess
+                client <- FinnhubClient.make[IO](config, backend, access)
+                result <- request(client).attempt
+              yield result).asserting { result =>
+                val error = result.left.toOption.get
+                status match
+                  case StatusCode.Unauthorized | StatusCode.Forbidden => error mustBe a[AppError.ProviderConfiguration]
+                  case StatusCode.TooManyRequests                     => error mustBe a[AppError.ProviderDeferred]
+                  case _                                              =>
+                    error mustBe a[AppError.HttpClient]
+                    error.asInstanceOf[AppError.HttpClient].status mustBe status.code
+                error.getMessage must include(if name == "listings" then "NASDAQ" else "AAPL")
+                error.getMessage must include(name match
+                  case "profiles"   => "company profile"
+                  case "financials" => "basic financials"
+                  case _            => "listed securities")
+              }
+            }
+          }
+      }
+
+      "retain exchange context when a listed securities body cannot be decoded" in {
+        val body    = Stream.emit("not json").through(fs2.text.utf8.encode)
+        val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(body))
+        (for
+          access <- providerAccess
+          client <- FinnhubClient.make[IO](config, backend, access)
+          result <- client.getListedSecurities(Exchange.NASDAQ).compile.toList.attempt
+        yield result).asserting { result =>
+          result.left.toOption.get mustBe a[AppError.JsonParsingFailure]
+          result.left.toOption.get.getMessage must include("listed securities for NASDAQ")
+        }
+      }
+
+      "preserve transport failures while consuming a listed securities body" in {
+        val failure = new java.io.IOException("connection interrupted")
+        val body    = Stream.raiseError[IO](failure)
+        val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(body))
+        (for
+          access <- providerAccess
+          client <- FinnhubClient.make[IO](config, backend, access)
+          result <- client.getListedSecurities(Exchange.NASDAQ).compile.toList.attempt
+        yield result).asserting(_ mustBe Left(failure))
+      }
+
+      requests.take(2).foreach { case (name, request) =>
+        s"report malformed successful $name responses as decoding failures" in {
+          val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust("not json"))
+          (for
+            access <- providerAccess
+            client <- FinnhubClient.make[IO](config, backend, access)
+            result <- request(client).attempt
+          yield result).asserting { result =>
+            result.left.toOption.get mustBe a[AppError.JsonParsingFailure]
+            result.left.toOption.get.getMessage must include("AAPL")
+            result.left.toOption.get.getMessage must include(if name == "profiles" then "company profile" else "basic financials")
+          }
         }
       }
     }

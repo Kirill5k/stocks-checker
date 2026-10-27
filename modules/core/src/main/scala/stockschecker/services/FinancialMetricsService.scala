@@ -1,22 +1,23 @@
 package stockschecker.services
 
+import cats.data.NonEmptyList
 import cats.effect.Sync
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import stockschecker.clients.MarketDataClient
+import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.{FinancialMetrics, Provider, Ticker}
-import stockschecker.repositories.{CompanyProfileRepository, FinancialHistoryRepository, FinancialMetricsRepository}
+import stockschecker.domain.{FinancialMetrics, Ticker}
+import stockschecker.repositories.{FinancialHistoryRepository, FinancialMetricsRepository}
 
 trait FinancialMetricsService[F[_]]:
   def find(ticker: Ticker, fetch: Boolean): F[FinancialMetrics]
 
 final private class LiveFinancialMetricsService[F[_]](
-    private val repository: FinancialMetricsRepository[F],
+    private val metricsRepository: FinancialMetricsRepository[F],
     private val client: MarketDataClient[F],
-    private val profiles: CompanyProfileRepository[F],
-    private val history: FinancialHistoryRepository[F],
-    private val quality: DataQualityService[F]
+    private val dispatcher: ActionDispatcher[F],
+    private val historyRepository: FinancialHistoryRepository[F]
 )(using
     F: Sync[F]
 ) extends FinancialMetricsService[F] {
@@ -24,13 +25,14 @@ final private class LiveFinancialMetricsService[F[_]](
   override def find(ticker: Ticker, fetch: Boolean): F[FinancialMetrics] =
     val result =
       if fetch then
-        quality.observe(ticker, Provider.Finnhub, "financials")(client.getFinancialData(ticker))(_.nonEmpty).flatMap {
+        client.getFinancialData(ticker).flatMap {
           case Some(data) =>
-            history.save(data.snapshot) >> repository.save(List(data.metrics)) >>
-              profiles.updateFinancialMetricsLastUpdated(List(ticker)).as(Some(data.metrics))
+            historyRepository.save(data.snapshot, data.rawPayload) >>
+              metricsRepository.save(List(data.metrics)) >>
+              dispatcher.dispatch(Action.RecordFinancialMetricsUpdate(NonEmptyList.one(ticker))).as(Some(data.metrics))
           case None => F.pure(None)
         }
-      else repository.find(ticker)
+      else metricsRepository.find(ticker)
     result.flatMap(value => F.fromOption(value, AppError.FinancialMetricsNotFound(ticker)))
 }
 
@@ -38,8 +40,7 @@ object FinancialMetricsService:
   def make[F[_]: Sync](
       repository: FinancialMetricsRepository[F],
       client: MarketDataClient[F],
-      profiles: CompanyProfileRepository[F],
-      history: FinancialHistoryRepository[F],
-      quality: DataQualityService[F]
+      dispatcher: ActionDispatcher[F],
+      history: FinancialHistoryRepository[F]
   ): F[FinancialMetricsService[F]] =
-    Sync[F].pure(LiveFinancialMetricsService[F](repository, client, profiles, history, quality))
+    Sync[F].pure(LiveFinancialMetricsService[F](repository, client, dispatcher, history))

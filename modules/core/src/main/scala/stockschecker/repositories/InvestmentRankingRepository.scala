@@ -19,7 +19,7 @@ trait InvestmentRankingRepository[F[_]]:
   def find(id: InvestmentRankingId): F[Option[InvestmentRanking]]
   def findEntries(id: InvestmentRankingId): F[List[InvestmentRankingEntry]]
   def latest: F[Option[InvestmentRanking]]
-  def prune(before: Instant, referenced: Set[InvestmentRankingId]): F[Unit]
+  def prune(before: Instant): F[Unit]
 
 final private class LiveInvestmentRankingRepository[F[_]: MonadThrow](
     private val collection: MongoCollection[F, InvestmentRankingEntity],
@@ -47,32 +47,35 @@ final private class LiveInvestmentRankingRepository[F[_]: MonadThrow](
 
   override def findEntries(id: InvestmentRankingId): F[List[InvestmentRankingEntry]] =
     inputs
-      .find(Filter.eq(Field.rankingId, id.value))
-      .sort(Sort.asc(Field.ordinal))
+      .find(Filter.eq(Field.RankingId, id.value))
+      .sort(Sort.asc(Field.Ordinal))
       .all
       .mapList(row => InvestmentRankingEntry(row.candidate, row.scorecard))
 
   override def latest: F[Option[InvestmentRanking]] =
-    collection.find.sort(Sort.desc(Field.createdAt)).first.mapOpt(_.toDomain)
+    collection.find.sort(Sort.desc(Field.CreatedAt)).first.mapOpt(_.toDomain)
 
-  override def prune(before: Instant, referenced: Set[InvestmentRankingId]): F[Unit] =
+  override def prune(before: Instant): F[Unit] =
     for
       obsolete <- collection
         .aggregate[InvestmentRankingIdEntity](
           Aggregate
-            .matchBy(Filter.lt(Field.createdAt, before) && Filter.nin(Field.id, referenced.toList.map(_.value)))
-            .project(Projection.include(Field.id))
+            .matchBy(Filter.lt(Field.CreatedAt, before))
+            .lookup(InvestmentScreenRepository.CollectionName, Field.Id, InvestmentScreenRepository.Field.RankingId, Field.ScreenReferences)
+            .matchBy(Filter.size(Field.ScreenReferences, 0))
+            .project(Projection.include(Field.Id))
         )
         .all
         .map(_.map(_._id).toList)
       _ <- MonadThrow[F].whenA(obsolete.nonEmpty)(
-        inputs.deleteMany(Filter.in(Field.rankingId, obsolete)).void >> collection.deleteMany(Filter.in(Field.id, obsolete)).void
+        inputs.deleteMany(Filter.in(Field.RankingId, obsolete)).void >>
+          collection.deleteMany(Filter.in(Field.Id, obsolete)).void
       )
       published <- collection
-        .aggregate[InvestmentRankingIdEntity](Aggregate.project(Projection.include(Field.id)))
+        .aggregate[InvestmentRankingIdEntity](Aggregate.project(Projection.include(Field.Id)))
         .all
         .map(_.map(_._id).toList)
-      _ <- inputs.deleteMany(Filter.nin(Field.rankingId, published) && Filter.lt(Field.createdAt, before))
+      _ <- inputs.deleteMany(Filter.nin(Field.RankingId, published) && Filter.lt(Field.CreatedAt, before))
     yield ()
 }
 
@@ -81,16 +84,17 @@ object InvestmentRankingRepository extends MongoJsonCodecs:
   val InputsCollectionName = "investment-ranking-inputs"
 
   object Field:
-    val id        = "_id"
-    val createdAt = "createdAt"
-    val rankingId = "rankingId"
-    val ordinal   = "ordinal"
+    val Id               = "_id"
+    val CreatedAt        = "createdAt"
+    val RankingId        = "rankingId"
+    val Ordinal          = "ordinal"
+    val ScreenReferences = "screenReferences"
 
   def make[F[_]: MonadThrow](db: MongoDatabase[F]): F[InvestmentRankingRepository[F]] =
     for
       rawCollection <- db.getCollectionWithCodec[InvestmentRankingEntity](CollectionName)
       collection = rawCollection.withAddedCodec[InvestmentRankingIdEntity]
       inputs <- db.getCollectionWithCodec[InvestmentRankingInputEntity](InputsCollectionName)
-      _      <- collection.createIndex(Index.descending(Field.createdAt))
-      _      <- inputs.createIndex(Index.ascending(Field.rankingId))
+      _      <- collection.createIndex(Index.descending(Field.CreatedAt))
+      _      <- inputs.createIndex(Index.ascending(Field.RankingId))
     yield LiveInvestmentRankingRepository[F](collection, inputs)

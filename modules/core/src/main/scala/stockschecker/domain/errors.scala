@@ -32,8 +32,8 @@ object errors {
     final case class ProviderConfiguration(provider: Provider, message: String) extends AppError
 
     /** Missing market observations use bounded job retries, unlike provider quota deferrals. */
-    final case class DataUnavailable(provider: Provider, ticker: Ticker, reason: String) extends AppError:
-      override def message: String = s"${provider.print} data unavailable for $ticker: $reason"
+    final case class DataUnavailable(ticker: Ticker, reason: String) extends AppError:
+      override def message: String = s"Data unavailable for $ticker: $reason"
 
     final case class HttpClient(name: String, status: Int, error: String) extends AppError:
       override def message: String = s"$name HTTP $status - $error"

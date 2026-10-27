@@ -105,25 +105,23 @@ final case class InvestmentEvaluation(
     sources: List[Provider],
     priceEvidence: List[EvaluationPriceEvidence] = Nil,
     pendingDataJobs: List[JobId] = Nil,
-    dataThrough: Option[LocalDate] = None,
-    captureMonth: Option[YearMonth] = None,
+    dataThrough: LocalDate,
+    captureMonth: YearMonth,
     // A settled monthly capture stops fetching; it may still contain unaudited or missing data.
     settled: Boolean = false
 ) derives Codec.AsObject {
   def isComplete: Boolean =
-    pendingDataJobs.isEmpty && dataThrough.nonEmpty && horizons.nonEmpty &&
+    pendingDataJobs.isEmpty && horizons.nonEmpty &&
       horizons.forall(h =>
         h.entryDate.nonEmpty && h.cohorts.nonEmpty && h.cohorts.forall(c => c.status != EvaluationStatus.Incomplete && c.missing.isEmpty)
       )
 
   def isFinished: Boolean =
     settled && horizons.nonEmpty &&
-      dataThrough.exists(through =>
-        horizons.forall { horizon =>
-          val lastPossibleExit = horizon.targetDate.plusDays(if horizon.entryDate.isEmpty then 14 else 7)
-          horizon.exitDate.exists(date => !date.isAfter(through)) || !lastPossibleExit.isAfter(through)
-        }
-      )
+      horizons.forall { horizon =>
+        val lastPossibleExit = horizon.targetDate.plusDays(if horizon.entryDate.isEmpty then 14 else 7)
+        horizon.exitDate.exists(date => !date.isAfter(dataThrough)) || !lastPossibleExit.isAfter(dataThrough)
+      }
 }
 
 object InvestmentEvaluation:

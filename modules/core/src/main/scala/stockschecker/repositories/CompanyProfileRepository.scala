@@ -25,8 +25,7 @@ trait CompanyProfileRepository[F[_]]:
   def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): F[List[Ticker]]
   def updatePriceAnalyticsLastUpdated(tickers: List[Ticker]): F[Unit]
   def updateFinancialMetricsLastUpdated(tickers: List[Ticker]): F[Unit]
-  def deactivate(ticker: Ticker): F[Unit]
-  def activate(ticker: Ticker): F[Unit]
+  def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit]
 
 final private class LiveCompanyProfileRepository[F[_]](
     private val collection: MongoCollection[F, CompanyProfileEntity]
@@ -46,6 +45,7 @@ final private class LiveCompanyProfileRepository[F[_]](
         .set(Field.Name, cp.name)
         .set(Field.Country, cp.country)
         .set(Field.Industry, cp.industry)
+        .set(Field.Sector, cp.sector.map(_.print))
         .set(Field.Description, cp.description)
         .set(Field.Website, cp.website)
         .set(Field.IpoDate, cp.ipoDate)
@@ -114,16 +114,14 @@ final private class LiveCompanyProfileRepository[F[_]](
         .void
     }
 
-  override def deactivate(ticker: Ticker): F[Unit] =
+  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit] =
     collection
       .updateOne(
-        Filter.idEq(ticker.value),
-        Update.set(Field.IsActive, false).currentDate(Field.UpdatedAt)
+        Filter.idEq(ticker.value) &&
+          (Filter.isNull(Field.ActiveChangedAt) || Filter.lt(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))),
+        Update.set(Field.IsActive, active).set(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt)).currentDate(Field.UpdatedAt)
       )
       .void
-
-  override def activate(ticker: Ticker): F[Unit] =
-    collection.updateOne(Filter.idEq(ticker.value), Update.set(Field.IsActive, true).currentDate(Field.UpdatedAt)).void
 
   extension (f: CompanyProfileFilter)
     private def toFilter: F[Filter] = f match
@@ -163,8 +161,10 @@ object CompanyProfileRepository extends MongoJsonCodecs:
     val Id                            = "_id"
     val Name                          = "name"
     val IsActive                      = "isActive"
+    val ActiveChangedAt               = "activeChangedAt"
     val Country                       = "country"
     val Industry                      = "industry"
+    val Sector                        = "sector"
     val Description                   = "description"
     val Website                       = "website"
     val IpoDate                       = "ipoDate"

@@ -3,7 +3,7 @@ package stockschecker.repositories
 import stockschecker.domain.DatasetStatus
 import stockschecker.domain.ListingStatus
 import stockschecker.domain.Provider
-import io.circe.Codec
+import io.circe.{Codec, Decoder, Encoder, Json}
 import mongo4cats.bson.ObjectId
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
@@ -13,9 +13,13 @@ import stockschecker.domain.{
   CommandId,
   CompanyProfile,
   CreateCommand,
+  DataQualityReport,
+  Dataset,
   DatasetAvailability,
   Exchange,
+  ExcludedSecurity,
   FinancialMetrics,
+  FinancialSnapshot,
   InvestmentCandidate,
   InvestmentCohort,
   InvestmentEvaluation,
@@ -38,6 +42,7 @@ import stockschecker.domain.{
   PriceHistorySnapshot,
   PricePerformanceSummary,
   Schedule,
+  Sector,
   Security,
   SecurityKind,
   Stock,
@@ -63,7 +68,8 @@ private[repositories] object entities extends MongoJsonCodecs {
       createdAt: Instant,
       updatedAt: Instant,
       listingStatus: ListingStatus,
-      exclusionReason: Option[String] = None
+      exclusionReason: Option[String] = None,
+      activeChangedAt: Option[String] = None
   ) derives Codec.AsObject:
     def toDomain: Security =
       Security(
@@ -86,6 +92,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       name: String,
       country: String,
       industry: String,
+      sector: Option[Sector],
       description: Option[String],
       website: String,
       ipoDate: Option[LocalDate],
@@ -94,7 +101,8 @@ private[repositories] object entities extends MongoJsonCodecs {
       priceAnalyticsLastUpdatedAt: Option[Instant],
       financialMetricsLastUpdatedAt: Option[Instant],
       createdAt: Instant,
-      updatedAt: Instant
+      updatedAt: Instant,
+      activeChangedAt: Option[String] = None
   ) derives Codec.AsObject:
     def toDomain: CompanyProfile =
       CompanyProfile(
@@ -102,6 +110,7 @@ private[repositories] object entities extends MongoJsonCodecs {
         name = name,
         country = country,
         industry = industry,
+        sector = sector,
         description = description,
         website = website,
         ipoDate = ipoDate,
@@ -113,6 +122,22 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   object CompanyProfileEntity:
     given MongoCodecProvider[CompanyProfileEntity] = deriveCirceCodecProvider[CompanyProfileEntity]
+
+  final case class FinancialHistoryEntity(snapshot: FinancialSnapshot, rawPayload: String)
+
+  object FinancialHistoryEntity:
+    // Reuse the canonical snapshot codec so its flat Mongo representation matches joined snapshot reads.
+    given Codec.AsObject[FinancialHistoryEntity] = Codec.AsObject.from(
+      Decoder.instance(cursor =>
+        for
+          snapshot   <- cursor.as[FinancialSnapshot]
+          rawPayload <- cursor.get[String]("rawPayload")
+        yield FinancialHistoryEntity(snapshot, rawPayload)
+      ),
+      Encoder.AsObject.instance(entity =>
+        Encoder.AsObject[FinancialSnapshot].encodeObject(entity.snapshot).add("rawPayload", Json.fromString(entity.rawPayload))
+      )
+    )
 
   final case class LatestPriceEntity(
       _id: String,
@@ -187,11 +212,6 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   object FinancialMetricsEntity:
     given MongoCodecProvider[FinancialMetricsEntity] = deriveCirceCodecProvider[FinancialMetricsEntity]
-
-  final case class CommandActiveRunReference(activeRunId: JobId) derives Codec.AsObject
-
-  object CommandActiveRunReference:
-    given MongoCodecProvider[CommandActiveRunReference] = deriveCirceCodecProvider[CommandActiveRunReference]
 
   final case class CommandEntity(
       _id: ObjectId,
@@ -309,11 +329,6 @@ private[repositories] object entities extends MongoJsonCodecs {
         summary = header.summary
       )
 
-  final case class InvestmentRankingReference(rankingId: InvestmentRankingId) derives Codec.AsObject
-
-  object InvestmentRankingReference:
-    given MongoCodecProvider[InvestmentRankingReference] = deriveCirceCodecProvider[InvestmentRankingReference]
-
   final case class InvestmentRankingIdEntity(_id: String) derives Codec.AsObject
 
   object InvestmentRankingIdEntity:
@@ -338,7 +353,8 @@ private[repositories] object entities extends MongoJsonCodecs {
       evaluation: InvestmentEvaluation,
       complete: Boolean,
       settled: Boolean,
-      finished: Boolean
+      finished: Boolean,
+      requestedHistory: List[Ticker]
   ) derives Codec.AsObject
 
   object InvestmentEvaluationEntity:
@@ -353,7 +369,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       _id: String,
       ticker: Ticker,
       provider: Provider,
-      dataset: String,
+      dataset: Dataset,
       status: DatasetStatus,
       lastAttemptAt: Instant,
       lastSuccessAt: Option[Instant],
@@ -364,6 +380,33 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   object DatasetAvailabilityEntity:
     given MongoCodecProvider[DatasetAvailabilityEntity] = deriveCirceCodecProvider[DatasetAvailabilityEntity]
+
+  final case class DatasetStatusCount(_id: DatasetStatus, count: Int) derives Codec.AsObject
+
+  final case class DataQualityReportEntity(
+      datasets: List[DatasetAvailabilityEntity],
+      exclusions: List[ExcludedSecurity],
+      countsByStatus: List[DatasetStatusCount],
+      rankings: List[InvestmentRankingEntity]
+  ) derives Codec.AsObject:
+    def toDomain(at: Instant): DataQualityReport =
+      val ranking  = rankings.headOption
+      val coverage = ranking
+        .map { header =>
+          header.summary.excludedByReason ++ Map("eligible" -> header.summary.eligibleCount, "universe" -> header.summary.universeCount)
+        }
+        .getOrElse(Map.empty)
+      DataQualityReport(
+        at,
+        datasets.map(_.toDomain),
+        exclusions,
+        countsByStatus.map(count => count._id -> count.count).toMap,
+        coverage,
+        ranking.map(_.createdAt)
+      )
+
+  object DataQualityReportEntity:
+    given MongoCodecProvider[DataQualityReportEntity] = deriveCirceCodecProvider[DataQualityReportEntity]
 
   final case class PriceHistoryEntity(_id: String, ticker: Ticker, adjustment: PriceAdjustment, data: PriceHistorySnapshot)
       derives Codec.AsObject
@@ -404,4 +447,10 @@ private[repositories] object entities extends MongoJsonCodecs {
         priceAnalytics = priceAnalytics.headOption.map(_.toDomain),
         financialMetrics = financialMetrics.headOption.map(_.toDomain)
       )
+
+  final case class InvestmentCandidateEntity(stock: StockEntity, financialSnapshots: List[FinancialSnapshot]) derives Codec.AsObject:
+    def toDomain: InvestmentCandidate = InvestmentCandidate(stock.toDomain, financialSnapshots.headOption)
+
+  object InvestmentCandidateEntity:
+    given MongoCodecProvider[InvestmentCandidateEntity] = deriveCirceCodecProvider[InvestmentCandidateEntity]
 }

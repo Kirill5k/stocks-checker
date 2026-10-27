@@ -16,6 +16,8 @@ import java.time.{YearMonth, ZoneOffset}
 trait InvestmentScreenService[F[_]]:
   def create(request: InvestmentScreenRequest): F[InvestmentScreenResult]
   def get(id: InvestmentScreenId): F[InvestmentScreenResult]
+  def find(id: InvestmentScreenId): F[InvestmentScreen]
+  def all: F[List[InvestmentScreen]]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
   def generateScheduledScreen: F[Option[InvestmentScreenSummary]]
 
@@ -50,15 +52,21 @@ final private class LiveInvestmentScreenService[F[_]](
 
   override def get(id: InvestmentScreenId): F[InvestmentScreenResult] =
     for
-      screen    <- screens.find(id)
+      screen    <- find(id)
       published <- rankings.find(screen.rankingId)
       _         <- F.fromOption(published, AppError.EntityDoesNotExist("Investment screen", id.value))
       entries   <- rankings.entries(screen.rankingId)
     yield InvestmentScreenSelection(entries, screen.request).result(screen)
 
+  override def find(id: InvestmentScreenId): F[InvestmentScreen] =
+    screens.find(id)
+
+  override def all: F[List[InvestmentScreen]] =
+    screens.all
+
   override def list(limit: Int): F[List[InvestmentScreenSummary]] =
     F.raiseWhen(limit < InvestmentRecipe.MinimumLimit || limit > InvestmentRecipe.MaximumLimit)(
-      AppError.FailedValidation("limit must be between 1 and 100")
+      AppError.FailedValidation(s"limit must be between ${InvestmentRecipe.MinimumLimit} and ${InvestmentRecipe.MaximumLimit}")
     ) >> screens.list(limit)
 
   override def generateScheduledScreen: F[Option[InvestmentScreenSummary]] =
@@ -69,9 +77,11 @@ final private class LiveInvestmentScreenService[F[_]](
       monthlyId = InvestmentScreenId(s"monthly:${YearMonth.from(date)}:${recipe.version}")
       existing <- screens.get(monthlyId)
       created  <- existing match
-        case Some(_)                                                                        => none[InvestmentScreenSummary].pure[F]
-        case None if ranking.summary.eligibleCount < InvestmentRecipe.MinimumEligibleStocks => none[InvestmentScreenSummary].pure[F]
-        case None                                                                           =>
+        case Some(_) =>
+          none[InvestmentScreenSummary].pure[F]
+        case None if ranking.summary.eligibleCount < InvestmentRecipe.MinimumEligibleStocks =>
+          none[InvestmentScreenSummary].pure[F]
+        case None =>
           saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking).map(r => Some(r.summary))
     yield created
 }

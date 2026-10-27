@@ -27,10 +27,18 @@ class InvestmentScreenControllerSpec extends HttpRoutesWordSpec:
       verifyNoInteractions(service)
     }
     "route evaluation requests to the saved cohort evaluation" in {
-      val service     = mock[InvestmentScreenService[IO]]
-      val now         = Instant.parse("2026-10-19T00:00:00Z")
-      val id          = InvestmentScreenId("screen-1")
-      val evaluation  = InvestmentEvaluator.evaluate(id, now, now, Nil, Map.empty)
+      val service    = mock[InvestmentScreenService[IO]]
+      val now        = Instant.parse("2026-10-19T00:00:00Z")
+      val id         = InvestmentScreenId("screen-1")
+      val evaluation = InvestmentEvaluator.evaluate(
+        id,
+        now,
+        now,
+        Nil,
+        Map.empty,
+        java.time.YearMonth.of(2026, 10),
+        java.time.LocalDate.parse("2026-10-01")
+      )
       val evaluations = mock[InvestmentEvaluationService[IO]]
       when(evaluations.evaluate(id)).thenReturnIO(evaluation)
       val result = for

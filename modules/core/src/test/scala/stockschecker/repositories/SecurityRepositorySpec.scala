@@ -36,13 +36,45 @@ class SecurityRepositorySpec extends RepositorySpec {
         }
     }
 
+    "setActive" should {
+      "ignore older and duplicate requests after accepting a newer activation" in
+        withEmbeddedMongoDatabase { db =>
+          val newer = ts.plusNanos(2)
+          for
+            repo   <- SecurityRepository.make(db)
+            _      <- repo.save(AAPLSecurity)
+            _      <- repo.setActive(AAPL, false, ts)
+            _      <- repo.setActive(AAPL, true, newer)
+            _      <- repo.setActive(AAPL, false, ts.plusNanos(1))
+            _      <- repo.setActive(AAPL, false, newer)
+            result <- repo.find(AAPL)
+          yield
+            result.map(_.isActive) mustBe Some(true)
+            result.flatMap(_.exclusionReason) mustBe None
+        }
+
+      "ignore an older activation after a newer deactivation, even after a provider refresh" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo   <- SecurityRepository.make(db)
+            _      <- repo.save(AAPLSecurity)
+            _      <- repo.setActive(AAPL, false, ts.plusNanos(2))
+            _      <- repo.save(AAPLSecurity)
+            _      <- repo.setActive(AAPL, true, ts.plusNanos(1))
+            result <- repo.find(AAPL)
+          yield
+            result.map(_.isActive) mustBe Some(false)
+            result.flatMap(_.exclusionReason) mustBe Some("user-excluded")
+        }
+    }
+
     "reconcile" should {
       "preserve manual exclusions when the provider still lists the security" in
         withEmbeddedMongoDatabase { db =>
           for
             repo     <- SecurityRepository.make(db)
             _        <- repo.save(List(AAPLSecurity, MSFTSecurity))
-            _        <- repo.deactivate(AAPL)
+            _        <- repo.setActive(AAPL, false, ts)
             _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
             excluded <- repo.find(AAPL)
             listed   <- repo.find(MSFT)
@@ -58,10 +90,10 @@ class SecurityRepositorySpec extends RepositorySpec {
           for
             repo     <- SecurityRepository.make(db)
             _        <- repo.save(List(AAPLSecurity, MSFTSecurity))
-            _        <- repo.deactivate(AAPL)
+            _        <- repo.setActive(AAPL, false, ts)
             _        <- repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))
             delisted <- repo.find(AAPL)
-            _        <- repo.activate(AAPL)
+            _        <- repo.setActive(AAPL, true, ts.plusSeconds(1))
             restored <- repo.find(AAPL)
             _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
             relisted <- repo.find(AAPL)
@@ -130,15 +162,15 @@ class SecurityRepositorySpec extends RepositorySpec {
           for
             repo   <- SecurityRepository.make(db)
             _      <- repo.save(List(MSFTSecurity, excluded, delisted, restored, active))
-            _      <- repo.deactivate(MSFT)
-            _      <- repo.deactivate(excluded.ticker)
-            _      <- repo.deactivate(restored.ticker)
-            _      <- repo.activate(restored.ticker)
+            _      <- repo.setActive(MSFT, false, ts)
+            _      <- repo.setActive(excluded.ticker, false, ts)
+            _      <- repo.setActive(restored.ticker, false, ts)
+            _      <- repo.setActive(restored.ticker, true, ts.plusSeconds(1))
             _      <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity, restored, active))
             result <- repo.findExcluded
-            _      <- repo.activate(AAPL)
-            _      <- repo.activate(MSFT)
-            _      <- repo.activate(excluded.ticker)
+            _      <- repo.setActive(AAPL, true, ts.plusSeconds(1))
+            _      <- repo.setActive(MSFT, true, ts.plusSeconds(1))
+            _      <- repo.setActive(excluded.ticker, true, ts.plusSeconds(1))
             empty  <- repo.findExcluded
           yield
             result must contain theSameElementsAs List(
@@ -194,7 +226,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
             _    <- repo.save(AAPLSecurity.copy(ticker = inactiveTicker))
-            _    <- repo.deactivate(inactiveTicker)
+            _    <- repo.setActive(inactiveTicker, false, ts)
             res  <- repo.findTickersBy(SecurityFilter.IsActive(true), None)
           yield res mustBe List(AAPL)
         }

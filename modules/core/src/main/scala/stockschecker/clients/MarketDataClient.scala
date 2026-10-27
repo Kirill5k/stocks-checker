@@ -16,19 +16,26 @@ trait MarketDataClient[F[_]]:
 
 final private class LiveMarketDataClient[F[_]](
     finnhub: FinnhubClient[F],
-    twelve: TwelveDataClient[F]
+    twelve: TwelveDataClient[F],
+    observer: DatasetObserver[F]
 ) extends MarketDataClient[F] {
   def getTradedSecurities(exchange: Exchange): Stream[F, Security] =
     finnhub.getListedSecurities(exchange)
   def getCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] =
-    finnhub.getCompanyProfile(ticker)
+    observer.observe(Provider.Finnhub, Dataset.CompanyProfile, ticker)(finnhub.getCompanyProfile(ticker))(_.nonEmpty)
   def getFinancialData(ticker: Ticker): F[Option[FinancialData]] =
-    finnhub.getFinancialData(ticker)
+    observer.observe(Provider.Finnhub, Dataset.Financials, ticker)(finnhub.getFinancialData(ticker))(_.nonEmpty)
   def getDailyPriceHistory(ticker: Ticker, range: DateRange, adjustment: PriceAdjustment): F[PriceHistorySnapshot] =
-    twelve.getDailyPriceHistory(ticker, range, adjustment)
+    observer.observe(Provider.TwelveData, Dataset.dailyPrices(adjustment), ticker)(twelve.getDailyPriceHistory(ticker, range, adjustment))(
+      _.candles.nonEmpty
+    )
 }
 
 object MarketDataClient {
-  def make[F[_]: Async](finnhub: FinnhubClient[F], twelve: TwelveDataClient[F]): F[MarketDataClient[F]] =
-    Async[F].pure(new LiveMarketDataClient(finnhub, twelve))
+  private[clients] def make[F[_]: Async](
+      finnhub: FinnhubClient[F],
+      twelve: TwelveDataClient[F],
+      observer: DatasetObserver[F]
+  ): F[MarketDataClient[F]] =
+    Async[F].pure(new LiveMarketDataClient(finnhub, twelve, observer))
 }

@@ -11,11 +11,11 @@ object Eligibility:
   val MinimumPositiveCashFlowYears   = 4
   val InsufficientCashFlowDurability = InvestmentReasons.InsufficientCashFlowDurability
 
-  def positiveMetric(metric: String, metrics: Map[String, BigDecimal]): Either[String, BigDecimal] =
+  def positiveMetric(metric: FinancialMetric, metrics: Map[FinancialMetric, BigDecimal]): Either[String, BigDecimal] =
     metrics.get(metric) match
       case Some(value) if value > 0 => Right(value)
-      case Some(_)                  => Left(InvestmentReasons.nonpositiveMetric(metric))
-      case None                     => Left(InvestmentReasons.missingMetric(metric))
+      case Some(_)                  => Left(InvestmentReasons.nonpositiveMetric(metric.print))
+      case None                     => Left(InvestmentReasons.missingMetric(metric.print))
 
   def hasDurableCashFlow(margins: List[FinancialObservation]): Boolean =
     margins.headOption.exists(_.value > 0) && margins.count(_.value > 0) >= MinimumPositiveCashFlowYears
@@ -24,17 +24,20 @@ object Eligibility:
     card.exclusions match
       case InsufficientCashFlowDurability :: Nil =>
         card.evidence.map(_.financialObservations).orElse(snapshot.map(_.annual)).flatMap { observations =>
-          val margins = observations.filter(_.metric == "fcfMargin").sortBy(_.period).reverse.take(CashFlowHistoryYears)
+          val margins =
+            observations.filter(_.metric == FinancialMetric.FreeCashFlowMargin).sortBy(_.period).reverse.take(CashFlowHistoryYears)
           Option.when(margins.size == CashFlowHistoryYears)(
             s"cash-flow durability: latest annual margin ${margins.head.value}; ${margins.count(_.value > 0)}/$CashFlowHistoryYears positive years; requires latest > 0 and at least $MinimumPositiveCashFlowYears/$CashFlowHistoryYears positive years"
           )
         }
-      case reason :: Nil if Set("nonpositive-metric:peTTM", "nonpositive-metric:pfcfShareTTM", "nonpositive-metric:epsTTM")(reason) =>
-        val metric = reason.stripPrefix("nonpositive-metric:")
-        snapshot.flatMap(_.metrics.get(metric)).map(value => s"$metric = $value; requires a positive value")
+      case reason :: Nil =>
+        List(FinancialMetric.PriceToEarningsTtm, FinancialMetric.PriceToFreeCashFlowTtm, FinancialMetric.EpsTtm)
+          .find(metric => reason == InvestmentReasons.nonpositiveMetric(metric.print))
+          .flatMap(metric => snapshot.flatMap(_.metrics.get(metric)).map(value => s"${metric.print} = $value; requires a positive value"))
       case _ => None
 
-  def stockReasons(stock: Stock, sector: Option[String], asOf: Instant, recipe: InvestmentRecipe): List[String] =
+  def stockReasons(stock: Stock, asOf: Instant, recipe: InvestmentRecipe): List[String] =
+    val sector     = stock.profile.flatMap(_.sector)
     val today      = asOf.atZone(ZoneOffset.UTC).toLocalDate
     val validPrice = stock.priceAnalytics.exists { analytics =>
       val p = analytics.performanceSummary
@@ -49,10 +52,12 @@ object Eligibility:
       Option.when(!stock.profile.exists(_.country.equalsIgnoreCase("US")))(InvestmentReasons.OutsideUsCompanyUniverse),
       Option.when(!stock.profile.exists(_.currency.equalsIgnoreCase("USD")))(InvestmentReasons.UnsupportedReportingCurrency),
       Option.when(sector.isEmpty)(InvestmentReasons.UnmappedIndustry),
-      Option.when(sector.exists(s => s == "financials" || s == "real-estate"))(InvestmentReasons.SpecialistSectorModelRequired)
+      Option.when(sector.exists(Sector.requiresSpecialistModel))(InvestmentReasons.SpecialistSectorModelRequired)
     ).flatten
 
   def priceWarnings(stock: Stock): List[String] =
-    Option.when(!stock.priceAnalytics.exists(pa => pa.metrics.cagr5Year.nonEmpty && pa.metrics.volatility.nonEmpty))(
-      InvestmentReasons.InsufficientComparablePriceRiskHistory
-    ).toList
+    Option
+      .when(!stock.priceAnalytics.exists(pa => pa.metrics.cagr5Year.nonEmpty && pa.metrics.volatility.nonEmpty))(
+        InvestmentReasons.InsufficientComparablePriceRiskHistory
+      )
+      .toList

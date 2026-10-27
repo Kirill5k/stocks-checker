@@ -1,5 +1,6 @@
 package stockschecker.actions
 
+import cats.data.NonEmptyList
 import cats.effect.{IO, Ref}
 import cats.syntax.parallel.*
 import kirill5k.common.cats.Clock
@@ -20,7 +21,7 @@ class CommandSchedulerIntegrationSpec extends RepositorySpec {
   override def port: Int = 12211
   given Clock[IO]        = Clock.make[IO]
   given Logger[IO]       = Slf4jLogger.getLogger[IO]
-  private val action     = Action.DeactivateSecurity(AAPL)
+  private val action     = Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL))
   "A command scheduler" should {
     "recover a reserved command concurrently after a crash without counting the occurrence twice" in withEmbeddedMongoDatabase { db =>
       val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
@@ -51,14 +52,16 @@ class CommandSchedulerIntegrationSpec extends RepositorySpec {
 
     "cancel queued old versions on edits and deactivate, and schedule again on activation" in withEmbeddedMongoDatabase { db =>
       for {
-        jobs        <- JobRepository.make[IO](db)
-        commands    <- CommandRepository.make[IO](db)
-        dispatcher  <- ActionDispatcher.make(jobs)
-        service     <- CommandService.make(commands, dispatcher)
-        cmd         <- service.create(CreateCommand(action, Schedule.Periodic(1.hour), None))
-        _           <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
-        before      <- commands.find(cmd.id)
-        _           <- service.update(UpdateCommand(cmd.id, true, Action.DeactivateSecurity(MSFT), Schedule.Periodic(1.second), None))
+        jobs       <- JobRepository.make[IO](db)
+        commands   <- CommandRepository.make[IO](db)
+        dispatcher <- ActionDispatcher.make(jobs)
+        service    <- CommandService.make(commands, dispatcher)
+        cmd        <- service.create(CreateCommand(action, Schedule.Periodic(1.hour), None))
+        _          <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
+        before     <- commands.find(cmd.id)
+        _          <- service.update(
+          UpdateCommand(cmd.id, true, Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), Schedule.Periodic(1.second), None)
+        )
         old         <- jobs.find(before.activeRunId.get).map(_.get)
         _           <- service.activate(cmd.id, false)
         _           <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
@@ -78,12 +81,14 @@ class CommandSchedulerIntegrationSpec extends RepositorySpec {
       db =>
         val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
         for
-          jobs      <- JobRepository.make[IO](db)
-          commands  <- CommandRepository.make[IO](db)
-          original  <- commands.create(CreateCommand(action, Schedule.Periodic(1.hour), None))
-          due       <- commands.initializeNextRun(original, now).map(_.get)
-          reserved  <- commands.reserve(due, now).map(_.get)
-          changed   <- commands.update(UpdateCommand(original.id, true, Action.DeactivateSecurity(MSFT), Schedule.Periodic(1.hour), None))
+          jobs     <- JobRepository.make[IO](db)
+          commands <- CommandRepository.make[IO](db)
+          original <- commands.create(CreateCommand(action, Schedule.Periodic(1.hour), None))
+          due      <- commands.initializeNextRun(original, now).map(_.get)
+          reserved <- commands.reserve(due, now).map(_.get)
+          changed  <- commands.update(
+            UpdateCommand(original.id, true, Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), Schedule.Periodic(1.hour), None)
+          )
           scheduler <- CommandScheduler.make(commands, jobs)
           _         <- scheduler.tick
           oldJob    <- jobs.find(reserved.activeRunId.get)
@@ -100,22 +105,20 @@ class CommandSchedulerIntegrationSpec extends RepositorySpec {
     "release a missing reserved run after deactivation without enqueueing it" in withEmbeddedMongoDatabase { db =>
       val now = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       for
-        jobs         <- JobRepository.make[IO](db)
-        commands     <- CommandRepository.make[IO](db)
-        original     <- commands.create(CreateCommand(action, Schedule.Periodic(1.hour), None))
-        due          <- commands.initializeNextRun(original, now).map(_.get)
-        reserved     <- commands.reserve(due, now).map(_.get)
-        _            <- commands.setActive(original.id, false)
-        scheduler    <- CommandScheduler.make(commands, jobs)
-        _            <- scheduler.tick
-        oldJob       <- jobs.find(reserved.activeRunId.get)
-        inactive     <- commands.find(original.id)
-        protectedIds <- commands.activeRunIds
+        jobs      <- JobRepository.make[IO](db)
+        commands  <- CommandRepository.make[IO](db)
+        original  <- commands.create(CreateCommand(action, Schedule.Periodic(1.hour), None))
+        due       <- commands.initializeNextRun(original, now).map(_.get)
+        reserved  <- commands.reserve(due, now).map(_.get)
+        _         <- commands.setActive(original.id, false)
+        scheduler <- CommandScheduler.make(commands, jobs)
+        _         <- scheduler.tick
+        oldJob    <- jobs.find(reserved.activeRunId.get)
+        inactive  <- commands.find(original.id)
       yield
         oldJob mustBe None
         inactive.isActive mustBe false
         inactive.activeRunId mustBe None
-        protectedIds mustBe empty
     }
 
     "retain a failed enqueue for recovery while allowing other commands to schedule" in withEmbeddedMongoDatabase { db =>
@@ -129,7 +132,7 @@ class CommandSchedulerIntegrationSpec extends RepositorySpec {
         )
         commands  <- CommandRepository.make[IO](db)
         failing   <- commands.create(CreateCommand(action, Schedule.Periodic(1.hour), None))
-        healthy   <- commands.create(CreateCommand(Action.DeactivateSecurity(MSFT), Schedule.Periodic(1.hour), None))
+        healthy   <- commands.create(CreateCommand(Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), Schedule.Periodic(1.hour), None))
         scheduler <- CommandScheduler.make(commands, jobs)
         _         <- scheduler.tick
         persisted <- commands.find(failing.id)

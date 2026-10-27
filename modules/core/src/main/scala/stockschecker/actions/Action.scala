@@ -6,7 +6,7 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
 import stockschecker.common.JsonCodecs
 import stockschecker.domain.{CompanyProfileFilter, Exchange, SecurityFilter, Ticker}
 
-import java.time.LocalDate
+import java.time.{Instant, LocalDate}
 
 enum Action:
   case Sequence(actions: NonEmptyList[Action])
@@ -20,10 +20,20 @@ enum Action:
   case UpdateFinancialMetrics(tickers: NonEmptyList[Ticker])
   case UpdatePriceAnalytics(tickers: NonEmptyList[Ticker])
   case RefreshInvestmentResearch
-  case RefreshEvaluationPrices(ticker: Ticker, from: LocalDate, through: LocalDate)
-  // Deactivate operations
-  case DeactivateSecurity(ticker: Ticker)
-  case DeactivateCompanyProfile(ticker: Ticker)
+  case RefreshEvaluationPrices(ticker: Ticker, through: LocalDate)
+  // Internal events
+  case RecordCompanyProfileUpdate(tickers: NonEmptyList[Ticker])
+  case RecordPriceAnalyticsUpdate(tickers: NonEmptyList[Ticker])
+  case RecordFinancialMetricsUpdate(tickers: NonEmptyList[Ticker])
+  case SetSecurityActive(ticker: Ticker, active: Boolean, requestedAt: Instant)
+  case SetCompanyProfileActive(ticker: Ticker, active: Boolean, requestedAt: Instant)
+
+  def isSchedulable: Boolean = this match
+    case Sequence(actions) => actions.forall(_.isSchedulable)
+    case _: RecordCompanyProfileUpdate | _: RecordPriceAnalyticsUpdate | _: RecordFinancialMetricsUpdate | _: SetSecurityActive |
+        _: SetCompanyProfileActive | _: RefreshEvaluationPrices =>
+      false
+    case _ => true
 
 object Action extends JsonCodecs {
   given Configuration          = Configuration.default.withKebabCaseConstructorNames.withDiscriminator("kind").withDefaults

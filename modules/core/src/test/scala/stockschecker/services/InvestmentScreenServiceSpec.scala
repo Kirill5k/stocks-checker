@@ -22,8 +22,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         state.get.flatMap(screens => IO.fromOption(screens.find(_.id == id))(AppError.EntityDoesNotExist("Investment screen", id.value)))
       def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]] = state.get.map(_.find(_.id == id))
       def list(limit: Int): IO[List[InvestmentScreenSummary]]       = state.get.map(_.reverse.take(limit).map(_.summary))
-      def ids: IO[List[InvestmentScreenId]]                         = state.get.map(_.map(_.id))
-      def rankingIds: IO[Set[InvestmentRankingId]]                  = state.get.map(_.map(_.rankingId).toSet)
+      def all: IO[List[InvestmentScreen]]                           = state.get
 
   private def ranking(entries: List[InvestmentRankingEntry]): InvestmentRanking =
     InvestmentRanking(InvestmentRankingId("published"), now, InvestmentRecipe(), InvestmentRankingSummary.from(entries))
@@ -49,6 +48,24 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
     yield found
 
   "InvestmentScreenService" should {
+    "expose saved screens to other services without loading rankings" in {
+      val screens  = mock[InvestmentScreenRepository[IO]]
+      val rankings = mock[InvestmentRankingService[IO]]
+      val screen   = InvestmentScreen.create(InvestmentScreenId("saved"), now, ranking(Nil), InvestmentScreenRequest(), Nil)
+      when(screens.find(screen.id)).thenReturnIO(screen)
+      when(screens.all).thenReturnIO(List(screen))
+      (for {
+        service <- InvestmentScreenService.make(screens, rankings)
+        found   <- service.find(screen.id)
+        all     <- service.all
+      } yield (found, all)).asserting { case (found, all) =>
+        found mustBe screen
+        all mustBe List(screen)
+        verifyNoInteractions(rankings)
+        succeed
+      }
+    }
+
     "propagate a missing-screen error from the repository" in {
       val screens  = mock[InvestmentScreenRepository[IO]]
       val rankings = mock[InvestmentRankingService[IO]]
@@ -244,19 +261,18 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
     "show one failed intrinsic financial criterion without pretending it has an investment score" in {
       val annual = (1 to 5).toList.map(n =>
         FinancialObservation(
-          "fcfMargin",
+          FinancialMetric.FreeCashFlowMargin,
           LocalDate.of(2026 - n, 12, 31),
-          if n <= 2 then BigDecimal("-0.01") else BigDecimal("0.05"),
-          "ratio"
+          if n <= 2 then BigDecimal("-0.01") else BigDecimal("0.05")
         )
       )
-      val financial = FinancialSnapshot("facts", AAPL, Provider.Finnhub, now, Map.empty, Nil, Nil, "", "hash", "mapping", Nil)
+      val financial = FinancialSnapshot("facts", AAPL, Provider.Finnhub, now, Map.empty, Nil, Nil, "hash", "mapping", Nil)
       val evidence  = InvestmentEvidence(
         Provider.Finnhub,
         now,
         "mapping",
         "hash",
-        Map("fcfMargin" -> annual.map(_.period)),
+        Map(FinancialMetric.FreeCashFlowMargin -> annual.map(_.period)),
         annual,
         None,
         None,

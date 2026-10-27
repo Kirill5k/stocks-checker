@@ -1,13 +1,15 @@
 package stockschecker.services
 
+import cats.data.NonEmptyList
 import cats.effect.IO
+import stockschecker.actions.{Action, ActionDispatcher}
 import kirill5k.common.cats.test.IOWordSpec
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, Ticker}
-import stockschecker.repositories.{CompanyProfileRepository, SecurityRepository}
+import stockschecker.repositories.CompanyProfileRepository
 import stockschecker.fixtures.*
 
 class CompanyProfileServiceSpec extends IOWordSpec {
@@ -16,11 +18,11 @@ class CompanyProfileServiceSpec extends IOWordSpec {
   "A CompanyProfileService" when {
     "get" should {
       "get company profile from database" in {
-        val (repo, client, securities) = mocks
+        val (repo, client, dispatcher) = mocks
         when(repo.find(any[Ticker])).thenReturnSome(AAPLCompanyProfile)
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
           res <- svc.get(AAPL)
         yield res
 
@@ -31,49 +33,49 @@ class CompanyProfileServiceSpec extends IOWordSpec {
       }
 
       "fetch latest company profile when flag is true" in {
-        val (repo, client, securities) = mocks
+        val (repo, client, dispatcher) = mocks
         when(client.getCompanyProfile(any[Ticker])).thenReturnSome(AAPLCompanyProfile)
         when(repo.save(anyList[CompanyProfile])).thenReturnUnit
-        when(securities.updateCompanyProfileLastUpdated(anyList[Ticker])).thenReturnUnit
+        when(dispatcher.dispatch(any[Action])).thenReturnUnit
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
           res <- svc.get(AAPL, true)
         yield res
 
         res.asserting { cp =>
           verify(client).getCompanyProfile(AAPL)
           verify(repo).save(List(AAPLCompanyProfile))
-          verify(securities).updateCompanyProfileLastUpdated(List(AAPL))
+          verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(NonEmptyList.one(AAPL)))
           verifyNoMoreInteractions(repo) // ensure repo.find wasn't called
           cp mustBe AAPLCompanyProfile
         }
       }
 
       "return error when company profile missing in db and fetchLatest flag is false" in {
-        val (repo, client, securities) = mocks
+        val (repo, client, dispatcher) = mocks
         when(repo.find(any[Ticker])).thenReturnNone
         // client should NOT be called
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
           res <- svc.get(AAPL) // flag is false (default)
         yield res
 
         res.attempt.asserting { err =>
           verify(repo).find(AAPL)
           verifyNoInteractions(client)
-          verifyNoInteractions(securities)
+          verifyNoInteractions(dispatcher)
           err mustBe Left(AppError.CompanyProfileNotFound(AAPL))
         }
       }
 
       "return error when explicitly fetching latest and client returns nothing" in {
-        val (repo, client, securities) = mocks
+        val (repo, client, dispatcher) = mocks
         when(client.getCompanyProfile(any[Ticker])).thenReturnNone
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
           res <- svc.get(AAPL, true) // fetch latest path
         yield res
 
@@ -81,19 +83,42 @@ class CompanyProfileServiceSpec extends IOWordSpec {
           verify(client).getCompanyProfile(AAPL)
           // repo.save should not be called, and repo.find not used
           verifyNoInteractions(repo)
-          verifyNoInteractions(securities)
+          verifyNoInteractions(dispatcher)
           err mustBe Left(AppError.CompanyProfileNotFound(AAPL))
+        }
+      }
+    }
+
+    "consume profile events" should {
+      "update profile timestamps and activation through the owned repository" in {
+        val (repo, client, dispatcher) = mocks
+        val tickers                    = NonEmptyList.of(AAPL, MSFT)
+        when(repo.updatePriceAnalyticsLastUpdated(anyList[Ticker])).thenReturnUnit
+        when(repo.updateFinancialMetricsLastUpdated(anyList[Ticker])).thenReturnUnit
+        when(repo.setActive(AAPL, true, ts)).thenReturnUnit
+
+        (for
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
+          _   <- svc.recordPriceAnalyticsUpdate(tickers)
+          _   <- svc.recordFinancialMetricsUpdate(tickers)
+          _   <- svc.setActive(AAPL, true, ts)
+        yield ()).asserting { _ =>
+          verify(repo).updatePriceAnalyticsLastUpdated(tickers.toList)
+          verify(repo).updateFinancialMetricsLastUpdated(tickers.toList)
+          verify(repo).setActive(AAPL, true, ts)
+          verifyNoInteractions(client, dispatcher)
+          succeed
         }
       }
     }
 
     "getAll" should {
       "return all company profiles from repository" in {
-        val (repo, client, securities) = mocks
+        val (repo, client, dispatcher) = mocks
         when(repo.findAll(any[Option[Int]])).thenReturnIO(List(AAPLCompanyProfile, MSFTCompanyProfile))
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
           res <- svc.getAll(None)
         yield res
 
@@ -104,11 +129,11 @@ class CompanyProfileServiceSpec extends IOWordSpec {
       }
 
       "return limited number of company profiles when limit is specified" in {
-        val (repo, client, securities) = mocks
+        val (repo, client, dispatcher) = mocks
         when(repo.findAll(any[Option[Int]])).thenReturnIO(List(AAPLCompanyProfile))
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
           res <- svc.getAll(Some(1))
         yield res
 
@@ -119,11 +144,11 @@ class CompanyProfileServiceSpec extends IOWordSpec {
       }
 
       "return empty list when no company profiles exist" in {
-        val (repo, client, securities) = mocks
+        val (repo, client, dispatcher) = mocks
         when(repo.findAll(any[Option[Int]])).thenReturnIO(List.empty)
 
         val res = for
-          svc <- CompanyProfileService.make(repo, client, securities, DataQualityServiceStub)
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
           res <- svc.getAll(None)
         yield res
 
@@ -136,6 +161,6 @@ class CompanyProfileServiceSpec extends IOWordSpec {
 
   }
 
-  def mocks: (CompanyProfileRepository[IO], MarketDataClient[IO], SecurityRepository[IO]) =
-    (mock[CompanyProfileRepository[IO]], mock[MarketDataClient[IO]], mock[SecurityRepository[IO]])
+  def mocks: (CompanyProfileRepository[IO], MarketDataClient[IO], ActionDispatcher[IO]) =
+    (mock[CompanyProfileRepository[IO]], mock[MarketDataClient[IO]], mock[ActionDispatcher[IO]])
 }

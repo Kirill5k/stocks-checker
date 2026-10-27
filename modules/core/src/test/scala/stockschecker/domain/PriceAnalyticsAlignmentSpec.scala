@@ -39,7 +39,7 @@ class PriceAnalyticsAlignmentSpec extends AnyWordSpec with Matchers {
       val total  = snapshot(PriceAdjustment.SplitsAndDividends, List(today.minusDays(8)))
       val quoted = snapshot(PriceAdjustment.Unadjusted, List(today.minusDays(8)))
       PriceAnalyticsAlignment.calculate(ticker, total, quoted, today) mustBe Left(
-        AppError.DataUnavailable(Provider.TwelveData, ticker, "the latest matching trading session is more than seven days old")
+        AppError.DataUnavailable(ticker, "the latest matching trading session is more than seven days old")
       )
     }
 

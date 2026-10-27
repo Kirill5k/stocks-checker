@@ -1,10 +1,12 @@
 package stockschecker.services
 
+import cats.data.NonEmptyList
 import cats.effect.IO
+import cats.syntax.traverse.*
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.actions.{Action, ActionDispatcher}
-import stockschecker.domain.{CommandId, CreateCommand, Schedule}
+import stockschecker.domain.{CommandId, CreateCommand, Schedule, UpdateCommand}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.CommandRepository
@@ -57,6 +59,37 @@ class CommandServiceSpec extends IOWordSpec {
         verify(dispatcher).dispatch(command.action)
         verify(commands).find(command.id)
         verifyNoMoreInteractions(commands)
+        succeed
+      }
+    }
+
+    "reject internal actions and nested internal events before creating or updating commands" in {
+      val (dispatcher, commands) = mocks
+      val events                 = List(
+        Action.RecordCompanyProfileUpdate(NonEmptyList.one(AAPL)),
+        Action.RecordPriceAnalyticsUpdate(NonEmptyList.one(AAPL)),
+        Action.RecordFinancialMetricsUpdate(NonEmptyList.one(AAPL)),
+        Action.SetSecurityActive(AAPL, true, java.time.Instant.EPOCH),
+        Action.SetCompanyProfileActive(AAPL, true, java.time.Instant.EPOCH),
+        Action.SetSecurityActive(AAPL, false, java.time.Instant.EPOCH),
+        Action.SetCompanyProfileActive(AAPL, false, java.time.Instant.EPOCH),
+        Action.RefreshEvaluationPrices(AAPL, java.time.LocalDate.parse("2026-02-01")),
+        Action.Sequence(
+          NonEmptyList.of(
+            Action.RefreshInvestmentResearch,
+            Action.Sequence(NonEmptyList.one(Action.SetSecurityActive(AAPL, true, java.time.Instant.EPOCH)))
+          )
+        )
+      )
+      (for {
+        service <- CommandService.make(commands, dispatcher)
+        created <- events.traverse(action => service.create(CreateCommand(action, Schedule.Periodic(1.hour), None)).attempt)
+        updated <- events.traverse(action =>
+          service.update(UpdateCommand(FetchLatestSecuritiesCommand.id, true, action, Schedule.Periodic(1.hour), None)).attempt
+        )
+      } yield created ++ updated).asserting { results =>
+        results.foreach(_.left.toOption.get mustBe a[AppError.FailedValidation])
+        verifyNoInteractions(commands, dispatcher)
         succeed
       }
     }

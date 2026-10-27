@@ -35,8 +35,8 @@ final private class LiveCommandScheduler[F[_]: {Temporal, Clock, Logger}](
   private def recoverRun(command: Command, now: Instant): F[Option[Command]] =
     command.activeRunId.fold(Option(command).pure[F]) { id =>
       jobs.find(id).flatMap {
-        case Some(_)                                                                                     => Option(command).pure[F]
-        case None if command.isActive && id.value.startsWith(s"${command.id.value}:${command.version}:") =>
+        case Some(_)                                         => Option(command).pure[F]
+        case None if command.isActive && command.ownsRun(id) =>
           enqueue(command, now).as(Some(command))
         // An edit may replace the action after reservation but before enqueue. Never attach it to the old run ID.
         case None => commands.completeRun(command.id, id)

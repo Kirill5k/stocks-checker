@@ -24,7 +24,6 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
           saved     <- repo.find(screen.id)
           header    <- repo.get(screen.id)
           listed    <- repo.list(20)
-          rankings  <- repo.rankingIds
           raw       <- db.getCollection(InvestmentScreenRepository.CollectionName)
           stored    <- raw
             .find(
@@ -38,7 +37,6 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
           header.map(_.id) mustBe Some(screen.id)
           header.map(_.rankingId) mustBe Some(screen.rankingId)
           listed.map(_.id) mustBe List(screen.id)
-          rankings mustBe Set(screen.rankingId)
           stored must not be empty
       }
     "read existing UUID and monthly screen IDs stored as BSON strings" in
@@ -66,11 +64,11 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
             )
           })
           saved  <- ids.traverse(repo.find)
-          allIds <- repo.ids
+          all    <- repo.all
           listed <- repo.list(20)
         yield
           saved mustBe ids.map(id => screen.copy(id = id, summary = screen.summary.copy(id = id)))
-          allIds.toSet mustBe ids.toSet
+          all.map(_.id).toSet mustBe ids.toSet
           listed.map(_.id).toSet mustBe ids.toSet
       }
     "return an error when the screen header does not exist" in

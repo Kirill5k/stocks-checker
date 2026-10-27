@@ -40,14 +40,15 @@ final class InvestmentScreenSelection(
           InvestmentConcentration(
             count,
             maxWeight,
-            weights(s => s.profile.flatMap(p => SectorMapping.sectorFor(p.industry)).getOrElse("unknown")),
+            weights(s => s.profile.flatMap(_.sector).fold("unknown")(_.print)),
             weights(s => s.profile.map(_.industry).getOrElse("unknown")),
             herfindahl
           )
         )
       )
-    def top(name: CohortName, ranked: List[InvestmentScorecard]): InvestmentCohort = cohort(name, ranked.take(InvestmentRecipe.CohortSize).map(_.ticker))
-    def byPillar(name: Pillar): List[InvestmentScorecard]                      =
+    def top(name: CohortName, ranked: List[InvestmentScorecard]): InvestmentCohort =
+      cohort(name, ranked.take(InvestmentRecipe.CohortSize).map(_.ticker))
+    def byPillar(name: Pillar): List[InvestmentScorecard] =
       eligible.sortBy(c => (-c.pillars.getOrElse(name, BigDecimal(0)), c.ticker.value))
     val oldPrice = eligible
       .filter(c => stocks(c.ticker).priceAnalytics.isDefined)
@@ -61,13 +62,13 @@ final class InvestmentScreenSelection(
     )
 
   private def failedCriteria(card: InvestmentScorecard, request: InvestmentScreenRequest): List[String] =
-    val tests = List(
-      ("score", request.minScore, card.score),
-      ("quality", request.minQuality, card.pillars.get(Pillar.Quality)),
-      ("value", request.minValue, card.pillars.get(Pillar.Value)),
-      ("growth", request.minGrowth, card.pillars.get(Pillar.Growth)),
-      ("resilience", request.minResilience, card.pillars.get(Pillar.Resilience))
-    )
+    val pillarTests = List(
+      Pillar.Quality    -> request.minQuality,
+      Pillar.Value      -> request.minValue,
+      Pillar.Growth     -> request.minGrowth,
+      Pillar.Resilience -> request.minResilience
+    ).map { case (pillar, minimum) => (pillar.print, minimum, card.pillars.get(pillar)) }
+    val tests = ("score", request.minScore, card.score) :: pillarTests
     tests.flatMap { case (name, minimum, actual) =>
       minimum.filter(min => actual.forall(_ < min)).map(min => s"$name ${actual.fold("missing")(_.toString)} is below required $name $min")
     }

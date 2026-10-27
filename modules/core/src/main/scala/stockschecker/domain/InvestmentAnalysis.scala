@@ -9,10 +9,11 @@ final case class InvestmentCandidate(stock: Stock, financialSnapshot: Option[Fin
     copy(financialSnapshot =
       financialSnapshot.map(snapshot =>
         snapshot.copy(
-          metrics = snapshot.metrics.filter { case (metric, _) => Set("peTTM", "pfcfShareTTM", "epsTTM")(metric) },
+          metrics = snapshot.metrics.filter { case (metric, _) =>
+            Set(FinancialMetric.PriceToEarningsTtm, FinancialMetric.PriceToFreeCashFlowTtm, FinancialMetric.EpsTtm)(metric)
+          },
           annual = Nil,
-          quarterly = Nil,
-          rawPayload = ""
+          quarterly = Nil
         )
       )
     )
@@ -22,7 +23,7 @@ final case class InvestmentEvidence(
     observedAt: Instant,
     mappingVersion: String,
     payloadHash: String,
-    annualPeriods: Map[String, List[LocalDate]],
+    annualPeriods: Map[FinancialMetric, List[LocalDate]],
     financialObservations: List[FinancialObservation],
     latestFreeCashFlowPerShareTtm: Option[FinancialObservation],
     latestPrice: Option[LatestPrice],
@@ -71,14 +72,14 @@ final case class InvestmentScorecard(
     eligible: Boolean,
     score: Option[BigDecimal],
     pillars: Map[Pillar, BigDecimal],
-    features: Map[String, BigDecimal],
+    features: Map[ScoringFeature, BigDecimal],
     exclusions: List[String],
     warnings: List[String],
     peerGroup: Option[String],
     peerCount: Int,
     financialSnapshotId: Option[String],
     modelVersion: String,
-    featureUnits: Map[String, String] = Map.empty,
+    featureUnits: Map[ScoringFeature, String] = Map.empty,
     evidence: Option[InvestmentEvidence] = None,
     strengths: List[String] = Nil,
     weaknesses: List[String] = Nil,

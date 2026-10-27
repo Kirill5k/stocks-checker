@@ -14,6 +14,6 @@ object ProviderErrors:
       retryAfter: Option[String] = None,
       message: String = "Provider request failed"
   )(using F: Monad[F], C: Clock[F]): F[AppError] = status match
-    case 429 => C.now.map(now => AppError.ProviderDeferred(provider, RetryAfter.deadline(retryAfter, now), "rate-limited"))
-    case 401 | 403 => F.pure(AppError.ProviderConfiguration(provider, s"HTTP $status; check credentials and subscription"))
-    case _ => F.pure(AppError.HttpClient(provider.print, status, message))
+    case 429       => C.now.map(now => AppError.ProviderDeferred(provider, RetryAfter.deadline(retryAfter, now), s"$message; rate-limited"))
+    case 401 | 403 => F.pure(AppError.ProviderConfiguration(provider, s"$message; HTTP $status; check credentials and subscription"))
+    case _         => F.pure(AppError.HttpClient(provider.print, status, message))

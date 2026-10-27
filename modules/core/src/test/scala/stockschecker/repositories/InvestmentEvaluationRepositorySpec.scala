@@ -15,6 +15,30 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
   override val port = 12221
 
   "An InvestmentEvaluationRepository" should {
+    "retain each history request across concurrent records and later capture saves" in
+      withEmbeddedMongoDatabase { db =>
+        val month   = YearMonth.of(2026, 10)
+        val pending = InvestmentEvaluator
+          .evaluate(screen.id, screen.createdAt, now, screen.cohorts, Map.empty, YearMonth.of(2026, 10), LocalDate.parse("2026-09-30"))
+          .copy(captureMonth = month)
+        for
+          repo       <- InvestmentEvaluationRepository.make[IO](db)
+          _          <- repo.saveMonthly(pending)
+          initial    <- repo.requestedHistory(screen.id, month)
+          _          <- List(AAPL, MSFT, AAPL).parTraverse_(repo.recordHistoryRequest(screen.id, month, _))
+          _          <- repo.saveMonthly(pending.copy(methodology = "stale draft"))
+          requested  <- repo.requestedHistory(screen.id, month)
+          _          <- repo.saveMonthly(pending.copy(settled = true))
+          _          <- repo.saveMonthly(pending)
+          settled    <- repo.requestedHistory(screen.id, month)
+          otherMonth <- repo.requestedHistory(screen.id, month.plusMonths(1))
+        yield
+          initial mustBe empty
+          requested mustBe Set(AAPL, MSFT)
+          settled mustBe Set(AAPL, MSFT)
+          otherMonth mustBe empty
+      }
+
     "save a single immutable evaluation for a screen and month" in
       withEmbeddedMongoDatabase { db =>
         val formedAt = Instant.parse("2026-09-01T00:00:00Z")
@@ -36,7 +60,8 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
             now,
             screen.cohorts,
             Map(AAPL -> series, InvestmentEvaluator.Benchmark -> series.copy(ticker = InvestmentEvaluator.Benchmark)),
-            Some(through)
+            YearMonth.of(2026, 10),
+            through
           )
           .copy(settled = true)
         for
@@ -71,9 +96,9 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
           DateRange(from, through)
         )
         val missingExit = InvestmentEvaluator
-          .evaluate(screen.id, formedAt, now, screen.cohorts, Map(InvestmentEvaluator.Benchmark -> series), Some(through))
-          .copy(captureMonth = Some(YearMonth.parse("2026-01")), settled = true)
-        val finalMissing = missingExit.copy(captureMonth = Some(YearMonth.parse("2026-02")), dataThrough = Some(through.plusDays(7)))
+          .evaluate(screen.id, formedAt, now, screen.cohorts, Map(InvestmentEvaluator.Benchmark -> series), YearMonth.of(2026, 10), through)
+          .copy(captureMonth = YearMonth.parse("2026-01"), settled = true)
+        val finalMissing = missingExit.copy(captureMonth = YearMonth.parse("2026-02"), dataThrough = through.plusDays(7))
         for
           repo       <- InvestmentEvaluationRepository.make[IO](db)
           _          <- repo.saveMonthly(missingExit)
@@ -99,8 +124,8 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
         val formedDate = LocalDate.parse("2019-02-28")
         val through    = InvestmentEvaluation.finalCaptureThrough(formedDate)
         val evaluation = InvestmentEvaluator
-          .evaluate(screen.id, formedAt, now, screen.cohorts, Map.empty, Some(through))
-          .copy(captureMonth = Some(YearMonth.parse("2024-04")), settled = true)
+          .evaluate(screen.id, formedAt, now, screen.cohorts, Map.empty, YearMonth.of(2026, 10), through)
+          .copy(captureMonth = YearMonth.parse("2024-04"), settled = true)
         for
           repo     <- InvestmentEvaluationRepository.make[IO](db)
           _        <- repo.saveMonthly(evaluation)
@@ -115,7 +140,7 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
         val formedAt   = Instant.parse("2026-09-01T00:00:00Z")
         val from       = LocalDate.parse("2026-09-01")
         val through    = LocalDate.parse("2026-10-01")
-        val incomplete = InvestmentEvaluator.evaluate(screen.id, formedAt, now, screen.cohorts, Map.empty, Some(through))
+        val incomplete = InvestmentEvaluator.evaluate(screen.id, formedAt, now, screen.cohorts, Map.empty, YearMonth.of(2026, 10), through)
         val series     = EvaluationPriceSeries(
           AAPL,
           List(EvaluationClose(from.plusDays(1), 100), EvaluationClose(through, 110)),
@@ -132,7 +157,8 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
             now,
             screen.cohorts,
             Map(AAPL -> series, InvestmentEvaluator.Benchmark -> series.copy(ticker = InvestmentEvaluator.Benchmark)),
-            Some(through)
+            YearMonth.of(2026, 10),
+            through
           )
           .copy(settled = true)
         for
@@ -152,8 +178,8 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
     "accept concurrent initial captures and keep a settled winner immutable" in
       withEmbeddedMongoDatabase { db =>
         val pending = InvestmentEvaluator
-          .evaluate(screen.id, screen.createdAt, now, screen.cohorts, Map.empty, Some(LocalDate.parse("2026-09-30")))
-          .copy(captureMonth = Some(YearMonth.of(2026, 10)))
+          .evaluate(screen.id, screen.createdAt, now, screen.cohorts, Map.empty, YearMonth.of(2026, 10), LocalDate.parse("2026-09-30"))
+          .copy(captureMonth = YearMonth.of(2026, 10))
         val complete = pending.copy(settled = true, methodology = "settled outcome")
         for
           repo       <- InvestmentEvaluationRepository.make[IO](db)
