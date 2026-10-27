@@ -17,14 +17,14 @@ class DataQualityServiceSpec extends IOWordSpec {
     "read stored ranking coverage from the header without rescoring or loading financial histories" in {
       val quality    = mock[DataQualityRepository[IO]]
       val securities = mock[SecurityRepository[IO]]
-      val rankings   = mock[InvestmentRankingRepository[IO]]
+      val rankings   = mock[InvestmentRankingService[IO]]
       val observed   = now.minusSeconds(3600)
       val datasets   = List(
         DatasetAvailability(MSFT, "TwelveData", "daily-prices-all", "failed", now, None, Some("HTTP 503")),
         DatasetAvailability(AAPL, "Finnhub", "financials", "available", observed, Some(observed), None)
       )
-      val header = InvestmentRankingRepository.Header(
-        "ranking",
+      val header = InvestmentRankingHeader(
+        InvestmentRankingId("ranking"),
         observed,
         InvestmentRecipe(),
         InvestmentRankingSummary(100, 80, Map("missing-financials" -> 20))
@@ -48,7 +48,7 @@ class DataQualityServiceSpec extends IOWordSpec {
     "report absent ranking coverage explicitly" in {
       val quality    = mock[DataQualityRepository[IO]]
       val securities = mock[SecurityRepository[IO]]
-      val rankings   = mock[InvestmentRankingRepository[IO]]
+      val rankings   = mock[InvestmentRankingService[IO]]
       when(quality.all).thenReturnIO(Nil)
       when(securities.findExcluded).thenReturnIO(Nil)
       when(rankings.latestHeader).thenReturnIO(None)

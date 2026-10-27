@@ -41,10 +41,18 @@ object Services:
         maxPriceAgeDays = investmentConfig.priceFreshnessDays,
         maxQuarterlyAgeDays = investmentConfig.quarterlyFreshnessDays
       )
-      rankings    <- InvestmentRankingService.make(repos.stock, repos.financialHistory, repos.investmentRankings, recipe)
+      rankings <- InvestmentRankingService.make(
+        repos.stock,
+        repos.financialHistory,
+        repos.investmentRankings,
+        repos.investmentRankingInputs,
+        repos.investmentScreens,
+        recipe
+      )
       evaluations <- InvestmentEvaluationService.make(
         repos.investmentScreens,
         repos.investmentEvaluations,
+        repos.evaluationCapturePlans,
         EvaluationPriceHistory.make(clients.marketData, repos.priceHistory),
         repos.jobs
       )
@@ -54,7 +62,7 @@ object Services:
         evaluations,
         recipe
       )
-      quality <- DataQualityService.make(repos.dataQuality, repos.security, repos.investmentRankings)
+      quality <- DataQualityService.make(repos.dataQuality, repos.security, rankings)
     yield new Services[F]:
       override def security: SecurityService[F]                  = s
       override def companyProfile: CompanyProfileService[F]      = cp

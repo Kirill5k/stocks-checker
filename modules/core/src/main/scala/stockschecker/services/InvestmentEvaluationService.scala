@@ -9,8 +9,13 @@ import cats.syntax.traverse.*
 import kirill5k.common.cats.Clock
 import stockschecker.actions.Action
 import stockschecker.domain.*
-import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{InvestmentEvaluationRepository, InvestmentScreenRepository, JobRepository}
+import stockschecker.utils.InvestmentEvaluator
+import stockschecker.repositories.{
+  EvaluationCapturePlanRepository,
+  InvestmentEvaluationRepository,
+  InvestmentScreenRepository,
+  JobRepository
+}
 
 import java.nio.charset.StandardCharsets
 import java.time.{Instant, LocalDate, ZoneOffset}
@@ -24,15 +29,13 @@ trait InvestmentEvaluationService[F[_]]:
 final private class LiveInvestmentEvaluationService[F[_]](
     private val screens: InvestmentScreenRepository[F],
     private val evaluations: InvestmentEvaluationRepository[F],
+    private val plans: EvaluationCapturePlanRepository[F],
     private val priceHistory: EvaluationPriceHistory[F],
     private val jobs: JobRepository[F]
 )(using
     F: Sync[F],
     C: Clock[F]
 ) extends InvestmentEvaluationService[F] {
-  private def loadHeader(id: InvestmentScreenId): F[InvestmentScreenRepository.Header] =
-    screens.header(id).flatMap(Sync[F].fromOption(_, AppError.EntityDoesNotExist("Investment screen", id.value)))
-
   override def refreshHistory(ticker: Ticker, range: DateRange): F[Unit] =
     priceHistory.history(ticker, range).void
 
@@ -58,7 +61,7 @@ final private class LiveInvestmentEvaluationService[F[_]](
     }
 
   private def materializePlan(
-      run: InvestmentScreenRepository.Header,
+      run: InvestmentScreenHeader,
       now: Instant,
       plan: EvaluationCapturePlan,
       capture: Boolean
@@ -68,7 +71,7 @@ final private class LiveInvestmentEvaluationService[F[_]](
     for
       gathered <- tickers.traverse(ticker => priceHistory.cached(ticker, range).map(ticker -> _))
       histories = gathered.collect { case (ticker, Some(series)) => ticker -> series }.toMap
-      report    = InvestmentEvaluator.evaluate(run._id, run.createdAt, now, run.cohorts, histories, Some(plan.through))
+      report    = InvestmentEvaluator.evaluate(run.id, run.createdAt, now, run.cohorts, histories, Some(plan.through))
       absent    = gathered.collect { case (ticker, None) => ticker }
       // Retry gaps in an otherwise audited vintage too: a successful request can still omit a session.
       missing = report.horizons
@@ -95,7 +98,7 @@ final private class LiveInvestmentEvaluationService[F[_]](
     )
 
   private def cachedEvaluation(
-      run: InvestmentScreenRepository.Header,
+      run: InvestmentScreenHeader,
       now: Instant,
       saved: Option[InvestmentEvaluation],
       capture: Boolean
@@ -106,17 +109,17 @@ final private class LiveInvestmentEvaluationService[F[_]](
     val through  = saved.flatMap(_.dataThrough).getOrElse(List(monthEnd, InvestmentEvaluator.finalCaptureThrough(from)).min)
     val month    = saved.flatMap(_.captureMonth).getOrElse(now.toString.take(7))
     if !through.isAfter(from) then
-      InvestmentEvaluator.evaluate(run._id, run.createdAt, now, run.cohorts, Map.empty).copy(settled = Some(false)).pure[F]
+      InvestmentEvaluator.evaluate(run.id, run.createdAt, now, run.cohorts, Map.empty).copy(settled = Some(false)).pure[F]
     else
-      val proposed = EvaluationCapturePlan(run._id, month, through, now)
+      val proposed = EvaluationCapturePlan(run.id, month, through, now)
       val plan     =
-        if capture then evaluations.getOrCreateCapturePlan(proposed)
-        else evaluations.findCapturePlan(run._id, month).map(_.getOrElse(proposed))
+        if capture then plans.getOrCreate(proposed)
+        else plans.find(run.id, month).map(_.getOrElse(proposed))
       plan.flatMap(p => materializePlan(run, now, p, capture))
 
   override def evaluate(id: InvestmentScreenId): F[InvestmentEvaluation] =
     for
-      run      <- loadHeader(id)
+      run      <- screens.find(id)
       now      <- Clock[F].now
       monthly  <- evaluations.findMonthly(id, now.toString.take(7))
       finished <-
@@ -126,14 +129,14 @@ final private class LiveInvestmentEvaluationService[F[_]](
         then evaluations.findFinished(id)
         else none[InvestmentEvaluation].pure[F]
       saved = monthly.orElse(finished)
-      report <- saved.filter(InvestmentEvaluationRepository.settled).fold(cachedEvaluation(run, now, saved, capture = false))(_.pure[F])
+      report <- saved.filter(_.isSettled).fold(cachedEvaluation(run, now, saved, capture = false))(_.pure[F])
     yield report
 
   override def captureMonthlyEvaluations: F[Int] =
     for
       now        <- Clock[F].now
       ids        <- screens.ids
-      priorPlans <- evaluations.capturePlans
+      priorPlans <- plans.all
       incomplete <- evaluations.unsettled
       finished   <- evaluations.finishedScreenIds
       currentMonth = now.toString.take(7)
@@ -145,24 +148,25 @@ final private class LiveInvestmentEvaluationService[F[_]](
       )
       recoveredPlans <- recovered
         .filterNot(p => priorPlans.exists(existing => existing.screenId == p.screenId && existing.month == p.month))
-        .traverse(evaluations.getOrCreateCapturePlan)
-      plans = (priorPlans ++ recoveredPlans).groupBy(p => (p.screenId, p.month)).values.map(_.head).toList
-      tasks = (ids.filterNot(finished).map(id => (id, currentMonth)) ++ plans.map(p => (p.screenId, p.month))).distinct
+        .traverse(plans.getOrCreate)
+      activePlans = (priorPlans ++ recoveredPlans).groupBy(p => (p.screenId, p.month)).values.map(_.head).toList
+      tasks       = (ids.filterNot(finished).map(id => (id, currentMonth)) ++ activePlans.map(p => (p.screenId, p.month))).distinct
       saved <- tasks.traverse { case (id, month) =>
         evaluations.findMonthly(id, month).flatMap {
-          case Some(report) if InvestmentEvaluationRepository.settled(report) =>
-            if plans.exists(p => p.screenId == id && p.month == month) then evaluations.retireCapturePlan(id, month).as(false)
+          case Some(report) if report.isSettled =>
+            if activePlans.exists(p => p.screenId == id && p.month == month) then plans.retire(id, month).as(false)
             else false.pure[F]
           case existing =>
-            loadHeader(id)
+            screens
+              .find(id)
               .flatMap { run =>
-                plans
+                activePlans
                   .find(p => p.screenId == id && p.month == month)
                   .fold(cachedEvaluation(run, now, existing, capture = true))(materializePlan(run, now, _, capture = true))
               }
               .flatMap { evaluation =>
                 if !evaluation.settled.contains(true) then false.pure[F]
-                else evaluations.saveMonthly(evaluation).as(true)
+                else evaluations.saveMonthly(evaluation) >> plans.retire(id, month).as(true)
               }
         }
       }
@@ -174,7 +178,8 @@ object InvestmentEvaluationService:
   def make[F[_]: {Sync, Clock}](
       screens: InvestmentScreenRepository[F],
       evaluations: InvestmentEvaluationRepository[F],
+      plans: EvaluationCapturePlanRepository[F],
       priceHistory: EvaluationPriceHistory[F],
       jobs: JobRepository[F]
   ): F[InvestmentEvaluationService[F]] =
-    Sync[F].pure(LiveInvestmentEvaluationService(screens, evaluations, priceHistory, jobs))
+    Sync[F].pure(LiveInvestmentEvaluationService(screens, evaluations, plans, priceHistory, jobs))

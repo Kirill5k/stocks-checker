@@ -56,7 +56,7 @@ final private class LiveInvestmentScreenService[F[_]](
         buildCohorts(ranking.inputs, ranking.scorecards, request),
         ranking.id
       )
-      _ <- screens.save(run)
+      _ <- screens.save(InvestmentScreenHeader.from(run))
     yield result(run)
 
   override def create(request: InvestmentScreenRequest): F[InvestmentScreenResult] =
@@ -67,8 +67,24 @@ final private class LiveInvestmentScreenService[F[_]](
       saved   <- saveScreen(id, request, ranking)
     yield saved
 
-  override def get(id: InvestmentScreenId): F[InvestmentScreenResult] = screens.find(id).map(result)
-  override def list(limit: Int): F[List[InvestmentScreenSummary]]     =
+  override def get(id: InvestmentScreenId): F[InvestmentScreenResult] =
+    for
+      screen    <- screens.find(id)
+      published <- rankings.find(screen.rankingId)
+      ranking   <- Sync[F].fromOption(published, AppError.EntityDoesNotExist("Investment screen", id.value))
+    yield result(
+      InvestmentScreenRun(
+        screen.id,
+        screen.createdAt,
+        ranking.recipe,
+        screen.request,
+        ranking.inputs,
+        ranking.scorecards,
+        screen.cohorts,
+        ranking.id
+      )
+    )
+  override def list(limit: Int): F[List[InvestmentScreenSummary]] =
     Sync[F].raiseWhen(limit < 1 || limit > 100)(AppError.FailedValidation("limit must be between 1 and 100")) >> screens.list(limit)
 
   override def evaluate(id: InvestmentScreenId): F[InvestmentEvaluation] = evaluations.evaluate(id)
@@ -92,9 +108,11 @@ final private class LiveInvestmentScreenService[F[_]](
         case Some(_)                                   => none[InvestmentScreenSummary].pure[F]
         case None if header.summary.eligibleCount < 20 => none[InvestmentScreenSummary].pure[F]
         case None                                      =>
-          rankings.get(header._id).flatMap { ranking =>
-            saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking).map(r => Some(r.summary))
-          }
+          rankings
+            .get(header.id)
+            .flatMap { ranking =>
+              saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking).map(r => Some(r.summary))
+            }
     yield created
 
   private def inScope(input: InvestmentCandidate, request: InvestmentScreenRequest): Boolean =
@@ -186,7 +204,7 @@ final private class LiveInvestmentScreenService[F[_]](
     }
     val nearMisses = (requestedNearMisses ++ financialNearMisses).take(10)
     InvestmentScreenResult(
-      InvestmentScreenRepository.summary(run),
+      InvestmentScreenSummary.from(run),
       run.request,
       matching.take(run.request.limit.getOrElse(20)),
       nearMisses,

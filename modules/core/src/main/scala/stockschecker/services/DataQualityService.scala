@@ -5,7 +5,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.domain.*
-import stockschecker.repositories.{DataQualityRepository, InvestmentRankingRepository, SecurityRepository}
+import stockschecker.repositories.{DataQualityRepository, SecurityRepository}
 
 trait DataQualityService[F[_]]:
   def report: F[DataQualityReport]
@@ -13,7 +13,7 @@ trait DataQualityService[F[_]]:
 final private class LiveDataQualityService[F[_]](
     private val quality: DataQualityRepository[F],
     private val securities: SecurityRepository[F],
-    private val rankings: InvestmentRankingRepository[F]
+    private val rankings: InvestmentRankingService[F]
 )(using
     F: Async[F],
     C: Clock[F]
@@ -44,6 +44,6 @@ object DataQualityService:
   def make[F[_]: {Async, Clock}](
       quality: DataQualityRepository[F],
       securities: SecurityRepository[F],
-      rankings: InvestmentRankingRepository[F]
+      rankings: InvestmentRankingService[F]
   ): F[DataQualityService[F]] =
     Async[F].pure(LiveDataQualityService[F](quality, securities, rankings))

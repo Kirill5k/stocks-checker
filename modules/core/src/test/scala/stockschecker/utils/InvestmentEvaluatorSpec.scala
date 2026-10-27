@@ -1,10 +1,12 @@
-package stockschecker.domain
+package stockschecker.utils
+
+import stockschecker.domain.*
 
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import java.time.{Instant, LocalDate}
 
-class InvestmentEvaluationSpec extends AnyWordSpec with Matchers:
+class InvestmentEvaluatorSpec extends AnyWordSpec with Matchers:
   private val formed  = Instant.parse("2020-01-01T23:00:00Z")
   private val now     = Instant.parse("2025-01-03T00:00:00Z")
   private val dates   = List("2020-01-01", "2020-01-02", "2021-01-04", "2023-01-02", "2025-01-02").map(LocalDate.parse)

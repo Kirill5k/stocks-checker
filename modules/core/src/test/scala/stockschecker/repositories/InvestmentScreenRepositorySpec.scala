@@ -2,18 +2,24 @@ package stockschecker.repositories
 
 import cats.effect.IO
 import cats.syntax.traverse.*
+import kirill5k.common.cats.Clock
 import mongo4cats.bson.Document
 import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
+import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
+import stockschecker.services.InvestmentRankingService
+import stockschecker.utils.InvestmentEvaluator
+
 import java.time.{Instant, LocalDate}
 
 class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs:
   val port         = 12164
   private val now  = Instant.parse("2026-10-19T12:00:00Z")
+  given Clock[IO]  = Clock.mock(now)
   private val card = InvestmentScorecard(
     AAPL,
     true,
@@ -35,41 +41,55 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
     List(InvestmentCandidate(AAPLStock, None)),
     List(card),
     List(InvestmentCohort("investment", List(AAPL))),
-    "rank-1"
+    InvestmentRankingId("rank-1")
   )
 
+  private def rankingService(db: MongoDatabase[IO]): IO[InvestmentRankingService[IO]] =
+    for
+      stocks   <- StockRepository.make[IO](db)
+      history  <- FinancialHistoryRepository.make[IO](db)
+      rankings <- InvestmentRankingRepository.make[IO](db)
+      inputs   <- InvestmentRankingInputRepository.make[IO](db)
+      screens  <- InvestmentScreenRepository.make[IO](db)
+      service  <- InvestmentRankingService.make(stocks, history, rankings, inputs, screens)
+    yield service
+
   "An InvestmentScreenRepository" should {
-    "round trip the frozen input universe and reject overwriting a published screen" in
+    "round trip screen metadata and reject overwriting a published screen" in
       withEmbeddedMongoDatabase { db =>
+        val expected = InvestmentScreenHeader.from(run)
         for
           repo      <- InvestmentScreenRepository.make[IO](db)
-          ranks     <- InvestmentRankingRepository.make[IO](db)
-          _         <- ranks.save(InvestmentRankingRun(run.rankingId, now, run.recipe, run.inputs, run.scorecards))
-          _         <- repo.save(run)
-          overwrite <- repo.save(run.copy(scorecards = List(card.copy(score = Some(BigDecimal(99)))))).attempt
+          _         <- repo.save(expected)
+          overwrite <- repo.save(expected.copy(cohorts = Nil)).attempt
           saved     <- repo.find(run.id)
+          header    <- repo.header(run.id)
           listed    <- repo.list(20)
+          rankings  <- repo.rankingIds
           raw       <- db.getCollection(InvestmentScreenRepository.CollectionName)
-          stored    <- raw.find(Filter.idEq(run.id.value) && Filter.eq("summary.id", run.id.value)).first
+          stored    <- raw
+            .find(Filter.idEq(run.id.value) && Filter.eq("summary.id", run.id.value) && Filter.eq("rankingId", run.rankingId.value))
+            .first
         yield
           overwrite.isLeft mustBe true
-          saved mustBe run
+          saved mustBe expected
+          header.map(_.id) mustBe Some(run.id)
+          header.map(_.rankingId) mustBe Some(run.rankingId)
           listed.map(_.id) mustBe List(run.id)
+          rankings mustBe Set(run.rankingId)
           stored must not be empty
       }
     "read existing UUID and monthly screen IDs stored as BSON strings" in
       withEmbeddedMongoDatabase { db =>
         val ids = List("e7ce580d-1cdf-4219-9d34-1a25437f05b1", "monthly:2026-10:quality-fair-value-v1").map(InvestmentScreenId(_))
         for
-          repo  <- InvestmentScreenRepository.make[IO](db)
-          ranks <- InvestmentRankingRepository.make[IO](db)
-          _     <- ranks.save(InvestmentRankingRun(run.rankingId, now, run.recipe, run.inputs, run.scorecards))
-          raw   <- db.getCollection(InvestmentScreenRepository.CollectionName)
-          _     <- raw.insertMany(ids.map { id =>
+          repo <- InvestmentScreenRepository.make[IO](db)
+          raw  <- db.getCollection(InvestmentScreenRepository.CollectionName)
+          _    <- raw.insertMany(ids.map { id =>
             Document(
               "_id"       := id.value,
               "createdAt" := now,
-              "rankingId" := run.rankingId,
+              "rankingId" := run.rankingId.value,
               "request"   := Document(),
               "cohorts"   := List(Document("name" := "investment", "tickers" := List(AAPL.value))),
               "summary"   := Document(
@@ -87,7 +107,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           allIds <- repo.ids
           listed <- repo.list(20)
         yield
-          saved mustBe ids.map(id => run.copy(id = id))
+          saved mustBe ids.map(id => InvestmentScreenHeader.from(run.copy(id = id)))
           allIds.toSet mustBe ids.toSet
           listed.map(_.id).toSet mustBe ids.toSet
       }
@@ -102,18 +122,18 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           saved mustBe Left(AppError.EntityDoesNotExist("Investment screen", id.value))
           listed mustBe Nil
       }
-    "return an error when the referenced ranking does not exist" in
+    "read screen metadata independently of ranking storage" in
       withEmbeddedMongoDatabase { db =>
+        val expected = InvestmentScreenHeader.from(run)
         for
-          repo    <- InvestmentScreenRepository.make[IO](db)
-          ranks   <- InvestmentRankingRepository.make[IO](db)
-          _       <- ranks.save(InvestmentRankingRun(run.rankingId, now, run.recipe, run.inputs, run.scorecards))
-          _       <- repo.save(run)
-          headers <- db.getCollection(InvestmentRankingRepository.CollectionName)
-          _       <- headers.deleteOne(Filter.idEq(run.rankingId))
-          saved   <- repo.find(run.id).attempt
-        yield saved mustBe Left(AppError.EntityDoesNotExist("Investment screen", run.id.value))
+          repo  <- InvestmentScreenRepository.make[IO](db)
+          _     <- repo.save(expected)
+          saved <- repo.find(run.id)
+        yield saved mustBe expected
       }
+  }
+
+  "An InvestmentEvaluationRepository" should {
     "save a single immutable evaluation for a screen and month" in
       withEmbeddedMongoDatabase { db =>
         val formedAt = Instant.parse("2026-09-01T00:00:00Z")
@@ -138,11 +158,9 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
         )
         for
           repo      <- InvestmentEvaluationRepository.make[IO](db)
-          _         <- repo.getOrCreateCapturePlan(EvaluationCapturePlan(run.id, "2026-10", through, now))
           _         <- repo.saveMonthly(evaluation)
           overwrite <- repo.saveMonthly(evaluation.copy(methodology = "changed")).attempt
           saved     <- repo.findMonthly(run.id, "2026-10")
-          plan      <- repo.findCapturePlan(run.id, "2026-10")
           raw       <- db.getCollection(InvestmentEvaluationRepository.CollectionName)
           stored    <- raw
             .find(
@@ -153,10 +171,9 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
         yield
           overwrite.isRight mustBe true
           saved mustBe Some(evaluation)
-          plan mustBe None
           stored must not be empty
       }
-    "mark completed legacy captures so subsequent retries exclude them and retire their plans" in
+    "mark completed legacy captures so subsequent retries exclude them" in
       withEmbeddedMongoDatabase { db =>
         val formedAt = Instant.parse("2026-09-01T00:00:00Z")
         val from     = LocalDate.parse("2026-09-01")
@@ -181,19 +198,16 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
         for
           repo    <- InvestmentEvaluationRepository.make[IO](db)
           _       <- repo.saveMonthly(evaluation)
-          entries <- db.getCollectionWithCodec[InvestmentEvaluationRepository.Entry](InvestmentEvaluationRepository.CollectionName)
+          entries <- db.getCollectionWithCodec[entities.InvestmentEvaluationEntity](InvestmentEvaluationRepository.CollectionName)
           _       <- entries.updateOne(Filter.idEq(s"${run.id.value}:2026-10"), Update.unset("complete").unset("settled").unset("finished"))
-          _       <- repo.getOrCreateCapturePlan(EvaluationCapturePlan(run.id, "2026-10", through, now))
           pending <- repo.unsettled
           migrated  <- entries.find(Filter.idEq(s"${run.id.value}:2026-10")).first
           remaining <- entries.find(Filter.ne("settled", true)).all
-          plan      <- repo.findCapturePlan(run.id, "2026-10")
         yield
           pending mustBe Nil
           migrated.flatMap(_.settled) mustBe Some(true)
           migrated.map(_.evaluation) mustBe Some(evaluation)
           remaining mustBe empty
-          plan mustBe None
       }
     "freeze settled missing outcomes and mark finished screens only after the full exit window" in
       withEmbeddedMongoDatabase { db =>
@@ -286,7 +300,10 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           remaining mustBe Nil
           overwrite.isRight mustBe true
       }
-    "store only financial diagnostics alongside the scorecard evidence and expose lightweight ranking headers" in
+  }
+
+  "An InvestmentRankingInputRepository" should {
+    "store only financial diagnostics alongside the scorecard evidence" in
       withEmbeddedMongoDatabase { db =>
         val observation = FinancialObservation("fcfMargin", LocalDate.parse("2025-12-31"), BigDecimal("0.2"), "ratio")
         val snapshot    = FinancialSnapshot(
@@ -315,79 +332,172 @@ class InvestmentScreenRepositorySpec extends RepositorySpec with MongoJsonCodecs
           Some("USD")
         )
         val ranking = InvestmentRankingRun(
-          "compact",
+          InvestmentRankingId("compact"),
           now,
           InvestmentRecipe(),
           List(candidate),
           List(card.copy(financialSnapshotId = Some(snapshot.id), evidence = Some(evidence)))
         )
         for
-          repo   <- InvestmentRankingRepository.make[IO](db)
-          _      <- repo.save(ranking)
-          header <- repo.latestHeader
-          saved  <- repo.find(ranking.id)
+          repo    <- InvestmentRankingInputRepository.make[IO](db)
+          _       <- repo.save(ranking)
+          saved   <- repo.find(ranking.id)
+          summary <- repo.summary(ranking.id)
+          raw     <- db.getCollection(InvestmentRankingInputRepository.CollectionName)
+          stored  <- raw.find(Filter.eq("rankingId", ranking.id.value)).first
         yield
-          header.map(_.summary) mustBe Some(InvestmentRankingSummary(1, 1, Map.empty))
-          saved.get.inputs.head.financialSnapshot.get.annual mustBe Nil
-          saved.get.inputs.head.financialSnapshot.get.quarterly mustBe Nil
-          saved.get.inputs.head.financialSnapshot.get.rawPayload mustBe ""
-          saved.get.inputs.head.financialSnapshot.get.metrics mustBe Map("peTTM" -> BigDecimal(10))
-          saved.get.scorecards mustBe ranking.scorecards
+          summary mustBe InvestmentRankingSummary(1, 1, Map.empty)
+          stored must not be empty
+          saved.inputs.head.financialSnapshot.get.annual mustBe Nil
+          saved.inputs.head.financialSnapshot.get.quarterly mustBe Nil
+          saved.inputs.head.financialSnapshot.get.rawPayload mustBe ""
+          saved.inputs.head.financialSnapshot.get.metrics mustBe Map("peTTM" -> BigDecimal(10))
+          saved.scorecards mustBe ranking.scorecards
+      }
+    "preserve input order independently from scorecard order" in
+      withEmbeddedMongoDatabase { db =>
+        val ranking = InvestmentRankingRun(
+          InvestmentRankingId("different-orders"),
+          now,
+          run.recipe,
+          List(InvestmentCandidate(MSFTStock, None), InvestmentCandidate(AAPLStock, None)),
+          List(card, card.copy(ticker = MSFT))
+        )
+        for
+          repo  <- InvestmentRankingInputRepository.make[IO](db)
+          _     <- repo.save(ranking)
+          saved <- repo.find(ranking.id)
+        yield
+          saved.inputs mustBe ranking.inputs
+          saved.scorecards mustBe ranking.scorecards
+      }
+  }
+
+  "An InvestmentRankingRepository" should {
+    "preserve legacy missing summaries without querying ranking inputs" in
+      withEmbeddedMongoDatabase { db =>
+        val ranking = InvestmentRankingRun(InvestmentRankingId("legacy-metadata"), now, run.recipe, run.inputs, run.scorecards)
+        val header  = InvestmentRankingHeader.from(ranking)
+        for
+          repo     <- InvestmentRankingRepository.make[IO](db)
+          _        <- repo.save(header)
+          raw      <- db.getCollection(InvestmentRankingRepository.CollectionName)
+          _        <- raw.updateOne(Filter.idEq(ranking.id.value), Update.unset("summary"))
+          legacy   <- repo.find(ranking.id)
+          _        <- repo.updateSummary(ranking.id, header.summary)
+          restored <- repo.latest
+        yield
+          legacy.map(_.id) mustBe Some(ranking.id)
+          legacy.flatMap(_.summary) mustBe None
+          restored.flatMap(_.summary) mustBe Some(header.summary)
+      }
+  }
+
+  "An InvestmentRankingService with MongoDB repositories" should {
+    "make a ranking visible only after its header is published" in
+      withEmbeddedMongoDatabase { db =>
+        val ranking = InvestmentRankingRun(InvestmentRankingId("pending-publication"), now, run.recipe, run.inputs, run.scorecards)
+        for
+          service     <- rankingService(db)
+          inputs      <- InvestmentRankingInputRepository.make[IO](db)
+          rankings    <- InvestmentRankingRepository.make[IO](db)
+          _           <- inputs.save(ranking)
+          before      <- service.latestHeader
+          unpublished <- service.get(ranking.id).attempt
+          _           <- rankings.save(InvestmentRankingHeader.from(ranking))
+          after       <- service.latestHeader
+          published   <- service.get(ranking.id)
+        yield
+          before mustBe None
+          unpublished.isLeft mustBe true
+          after mustBe Some(InvestmentRankingHeader.from(ranking))
+          published mustBe ranking
       }
     "backfill legacy header summaries without losing published rankings" in
       withEmbeddedMongoDatabase { db =>
-        val ranking = InvestmentRankingRun("legacy", now, InvestmentRecipe(), run.inputs, run.scorecards)
+        val ranking = InvestmentRankingRun(InvestmentRankingId("legacy"), now, InvestmentRecipe(), run.inputs, run.scorecards)
         for
           repo     <- InvestmentRankingRepository.make[IO](db)
-          _        <- repo.save(ranking)
+          inputs   <- InvestmentRankingInputRepository.make[IO](db)
+          service  <- rankingService(db)
+          _        <- inputs.save(ranking)
+          _        <- repo.save(InvestmentRankingHeader.from(ranking))
           raw      <- db.getCollection(InvestmentRankingRepository.CollectionName)
-          _        <- raw.updateOne(Filter.idEq(ranking.id), Update.unset("summary"))
-          header   <- repo.latestHeader
-          restored <- repo.find(ranking.id)
+          _        <- raw.updateOne(Filter.idEq(ranking.id.value), Update.unset("summary"))
+          header   <- service.latestHeader
+          byId     <- repo.find(ranking.id)
+          restored <- service.get(ranking.id)
         yield
+          header.map(_.id) mustBe Some(ranking.id)
           header.map(_.summary) mustBe Some(InvestmentRankingSummary(1, 1, Map.empty))
-          restored mustBe Some(ranking)
+          byId.flatMap(_.summary) mustBe header.map(_.summary)
+          restored mustBe ranking
       }
     "prune old unreferenced rankings and interrupted inputs while preserving screen evidence" in
       withEmbeddedMongoDatabase { db =>
         val old     = now.minusSeconds(40L * 86400)
         val ranking = InvestmentRankingRun(run.rankingId, old, run.recipe, run.inputs, run.scorecards)
         for
-          repo     <- InvestmentRankingRepository.make[IO](db)
-          screens  <- InvestmentScreenRepository.make[IO](db)
-          _        <- repo.save(ranking)
-          _        <- screens.save(run)
-          _        <- repo.save(ranking.copy(id = "obsolete"))
-          _        <- repo.save(ranking.copy(id = "recent", createdAt = now))
-          _        <- repo.save(ranking.copy(id = "interrupted"))
-          headers  <- db.getCollection(InvestmentRankingRepository.CollectionName)
-          _        <- headers.deleteMany(Filter.idEq("interrupted"))
-          _        <- repo.prune(now.minusSeconds(30L * 86400))
-          retained <- repo.find(run.rankingId)
-          obsolete <- repo.find("obsolete")
-          recent   <- repo.find("recent")
-          inputs   <- db.getCollectionWithCodec[InvestmentRankingRepository.Input](InvestmentRankingRepository.InputCollectionName)
-          rows     <- inputs.find.all
+          repo    <- InvestmentRankingRepository.make[IO](db)
+          inputs  <- InvestmentRankingInputRepository.make[IO](db)
+          screens <- InvestmentScreenRepository.make[IO](db)
+          service <- rankingService(db)
+          published = List(
+            ranking,
+            ranking.copy(id = InvestmentRankingId("obsolete")),
+            ranking.copy(id = InvestmentRankingId("recent"), createdAt = now)
+          )
+          _ <- published.traverse { value =>
+            inputs.save(value).flatMap(_ => repo.save(InvestmentRankingHeader.from(value)))
+          }
+          _         <- screens.save(InvestmentScreenHeader.from(run))
+          _         <- inputs.save(ranking.copy(id = InvestmentRankingId("interrupted")))
+          _         <- inputs.save(ranking.copy(id = InvestmentRankingId("in-flight"), createdAt = now))
+          _         <- inputs.save(ranking.copy(id = InvestmentRankingId("legacy-orphan")))
+          rawInputs <- db.getCollectionWithCodec[entities.InvestmentRankingInputEntity](InvestmentRankingInputRepository.CollectionName)
+          _         <- rawInputs.updateOne(Filter.eq("rankingId", "legacy-orphan"), Update.unset("createdAt"))
+          _         <- service.prune(now.minusSeconds(30L * 86400))
+          retained  <- service.get(run.rankingId)
+          obsolete  <- repo.find(InvestmentRankingId("obsolete"))
+          recent    <- service.get(InvestmentRankingId("recent"))
+          rows      <- rawInputs.find.all
         yield
-          retained mustBe Some(ranking)
+          retained mustBe ranking
           obsolete mustBe None
-          recent.map(_.id) mustBe Some("recent")
-          rows.map(_.rankingId).toSet mustBe Set(run.rankingId, "recent")
+          recent.id mustBe InvestmentRankingId("recent")
+          rows.map(_.rankingId).toSet mustBe Set(run.rankingId, InvestmentRankingId("recent"), InvestmentRankingId("in-flight"))
       }
+  }
+
+  "An EvaluationCapturePlanRepository" should {
     "retain the original monthly price cutoff when deferred work resumes on a later date" in
       withEmbeddedMongoDatabase { db =>
         val original = EvaluationCapturePlan(run.id, "2026-10", LocalDate.parse("2026-10-20"), now)
         for
-          repo   <- InvestmentEvaluationRepository.make[IO](db)
-          first  <- repo.getOrCreateCapturePlan(original)
-          later  <- repo.getOrCreateCapturePlan(original.copy(through = LocalDate.parse("2026-10-25")))
-          stored <- repo.findCapturePlan(run.id, "2026-10")
-          raw    <- db.getCollection(InvestmentEvaluationRepository.PlanCollectionName)
+          repo   <- EvaluationCapturePlanRepository.make[IO](db)
+          first  <- repo.getOrCreate(original)
+          later  <- repo.getOrCreate(original.copy(through = LocalDate.parse("2026-10-25")))
+          stored <- repo.find(run.id, "2026-10")
+          all    <- repo.all
+          raw    <- db.getCollection(EvaluationCapturePlanRepository.CollectionName)
           plan   <- raw.find(Filter.idEq(s"${run.id.value}:2026-10") && Filter.eq("plan.screenId", run.id.value)).first
         yield
           first mustBe original
           later mustBe original
           stored mustBe Some(original)
+          all mustBe List(original)
           plan must not be empty
+      }
+    "retire only the requested screen and month" in
+      withEmbeddedMongoDatabase { db =>
+        val october  = EvaluationCapturePlan(run.id, "2026-10", LocalDate.parse("2026-09-30"), now)
+        val november = october.copy(month = "2026-11", through = LocalDate.parse("2026-10-31"))
+        for
+          repo      <- EvaluationCapturePlanRepository.make[IO](db)
+          _         <- repo.getOrCreate(october)
+          _         <- repo.getOrCreate(november)
+          _         <- repo.retire(run.id, october.month)
+          remaining <- repo.all
+        yield remaining mustBe List(november)
       }
   }

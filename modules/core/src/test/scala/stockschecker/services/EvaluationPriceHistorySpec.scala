@@ -5,6 +5,7 @@ import cats.syntax.foldable.*
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.*
+import stockschecker.utils.InvestmentEvaluator
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.PriceHistoryRepository
 import java.time.{Instant, LocalDate, ZoneOffset}

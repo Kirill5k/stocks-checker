@@ -7,6 +7,7 @@ import org.http4s.implicits.*
 import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
 import stockschecker.domain.*
+import stockschecker.utils.InvestmentEvaluator
 import stockschecker.services.InvestmentScreenService
 import java.time.Instant
 import io.circe.syntax.*
@@ -44,7 +45,7 @@ class InvestmentScreenControllerSpec extends HttpRoutesWordSpec:
       val service = mock[InvestmentScreenService[IO]]
       val id      = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
       val summary = InvestmentScreenSummary(id, Instant.parse("2026-10-19T00:00:00Z"), "v1", 0, 0, 0, Map.empty)
-      val screen  = InvestmentScreenResult(summary, InvestmentScreenRequest(), Nil, Nil, Nil, Nil, "ranking-1")
+      val screen  = InvestmentScreenResult(summary, InvestmentScreenRequest(), Nil, Nil, Nil, Nil, InvestmentRankingId("ranking-1"))
       when(service.get(id)).thenReturnIO(screen)
       val result = for
         controller <- InvestmentScreenController.make(service, config)

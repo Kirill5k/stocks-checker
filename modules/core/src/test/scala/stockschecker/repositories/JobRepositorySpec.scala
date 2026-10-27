@@ -80,9 +80,9 @@ class JobRepositorySpec extends RepositorySpec {
     "retain evaluation attempt counts while a capture needs its cutoff, then prune after it settles" in withEmbeddedMongoDatabase { db =>
       val expiredAt = ts.minusSeconds(31.days.toSeconds)
       for {
-        jobs        <- JobRepository.make[IO](db)
-        evaluations <- InvestmentEvaluationRepository.make[IO](db)
-        _           <- jobs.enqueue(
+        jobs         <- JobRepository.make[IO](db)
+        capturePlans <- EvaluationCapturePlanRepository.make[IO](db)
+        _            <- jobs.enqueue(
           Job(
             JobId("needed"),
             evaluationAction,
@@ -93,10 +93,10 @@ class JobRepositorySpec extends RepositorySpec {
             restartCount = Some(Job.MaxEvaluationRestarts)
           )
         )
-        _ <- evaluations.getOrCreateCapturePlan(EvaluationCapturePlan(InvestmentScreenId("screen"), "2026-02", evaluationThrough, ts))
-        _ <- jobs.pruneCompleted(ts)
+        _            <- capturePlans.getOrCreate(EvaluationCapturePlan(InvestmentScreenId("screen"), "2026-02", evaluationThrough, ts))
+        _            <- jobs.pruneCompleted(ts)
         protectedJob <- jobs.find(JobId("needed"))
-        plans        <- db.getCollection(InvestmentEvaluationRepository.PlanCollectionName)
+        plans        <- db.getCollection(EvaluationCapturePlanRepository.CollectionName)
         _            <- plans.deleteMany(Filter.empty)
         _            <- jobs.pruneCompleted(ts)
         expired      <- jobs.find(JobId("needed"))

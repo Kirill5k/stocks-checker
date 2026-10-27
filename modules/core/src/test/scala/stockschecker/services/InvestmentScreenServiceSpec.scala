@@ -13,20 +13,21 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
   private val now = Instant.parse("2026-10-19T12:00:00Z")
   given Clock[IO] = Clock.mock(now)
 
-  private def memoryScreens(state: Ref[IO, List[InvestmentScreenRun]]): InvestmentScreenRepository[IO] =
+  private def memoryScreens(state: Ref[IO, List[InvestmentScreenHeader]]): InvestmentScreenRepository[IO] =
     new InvestmentScreenRepository[IO]:
-      def save(run: InvestmentScreenRun): IO[Unit]              = state.update(_ :+ run)
-      def find(id: InvestmentScreenId): IO[InvestmentScreenRun] =
-        state.get.flatMap(runs => IO.fromOption(runs.find(_.id == id))(AppError.EntityDoesNotExist("Investment screen", id.value)))
-      def header(id: InvestmentScreenId): IO[Option[InvestmentScreenRepository.Header]] = state.get
-        .map(_.find(_.id == id))
-        .map(
-          _.map(r =>
-            InvestmentScreenRepository.Header(r.id, r.createdAt, r.rankingId, r.request, r.cohorts, InvestmentScreenRepository.summary(r))
-          )
-        )
-      def list(limit: Int): IO[List[InvestmentScreenSummary]] = state.get.map(_.reverse.take(limit).map(InvestmentScreenRepository.summary))
-      def ids: IO[List[InvestmentScreenId]]                   = state.get.map(_.map(_.id))
+      def save(header: InvestmentScreenHeader): IO[Unit]           = state.update(_ :+ header)
+      def find(id: InvestmentScreenId): IO[InvestmentScreenHeader] =
+        state.get.flatMap(headers => IO.fromOption(headers.find(_.id == id))(AppError.EntityDoesNotExist("Investment screen", id.value)))
+      def header(id: InvestmentScreenId): IO[Option[InvestmentScreenHeader]] = state.get.map(_.find(_.id == id))
+      def list(limit: Int): IO[List[InvestmentScreenSummary]]                = state.get.map(_.reverse.take(limit).map(_.summary))
+      def ids: IO[List[InvestmentScreenId]]                                  = state.get.map(_.map(_.id))
+      def rankingIds: IO[Set[InvestmentRankingId]]                           = state.get.map(_.map(_.rankingId).toSet)
+
+  private def publishedRanking(run: InvestmentScreenRun): InvestmentRankingService[IO] =
+    val rankings = mock[InvestmentRankingService[IO]]
+    when(rankings.find(run.rankingId))
+      .thenReturnSome(InvestmentRankingRun(run.rankingId, run.createdAt, run.recipe, run.inputs, run.scorecards))
+    rankings
 
   "InvestmentScreenService" should {
     "propagate a missing-screen error from the repository" in {
@@ -47,12 +48,34 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       }
     }
 
+    "return a missing-screen error when its referenced ranking has disappeared" in {
+      val screens   = mock[InvestmentScreenRepository[IO]]
+      val rankings  = mock[InvestmentRankingService[IO]]
+      val id        = InvestmentScreenId("dangling")
+      val rankingId = InvestmentRankingId("missing")
+      val header    = InvestmentScreenHeader(
+        id,
+        now,
+        rankingId,
+        InvestmentScreenRequest(),
+        Nil,
+        InvestmentScreenSummary(id, now, "v1", 0, 0, 0, Map.empty)
+      )
+      when(screens.find(id)).thenReturnIO(header)
+      when(rankings.find(rankingId)).thenReturnNone
+      (for
+        service <- InvestmentScreenService.make(screens, rankings, mock[InvestmentEvaluationService[IO]])
+        result  <- service.get(id)
+      yield result).attempt.asserting(_ mustBe Left(AppError.EntityDoesNotExist("Investment screen", id.value)))
+    }
+
     "publish the daily ranking before capturing monthly evaluations during a research refresh" in {
       val screens     = mock[InvestmentScreenRepository[IO]]
       val rankings    = mock[InvestmentRankingService[IO]]
       val evaluations = mock[InvestmentEvaluationService[IO]]
-      val header      = InvestmentRankingRepository.Header("daily", now, InvestmentRecipe(), InvestmentRankingSummary(1, 0, Map.empty))
-      val id          = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
+      val header      =
+        InvestmentRankingHeader(InvestmentRankingId("daily"), now, InvestmentRecipe(), InvestmentRankingSummary(1, 0, Map.empty))
+      val id = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
       when(rankings.refresh(LocalDate.parse("2026-10-19"))).thenReturnIO(header)
       when(screens.header(id)).thenReturnNone
       when(evaluations.captureMonthlyEvaluations).thenReturnIO(0)
@@ -65,8 +88,8 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         ordered.verify(rankings).refresh(LocalDate.parse("2026-10-19"))
         ordered.verify(screens).header(id)
         ordered.verify(evaluations).captureMonthlyEvaluations
-        verify(rankings, never).get(any[String])
-        verify(screens, never).save(any[InvestmentScreenRun])
+        verify(rankings, never).get(any[InvestmentRankingId])
+        verify(screens, never).save(any[InvestmentScreenHeader])
         succeed
       }
     }
@@ -86,13 +109,14 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         succeed
       }
     }
-    "snapshot the complete universe before applying country or display limits and retain exclusions" in {
+    "reference the complete ranking before applying country or display limits and retain exclusions" in {
       val rankings = mock[InvestmentRankingService[IO]]
       val inputs   = List(AAPLStock, MSFTStock).map(s => InvestmentCandidate(s, None))
-      val ranking  = InvestmentRankingRun("completed-rank", now, InvestmentRecipe(), inputs, InvestmentScorer.rank(inputs, now))
+      val ranking  =
+        InvestmentRankingRun(InvestmentRankingId("completed-rank"), now, InvestmentRecipe(), inputs, InvestmentScorer.rank(inputs, now))
       when(rankings.latest).thenReturnIO(ranking)
       val result = for
-        state   <- Ref.of[IO, List[InvestmentScreenRun]](Nil)
+        state   <- Ref.of[IO, List[InvestmentScreenHeader]](Nil)
         service <- InvestmentScreenService.make(
           memoryScreens(state),
           rankings,
@@ -102,8 +126,8 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         saved   <- state.get
       yield (created, saved)
       result.asserting { case (created, saved) =>
-        saved.head.inputs.map(_.stock.security.ticker).toSet mustBe Set(AAPL, MSFT)
-        saved.head.scorecards.size mustBe 2
+        saved.head.summary.universeCount mustBe 2
+        saved.head.summary mustBe created.summary
         created.summary.universeCount mustBe 2
         created.summary.excludedByReason("missing-financial-snapshot") mustBe 2
         created.candidates mustBe Nil
@@ -125,10 +149,10 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         Nil
       )
       val result = for
-        state   <- Ref.of[IO, List[InvestmentScreenRun]](List(run))
+        state   <- Ref.of[IO, List[InvestmentScreenHeader]](List(InvestmentScreenHeader.from(run)))
         service <- InvestmentScreenService.make(
           memoryScreens(state),
-          mock[InvestmentRankingService[IO]],
+          publishedRanking(run),
           mock[InvestmentEvaluationService[IO]]
         )
         found <- service.get(run.id)
@@ -159,15 +183,15 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
           "quality-fair-value-v1"
         )
       }
-      val rank     = InvestmentRankingRun("published", now, InvestmentRecipe(), inputs, cards)
+      val rank     = InvestmentRankingRun(InvestmentRankingId("published"), now, InvestmentRecipe(), inputs, cards)
       val rankings = mock[InvestmentRankingService[IO]]
       when(rankings.latest).thenReturnIO(rank)
       when(rankings.refresh(any[LocalDate])).thenReturnIO(
-        InvestmentRankingRepository.Header(rank.id, now, rank.recipe, InvestmentRankingRepository.summary(rank))
+        InvestmentRankingHeader(rank.id, now, rank.recipe, InvestmentRankingSummary.from(rank))
       )
       when(rankings.get(rank.id)).thenReturnIO(rank)
       val result = for
-        state   <- Ref.of[IO, List[InvestmentScreenRun]](Nil)
+        state   <- Ref.of[IO, List[InvestmentScreenHeader]](Nil)
         service <- InvestmentScreenService.make(
           memoryScreens(state),
           rankings,
@@ -226,10 +250,10 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         Nil
       )
       val result = for
-        state   <- Ref.of[IO, List[InvestmentScreenRun]](List(run))
+        state   <- Ref.of[IO, List[InvestmentScreenHeader]](List(InvestmentScreenHeader.from(run)))
         service <- InvestmentScreenService.make(
           memoryScreens(state),
-          mock[InvestmentRankingService[IO]],
+          publishedRanking(run),
           mock[InvestmentEvaluationService[IO]]
         )
         found <- service.get(run.id)
@@ -241,14 +265,19 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       }
     }
     "only read ranking headers when the daily ranking and monthly screen already exist" in {
-      val ranking  = InvestmentRankingRepository.Header("published", now, InvestmentRecipe(), InvestmentRankingSummary(100, 25, Map.empty))
+      val ranking = InvestmentRankingHeader(
+        InvestmentRankingId("published"),
+        now,
+        InvestmentRecipe(),
+        InvestmentRankingSummary(100, 25, Map.empty)
+      )
       val rankings = mock[InvestmentRankingService[IO]]
       val screens  = mock[InvestmentScreenRepository[IO]]
       val id       = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
-      val header   = InvestmentScreenRepository.Header(
+      val header   = InvestmentScreenHeader(
         id,
         now,
-        ranking._id,
+        ranking.id,
         InvestmentScreenRequest(),
         Nil,
         InvestmentScreenSummary(id, now, ranking.recipe.version, 100, 25, 20, Map.empty)
@@ -266,7 +295,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       result.asserting { created =>
         created mustBe None
         verify(rankings, never).latest
-        verify(rankings, never).get(any[String])
+        verify(rankings, never).get(any[InvestmentRankingId])
         verify(screens, never).find(any[InvestmentScreenId])
         succeed
       }
@@ -316,10 +345,10 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         Nil
       )
       val result = for
-        state   <- Ref.of[IO, List[InvestmentScreenRun]](List(run))
+        state   <- Ref.of[IO, List[InvestmentScreenHeader]](List(InvestmentScreenHeader.from(run)))
         service <- InvestmentScreenService.make(
           memoryScreens(state),
-          mock[InvestmentRankingService[IO]],
+          publishedRanking(run),
           mock[InvestmentEvaluationService[IO]]
         )
         found <- service.get(run.id)
