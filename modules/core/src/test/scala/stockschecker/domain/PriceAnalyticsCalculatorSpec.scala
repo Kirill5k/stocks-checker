@@ -539,7 +539,7 @@ class PriceAnalyticsCalculatorSpec extends AnyWordSpec with Matchers with ScalaC
         long.metrics mustBe short.metrics
         long.scores mustBe short.scores
         long.performanceSummary.maxChange must not be short.performanceSummary.maxChange
-        long.basis.riskWindowYears mustBe 5
+        long.basis.map(_.riskWindowYears) mustBe Some(5)
       }
     }
 
@@ -557,7 +557,7 @@ class PriceAnalyticsCalculatorSpec extends AnyWordSpec with Matchers with ScalaC
         analytics.performanceSummary.oneMonthChange mustBe Some(BigDecimal(200))
         analytics.performanceSummary.threeYearChange mustBe Some(BigDecimal(500))
         analytics.metrics.cagr3Year.get.toDouble mustBe (81.69 +- 0.02)
-        analytics.basis.returnAdjustment mustBe "split-and-dividend"
+        analytics.basis.map(_.returnAdjustment) mustBe Some("split-and-dividend")
       }
 
       "preserve valid returns while withholding monthly risk statistics across a trading halt" in {

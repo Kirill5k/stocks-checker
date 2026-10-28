@@ -20,7 +20,7 @@ class PriceHistoryValidationSpec extends AnyWordSpec with Matchers {
       val daily     = NonEmptyList.of(bar("2026-10-01", 100), bar("2026-10-02", 50), bar("2026-10-05", 100))
       val analytics = PriceAnalyticsCalculator.fromDaily(Ticker("TEST"), daily)
       analytics.metrics.maxDrawdown mustBe Some(BigDecimal(50))
-      analytics.basis.drawdownFrequency mustBe "daily"
+      analytics.basis.map(_.drawdownFrequency) mustBe Some("daily")
     }
   }
 }

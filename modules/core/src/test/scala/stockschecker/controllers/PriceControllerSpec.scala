@@ -2,6 +2,8 @@ package stockschecker.controllers
 
 import cats.effect.IO
 import cats.data.NonEmptyList
+import io.circe.Json
+import io.circe.parser.parse
 import kirill5k.common.http4s.test.HttpRoutesWordSpec
 import org.http4s.*
 import org.http4s.implicits.*
@@ -110,6 +112,32 @@ class PriceControllerSpec extends HttpRoutesWordSpec {
                               |}""".stripMargin
         res mustHaveStatus (Status.Ok, Some(responseBody))
         verify(svc).findPriceAnalytics(AAPL, false)
+      }
+
+      "return stored analytics with null basis without requesting a refresh" in {
+        val svc = mocks
+        when(svc.findPriceAnalytics(any[Ticker], anyBoolean)).thenReturnIO(AAPLPriceAnalytics.copy(basis = None))
+
+        val result = for
+          controller <- PriceController.make(svc, apiConfig)
+          request = Request[IO](uri = uri"/price/performance-summaries/AAPL").withHeaders(apiKeyHeader)
+          response <- controller.routes.orNotFound.run(request)
+          body     <- response.as[String]
+          json     <- IO.fromEither(parse(body))
+        yield (response.status, json)
+
+        result
+          .map { case (status, json) =>
+            status mustBe Status.Ok
+            json.hcursor.get[String]("ticker") mustBe Right("AAPL")
+            json.hcursor.downField("basis").focus mustBe Some(Json.Null)
+            json.hcursor.downField("performanceSummary").get[BigDecimal]("latestPrice") mustBe Right(
+              AAPLPricePerformanceSummary.latestPrice
+            )
+            verify(svc).findPriceAnalytics(AAPL, false)
+            succeed
+          }
+          .unsafeToFuture()(using cats.effect.unsafe.IORuntime.global)
       }
 
       "return 404 on not found" in {

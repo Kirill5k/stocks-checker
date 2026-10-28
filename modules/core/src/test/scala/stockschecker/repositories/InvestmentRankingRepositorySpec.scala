@@ -13,6 +13,21 @@ class InvestmentRankingRepositorySpec extends RepositorySpec:
   override val port = 12223
 
   "An InvestmentRankingRepository" should {
+    "preserve analytics with and without basis in frozen ranking inputs" in
+      withEmbeddedMongoDatabase { db =>
+        val withoutBasis = AAPLStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(basis = None)))
+        val withBasis    = MSFTStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(ticker = MSFT)))
+        val values       = List(
+          InvestmentRankingEntry(InvestmentCandidate(withoutBasis, None), card),
+          InvestmentRankingEntry(InvestmentCandidate(withBasis, None), card.copy(ticker = MSFT))
+        )
+        for
+          repo  <- InvestmentRankingRepository.make[IO](db)
+          _     <- repo.save(ranking, values)
+          saved <- repo.findEntries(ranking.id)
+        yield saved mustBe values
+      }
+
     "preserve published metadata and ordered entries in the existing collections" in
       withEmbeddedMongoDatabase { db =>
         val values = List(

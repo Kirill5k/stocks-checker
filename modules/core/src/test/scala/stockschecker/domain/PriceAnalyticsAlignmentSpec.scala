@@ -31,8 +31,8 @@ class PriceAnalyticsAlignmentSpec extends AnyWordSpec with Matchers {
       val result = PriceAnalyticsAlignment.calculate(ticker, total, quoted, today).toOption.get
       result.performanceSummary.latestPriceDate mustBe today.minusDays(7)
       result.performanceSummary.latestPrice mustBe BigDecimal(100)
-      result.basis.priceObservationId mustBe Some(total.id)
-      result.basis.quotedPriceObservationId mustBe Some(quoted.id)
+      result.basis.flatMap(_.priceObservationId) mustBe Some(total.id)
+      result.basis.flatMap(_.quotedPriceObservationId) mustBe Some(quoted.id)
     }
 
     "reject a common session eight days old" in {

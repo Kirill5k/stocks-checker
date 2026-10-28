@@ -3,6 +3,7 @@ package stockschecker.repositories
 import cats.data.NonEmptyList
 import stockschecker.domain.PriceAnalyticsCalculator
 import cats.effect.IO
+import mongo4cats.bson.BsonValue
 import stockschecker.domain.{PriceAnalytics, PriceAnalyticsFilter, PriceCandle}
 import stockschecker.fixtures.*
 
@@ -65,21 +66,60 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
           yield res.map(_.performanceSummary.latestPrice) mustBe Some(BigDecimal("235.00"))
         }
 
+      "preserve absent basis and allow refreshed basis to be written or cleared" in
+        withEmbeddedMongoDatabase { db =>
+          val withoutBasis = AAPLPriceAnalytics.copy(basis = None)
+          for
+            repo      <- PriceAnalyticsRepository.make[IO](db)
+            _         <- repo.save(withoutBasis)
+            absent    <- repo.find(AAPL)
+            _         <- repo.save(AAPLPriceAnalytics)
+            refreshed <- repo.find(AAPL)
+            _         <- repo.save(withoutBasis)
+            cleared   <- repo.find(AAPL)
+          yield
+            absent mustBe Some(withoutBasis)
+            refreshed mustBe Some(AAPLPriceAnalytics)
+            refreshed.flatMap(_.basis) mustBe defined
+            cleared mustBe Some(withoutBasis)
+        }
+
       "save batch of analytics" in
         withEmbeddedMongoDatabase { db =>
-          val analyticsList = List(AAPLPriceAnalytics, MSFTPriceAnalytics)
+          val withoutBasis  = AAPLPriceAnalytics.copy(basis = None)
+          val analyticsList = List(withoutBasis, MSFTPriceAnalytics)
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
             _    <- repo.save(analyticsList)
             res1 <- repo.find(AAPL)
             res2 <- repo.find(MSFT)
           yield
-            res1 mustBe Some(AAPLPriceAnalytics)
+            res1 mustBe Some(withoutBasis)
             res2 mustBe Some(MSFTPriceAnalytics)
         }
     }
 
     "find" should {
+      "preserve analytics values when basis is missing or explicitly null" in {
+        val seedData = Map(
+          PriceAnalyticsRepository.CollectionName -> List(
+            toDoc(AAPLPriceAnalytics).remove("basis"),
+            toDoc(MSFTPriceAnalytics).add("basis", BsonValue.Null)
+          )
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            repo <- PriceAnalyticsRepository.make[IO](db)
+            aapl <- repo.find(AAPL)
+            msft <- repo.find(MSFT)
+            all  <- repo.findAll(None)
+          yield
+            aapl mustBe Some(AAPLPriceAnalytics.copy(basis = None))
+            msft mustBe Some(MSFTPriceAnalytics.copy(basis = None))
+            all.toSet mustBe Set(AAPLPriceAnalytics.copy(basis = None), MSFTPriceAnalytics.copy(basis = None))
+        }
+      }
+
       "return None when analytics does not exist for ticker" in
         withEmbeddedMongoDatabase { db =>
           for

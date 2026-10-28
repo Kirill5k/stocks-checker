@@ -163,7 +163,7 @@ The composition root wires repositories into their owners. Job execution, comman
 
 ### Storage assumptions
 
-This code targets a first deployment with an empty database. Persistence entities use the current schema; there are no legacy decoders, startup backfills or migrations. Monthly evaluation documents track both pending and settled captures in `investment-evaluations`; reads do not create captures or jobs. Each capture stores its dispatched history requests in an internal `requestedHistory` list, updated atomically after dispatch and preserved across report saves. Resuming that capture does not recreate pruned history jobs, so job retention does not depend on evaluations. `InvestmentRankingRepository` owns `investment-rankings` and `investment-ranking-inputs`, publishing metadata only after all entries are stored.
+Persistence entities use the current schema; there are no legacy decoders, startup backfills or migrations. Price analytics provenance (`basis`) is optional: missing or null values mean unknown provenance, while fresh calculations populate it. Monthly evaluation documents track both pending and settled captures in `investment-evaluations`; reads do not create captures or jobs. Each capture stores its dispatched history requests in an internal `requestedHistory` list, updated atomically after dispatch and preserved across report saves. Resuming that capture does not recreate pruned history jobs, so job retention does not depend on evaluations. `InvestmentRankingRepository` owns `investment-rankings` and `investment-ranking-inputs`, publishing metadata only after all entries are stored.
 
 ### Controller Security
 

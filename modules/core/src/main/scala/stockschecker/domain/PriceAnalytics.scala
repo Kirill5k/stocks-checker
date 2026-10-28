@@ -40,7 +40,7 @@ final case class PriceAnalytics(
     performanceSummary: PricePerformanceSummary,
     metrics: StockAnalysisMetrics,
     scores: StockAnalysisScores,
-    basis: PriceAnalyticsBasis
+    basis: Option[PriceAnalyticsBasis] = None
 ) derives CirceCodec.AsObject
 
 /** Observation IDs identify source vintages. Raw candle retention is bounded, so these IDs do not guarantee replayability. */

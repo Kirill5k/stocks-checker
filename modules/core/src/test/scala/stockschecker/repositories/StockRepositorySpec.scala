@@ -2,6 +2,7 @@ package stockschecker.repositories
 
 import cats.data.NonEmptyList
 import cats.effect.IO
+import mongo4cats.bson.BsonValue
 import stockschecker.domain.{
   Exchange,
   FinancialMetric,
@@ -34,6 +35,36 @@ class StockRepositorySpec extends RepositorySpec {
 
   "A StockRepository" when {
     "findInvestmentCandidates" should {
+      "retain joined analytics with missing or null basis in stocks and research candidates" in {
+        val msftAnalytics = AAPLPriceAnalytics.copy(ticker = MSFT)
+        val aapl          = AAPLStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(basis = None)))
+        val msft          = MSFTStock.copy(
+          profile = None,
+          priceAnalytics = Some(msftAnalytics.copy(basis = None)),
+          financialMetrics = None
+        )
+        val seedData = Map(
+          SecurityRepository.CollectionName       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+          CompanyProfileRepository.CollectionName -> List(toDoc(AAPLCompanyProfile)),
+          PriceAnalyticsRepository.CollectionName -> List(
+            toDoc(AAPLPriceAnalytics).remove("basis"),
+            toDoc(msftAnalytics).add("basis", BsonValue.Null)
+          ),
+          FinancialMetricsRepository.CollectionName -> List(toDoc(AAPLFinancialMetrics))
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            repo       <- StockRepository.make[IO](db)
+            foundAapl  <- repo.find(AAPL)
+            foundMsft  <- repo.find(MSFT)
+            candidates <- repo.findInvestmentCandidates
+          yield
+            foundAapl mustBe Some(aapl)
+            foundMsft mustBe Some(msft)
+            candidates mustBe List(InvestmentCandidate(aapl, None), InvestmentCandidate(msft, None))
+        }
+      }
+
       "join only each ticker's latest financial snapshot without its raw payload" in {
         val observedAt = java.time.Instant.parse("2026-10-19T12:00:00Z")
         val latest     = FinancialSnapshot(

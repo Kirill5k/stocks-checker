@@ -164,7 +164,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       scores: StockAnalysisScores,
       createdAt: Instant,
       updatedAt: Instant,
-      basis: PriceAnalyticsBasis
+      basis: Option[PriceAnalyticsBasis] = None
   ) derives Codec.AsObject:
     def toDomain: PriceAnalytics =
       PriceAnalytics(

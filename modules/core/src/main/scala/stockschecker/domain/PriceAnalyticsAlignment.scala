@@ -44,5 +44,5 @@ object PriceAnalyticsAlignment:
       analytics = PriceAnalyticsCalculator.fromDaily(ticker, aligned)
     yield analytics.copy(
       performanceSummary = analytics.performanceSummary.copy(latestPrice = quote.close, latestPriceDate = quote.date),
-      basis = analytics.basis.copy(priceObservationId = Some(total.id), quotedPriceObservationId = Some(quoted.id))
+      basis = analytics.basis.map(_.copy(priceObservationId = Some(total.id), quotedPriceObservationId = Some(quoted.id)))
     )

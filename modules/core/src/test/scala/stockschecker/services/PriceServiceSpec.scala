@@ -73,8 +73,8 @@ class PriceServiceSpec extends IOWordSpec {
         analytics <- service.findPriceAnalytics(AAPL, fetch = true)
       yield analytics).asserting { analytics =>
         analytics.performanceSummary.latestPrice mustBe BigDecimal(100)
-        analytics.basis.priceObservationId mustBe Some("split-and-dividend")
-        analytics.basis.quotedPriceObservationId mustBe Some("none")
+        analytics.basis.flatMap(_.priceObservationId) mustBe Some("split-and-dividend")
+        analytics.basis.flatMap(_.quotedPriceObservationId) mustBe Some("none")
         val ordered = org.mockito.Mockito.inOrder(d.repo, d.latest, d.dispatcher)
         ordered.verify(d.repo).save(List(analytics))
         ordered.verify(d.latest).save(List(analytics.toLatestPrice))

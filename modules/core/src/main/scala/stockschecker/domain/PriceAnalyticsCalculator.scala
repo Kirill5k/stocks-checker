@@ -45,7 +45,7 @@ object PriceAnalyticsCalculator:
       performanceSummary = calculatePerformanceSummary(NonEmptyList.fromListUnsafe(sorted), monthly = false),
       metrics = metrics,
       scores = calculateScores(metrics),
-      basis = PriceAnalyticsBasis("historical-performance", "split-and-dividend", "daily", 5, None, None)
+      basis = Some(PriceAnalyticsBasis("historical-performance", "split-and-dividend", "daily", 5, None, None))
     )
   }
 
@@ -56,7 +56,7 @@ object PriceAnalyticsCalculator:
       performanceSummary = calculatePerformanceSummary(priceCandles),
       metrics = metrics,
       scores = calculateScores(metrics),
-      basis = PriceAnalyticsBasis("historical-performance", "split", "monthly", 5, None, None)
+      basis = Some(PriceAnalyticsBasis("historical-performance", "split", "monthly", 5, None, None))
     )
   }
 

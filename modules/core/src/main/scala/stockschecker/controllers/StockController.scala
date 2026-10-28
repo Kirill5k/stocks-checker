@@ -259,7 +259,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       performanceSummary: StockPricePerformanceSummaryView,
       metrics: StockAnalysisMetrics,
       scores: StockAnalysisScores,
-      basis: PriceAnalyticsBasis,
+      basis: Option[PriceAnalyticsBasis],
       lastUpdatedAt: Option[Instant]
   ) derives CirceCodec.AsObject
 
