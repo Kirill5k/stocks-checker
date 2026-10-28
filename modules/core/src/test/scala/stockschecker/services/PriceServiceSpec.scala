@@ -1,6 +1,6 @@
 package stockschecker.services
 
-import stockschecker.domain.Provider
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import cats.data.NonEmptyList
 import cats.effect.IO
 import stockschecker.actions.{Action, ActionDispatcher}
@@ -189,7 +189,7 @@ class PriceServiceSpec extends IOWordSpec {
         _    = when(
           d.client.getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
         ).thenReturnIO(full)
-        deferred = AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(60), "quota")
+        deferred = AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(60), ProviderDeferralReason.Provider429)
         _        = when(
           d.client
             .getDailyPriceHistory(

@@ -1,6 +1,6 @@
 package stockschecker.clients.twelvedata
 
-import stockschecker.domain.Provider
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import kirill5k.common.cats.Clock
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.traverse.*
@@ -10,6 +10,7 @@ import stockschecker.clients.{ProviderAccess, ProviderLimits}
 import stockschecker.common.config.TwelveDataConfig
 import stockschecker.domain.{DateRange, PriceAdjustment, Ticker}
 import stockschecker.repositories.ProviderBudgetRepository
+import stockschecker.repositories.ProviderBudgetRepository.Deferral
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.WebSocketStreamBackend
 import stockschecker.domain.errors.AppError
@@ -28,7 +29,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
 
   private def accessFixture: IO[AccessFixture] =
     for
-      budgets      <- Ref.of[IO, Map[String, (LocalDate, Int, Instant)]](Map.empty)
+      budgets      <- Ref.of[IO, Map[String, (LocalDate, Int, Instant, ProviderDeferralReason)]](Map.empty)
       reservations <- Ref.of[IO, List[(String, Long, Int)]](List.empty)
       repository = new ProviderBudgetRepository[IO] {
         def reserve(
@@ -37,24 +38,27 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
             spacingMillis: Long,
             dailyAllowance: Int,
             account: Option[String] = None
-        ): IO[Option[Instant]] =
+        ): IO[Option[Deferral]] =
           val id = account.fold(provider.print)(value => s"${provider.print}:$value")
           reservations.update(_ :+ ((id, spacingMillis, dailyAllowance))) >> budgets.modify { all =>
-            val today              = now.atZone(ZoneOffset.UTC).toLocalDate
-            val (day, count, next) = all.getOrElse(id, (today, 0, Instant.EPOCH))
-            val used               = if day == today then count else 0
-            val exhausted          =
+            val today                      = now.atZone(ZoneOffset.UTC).toLocalDate
+            val (day, count, next, reason) = all.getOrElse(id, (today, 0, Instant.EPOCH, ProviderDeferralReason.RequestSpacing))
+            val used                       = if day == today then count else 0
+            val exhausted                  =
               Option.when(dailyAllowance > 0 && used >= dailyAllowance)(today.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant)
             val deferred = (exhausted.toList ++ Option.when(now.isBefore(next))(next)).maxOption
             deferred match
-              case Some(until) => (all, Some(until))
-              case None        => (all.updated(id, (today, used + 1, now.plusMillis(spacingMillis))), None)
+              case Some(until) =>
+                val cause = if exhausted.contains(until) then ProviderDeferralReason.DailyQuota else reason
+                (all, Some(Deferral(until, cause)))
+              case None => (all.updated(id, (today, used + 1, now.plusMillis(spacingMillis), ProviderDeferralReason.RequestSpacing)), None)
           }
         def cooldown(provider: Provider, until: Instant, account: Option[String] = None): IO[Unit] =
           val id = account.fold(provider.print)(value => s"${provider.print}:$value")
           budgets.update { all =>
-            val (day, used, next) = all.getOrElse(id, (LocalDate.ofEpochDay(0L), 0, Instant.EPOCH))
-            all.updated(id, (day, used, if until.isAfter(next) then until else next))
+            val (day, used, next, _) =
+              all.getOrElse(id, (LocalDate.ofEpochDay(0L), 0, Instant.EPOCH, ProviderDeferralReason.RequestSpacing))
+            if until.isBefore(next) then all else all.updated(id, (day, used, until, ProviderDeferralReason.Provider429))
           }
       }
       access <- ProviderAccess.make[IO](repository)
@@ -211,9 +215,11 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         } yield (before, after, first, second)).asserting { case (before, after, first, second) =>
           val error = first.left.toOption.get.asInstanceOf[AppError.ProviderDeferred]
           error.provider mustBe Provider.TwelveData
+          error.reason mustBe ProviderDeferralReason.Provider429
+          error.context mustBe Some("rate limited")
           error.retryAt.isBefore(before.plusSeconds(120)) mustBe false
           error.retryAt.isAfter(after.plusSeconds(120)) mustBe false
-          second.left.toOption.collect { case e: AppError.ProviderDeferred => e.retryAt } mustBe Some(error.retryAt)
+          second.left.toOption mustBe Some(error.copy(context = None))
         }
       }
 
@@ -230,9 +236,11 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
             .timeout(1.second)
           second <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
         } yield (first, second)).asserting { case (first, second) =>
-          first.left.toOption.get mustBe a[AppError.ProviderDeferred]
-          second.left.toOption.collect { case e: AppError.ProviderDeferred => e.retryAt } mustBe
-            first.left.toOption.collect { case e: AppError.ProviderDeferred => e.retryAt }
+          val error = first.left.toOption.get.asInstanceOf[AppError.ProviderDeferred]
+          error.reason mustBe ProviderDeferralReason.Provider429
+          error.message must include("AAPL")
+          error.message must include("rate limited")
+          second.left.toOption mustBe Some(error.copy(context = None))
         }
       }
 
@@ -253,7 +261,9 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         yield (first, second, third, attempts)).asserting { case (first, second, third, attempts) =>
           first.candles.head.close mustBe BigDecimal(101)
           second.candles.head.close mustBe BigDecimal(202)
-          third.left.toOption.get mustBe a[AppError.ProviderDeferred]
+          third.left.toOption.collect { case error: AppError.ProviderDeferred => error.reason } mustBe Some(
+            ProviderDeferralReason.DailyQuota
+          )
           attempts.size mustBe 4
           attempts.map(_._1).distinct.size mustBe 2
           attempts.foreach { case (account, spacing, allowance) =>
@@ -285,7 +295,9 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         yield (first, second, exhausted, attempts)).asserting { case (first, second, exhausted, attempts) =>
           first.candles.head.close mustBe BigDecimal(101)
           second.candles.head.close mustBe BigDecimal(202)
-          exhausted.left.toOption.get mustBe a[AppError.ProviderDeferred]
+          exhausted.left.toOption.collect { case error: AppError.ProviderDeferred => error.reason } mustBe Some(
+            ProviderDeferralReason.DailyQuota
+          )
           attempts.size mustBe 4
           attempts.map(_._1).distinct.size mustBe 2
         }
@@ -318,7 +330,9 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
             yield (refused, firstResult, secondResult, reservations)).guarantee(second.cancel)
           yield results).guarantee(first.cancel)
         yield result).asserting { case (refused, first, second, reservations) =>
-          refused.left.toOption.get mustBe a[AppError.ProviderDeferred]
+          refused.left.toOption.collect { case error: AppError.ProviderDeferred => error.reason } mustBe Some(
+            ProviderDeferralReason.ConcurrencyLimit
+          )
           first.candles.size mustBe 2
           second.candles.size mustBe 2
           reservations.size mustBe 2
@@ -340,6 +354,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           attempts <- fixture.reservations.get
         yield (before, after, result, attempts)).asserting { case (before, after, result, attempts) =>
           val error = result.left.toOption.get.asInstanceOf[AppError.ProviderDeferred]
+          error.reason mustBe ProviderDeferralReason.RequestSpacing
           error.retryAt.isBefore(before.plusSeconds(60)) mustBe false
           error.retryAt.isAfter(after.plusSeconds(60)) mustBe false
           attempts.map(_._2).distinct mustBe List(60000L)
@@ -386,11 +401,17 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           second  <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).attempt
         yield (before, after, first, second)).asserting { case (before, after, first, second) =>
           val error = first.left.toOption.get.asInstanceOf[AppError.ProviderDeferred]
+          error.reason mustBe ProviderDeferralReason.Provider429
           error.retryAt.isBefore(before.plusSeconds(60)) mustBe false
           error.retryAt.isAfter(after.plusSeconds(60)) mustBe false
-          second.left.toOption.collect { case e: AppError.ProviderDeferred => e.retryAt } mustBe Some(error.retryAt)
+          second.left.toOption mustBe Some(error.copy(context = None))
+          error.context mustBe Some("[redacted]")
           error.toString must not include "slow-secret"
           error.toString must not include "fast-secret"
+          AppError.safeSummary(error) must include(Provider.TwelveData.print)
+          AppError.safeSummary(error) must include(ProviderDeferralReason.Provider429.print)
+          AppError.safeSummary(error) must not include "slow-secret"
+          AppError.safeSummary(error) must not include "fast-secret"
         }
       }
 

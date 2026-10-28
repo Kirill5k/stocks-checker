@@ -1,6 +1,6 @@
 package stockschecker.clients.finnhub
 
-import stockschecker.domain.Provider
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import kirill5k.common.cats.Clock
 import cats.effect.{Deferred, IO}
 import kirill5k.common.sttp.test.Sttp4WordSpec
@@ -9,6 +9,7 @@ import stockschecker.common.config.FinnhubClientConfig
 import stockschecker.domain.{CompanyProfile, Exchange, FinancialMetrics, Sector, Security, SecurityKind, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.ProviderBudgetRepository
+import stockschecker.repositories.ProviderBudgetRepository.Deferral
 import sttp.client4.testing.ResponseStub
 import fs2.Stream
 import sttp.model.StatusCode
@@ -317,12 +318,13 @@ class FinnhubClientSpec extends Sttp4WordSpec {
         (for
           now <- IO.realTimeInstant
           until = now.plusSeconds(60)
-          _     = when(repository.reserve(any[Provider], any[Instant], any[Long], any[Int], any[Option[String]])).thenReturnIO(Some(until))
+          _     = when(repository.reserve(any[Provider], any[Instant], any[Long], any[Int], any[Option[String]]))
+            .thenReturnIO(Some(Deferral(until, ProviderDeferralReason.DailyQuota)))
           access <- ProviderAccess.make[IO](repository)
           client <- FinnhubClient.make[IO](config, testingBackend, access)
           result <- client.getCompanyProfile(Ticker("AAPL")).attempt
         yield (result, until)).asserting { case (result, until) =>
-          result.left.toOption.collect { case error: AppError.ProviderDeferred => error.retryAt } mustBe Some(until)
+          result.left.toOption mustBe Some(AppError.ProviderDeferred(Provider.Finnhub, until, ProviderDeferralReason.DailyQuota))
           verify(repository).reserve(eqTo(Provider.Finnhub), any[Instant], eqTo(1000L), eqTo(0), eqTo(Option.empty[String]))
           succeed
         }

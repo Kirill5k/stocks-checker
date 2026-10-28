@@ -1,12 +1,13 @@
 package stockschecker.clients
 
-import stockschecker.domain.Provider
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import kirill5k.common.cats.Clock
 import cats.effect.{Deferred, IO}
 import cats.syntax.traverse.*
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.ProviderBudgetRepository
+import stockschecker.repositories.ProviderBudgetRepository.Deferral
 
 import java.time.Instant
 
@@ -28,18 +29,37 @@ class ProviderAccessSpec extends IOWordSpec {
         now <- IO.realTimeInstant
         until = now.plusSeconds(300)
         _     = when(repository.reserve(any[Provider], any[Instant], any[Long], any[Int], any[Option[String]]))
-          .thenReturn(IO.pure(None), IO.pure(Some(until)))
+          .thenReturn(IO.pure(None), IO.pure(Some(Deferral(until, ProviderDeferralReason.Provider429))))
         access <- ProviderAccess.make[IO](repository)
         _      <- access
-          .run(Provider.Finnhub, fast)(IO.raiseError[Unit](AppError.ProviderDeferred(Provider.Finnhub, until, "Retry-After")))
+          .run(Provider.Finnhub, fast)(
+            IO.raiseError[Unit](AppError.ProviderDeferred(Provider.Finnhub, until, ProviderDeferralReason.Provider429))
+          )
           .attempt
         result <- access.run(Provider.Finnhub, fast)(IO.raiseError[Unit](new AssertionError("Rejected request ran"))).attempt
       yield (result, until)).asserting { case (result, until) =>
-        result.left.toOption.collect { case e: AppError.ProviderDeferred => e.retryAt } mustBe Some(until)
+        result.left.toOption mustBe Some(AppError.ProviderDeferred(Provider.Finnhub, until, ProviderDeferralReason.Provider429))
         verify(repository).cooldown(Provider.Finnhub, until, None)
         succeed
       }
     }
+
+    "preserve the shared budget's safe reason without issuing a rejected request" in
+      List(ProviderDeferralReason.RequestSpacing, ProviderDeferralReason.DailyQuota, ProviderDeferralReason.Provider429)
+        .traverse { reason =>
+          val repository = budgets
+          for
+            now <- IO.realTimeInstant
+            until = now.plusSeconds(300)
+            _     = when(repository.reserve(any[Provider], any[Instant], any[Long], any[Int], any[Option[String]]))
+              .thenReturnIO(Some(Deferral(until, reason)))
+            access <- ProviderAccess.make[IO](repository)
+            result <- access.run(Provider.TwelveData, fast)(IO.raiseError[Unit](new AssertionError("Rejected request ran"))).attempt
+          yield
+            result.left.toOption mustBe Some(AppError.ProviderDeferred(Provider.TwelveData, until, reason))
+            verify(repository, never).cooldown(any[Provider], any[Instant], any[Option[String]])
+        }
+        .asserting(_ => succeed)
 
     "release concurrency permits after both failure and cancellation" in
       (for
@@ -53,7 +73,8 @@ class ProviderAccessSpec extends IOWordSpec {
         failed       <- access.run(Provider.Finnhub, fast)(IO.raiseError[Unit](new java.io.IOException("offline"))).attempt
         afterFailure <- access.run(Provider.Finnhub, fast)(IO.pure(2)).attempt
       yield (blocked, afterCancel, failed, afterFailure)).asserting { case (blocked, afterCancel, failed, afterFailure) =>
-        blocked.left.toOption.exists(_.isInstanceOf[AppError.ProviderDeferred]) mustBe true
+        blocked.left.toOption.collect { case error: AppError.ProviderDeferred => error.reason } mustBe
+          Some(ProviderDeferralReason.ConcurrencyLimit)
         afterCancel mustBe Right(1)
         failed.isLeft mustBe true
         afterFailure mustBe Right(2)
@@ -120,7 +141,8 @@ class ProviderAccessSpec extends IOWordSpec {
         stillDisabled <- access.run(Provider.Finnhub, fast)(IO.unit).attempt
       yield (same, otherKey, otherProvider, healthyKey, disabledKey, stillDisabled)).asserting {
         case (same, otherKey, otherProvider, healthyKey, disabledKey, stillDisabled) =>
-          same.left.toOption.get mustBe a[AppError.ProviderDeferred]
+          same.left.toOption.collect { case error: AppError.ProviderDeferred => error.reason } mustBe
+            Some(ProviderDeferralReason.ConcurrencyLimit)
           List(otherKey, otherProvider, healthyKey) mustBe List(1, 2, 3)
           disabledKey.left.toOption.get mustBe a[AppError.ProviderConfiguration]
           stillDisabled.left.toOption.get mustBe a[AppError.ProviderConfiguration]
@@ -147,7 +169,7 @@ class ProviderAccessSpec extends IOWordSpec {
       (for
         started <- Deferred[IO, Unit]
         _ = when(repository.reserve(any[Provider], any[Instant], any[Long], any[Int], any[Option[String]]))
-          .thenReturn(started.complete(()).void >> IO.never[Option[Instant]], IO.pure(None))
+          .thenReturn(started.complete(()).void >> IO.never[Option[Deferral]], IO.pure(None))
         access <- ProviderAccess.make[IO](repository)
         active <- access.run(Provider.Finnhub, fast)(IO.unit).start
         _      <- started.get

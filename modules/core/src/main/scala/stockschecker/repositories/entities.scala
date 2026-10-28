@@ -419,7 +419,13 @@ private[repositories] object entities extends MongoJsonCodecs {
   object PriceHistorySnapshotRef:
     given MongoCodecProvider[PriceHistorySnapshotRef] = deriveCirceCodecProvider[PriceHistorySnapshotRef]
 
-  final case class ProviderBudget(day: LocalDate, used: Long, nextAllowed: Instant, version: Long) derives Codec.AsObject
+  final case class ProviderBudget(
+      day: LocalDate,
+      used: Long,
+      nextAllowed: Instant,
+      version: Long,
+      cooldownUntil: Option[Instant] = None
+  ) derives Codec.AsObject
 
   object ProviderBudget:
     given MongoCodecProvider[ProviderBudget] = deriveCirceCodecProvider[ProviderBudget]

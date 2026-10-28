@@ -90,6 +90,7 @@ The application uses `PureConfig` to load settings from `modules/core/src/main/r
 | `ALPHA_VANTAGE_API_KEY` | API key for Alpha Vantage |
 | `FINNHUB_API_KEY` | API key for Finnhub |
 | `TWELVE_DATA_API_KEY` | API key for Twelve Data |
+| `ACTION_EXECUTOR_CONCURRENCY` | Maximum concurrent job workers across all actions (default: 16); provider limits apply separately |
 | `MONGO_USER` | MongoDB username |
 | `MONGO_PASSWORD` | MongoDB password |
 | `MONGO_HOST` | MongoDB host address |
@@ -111,7 +112,7 @@ The application uses a custom action-based task system for background jobs:
 
 *   **Action**: A sealed trait representing different types of background tasks (e.g., `FetchSecurities`, `FetchCompanyProfiles`). Actions are defined in `actions/Action.scala`.
 *   **ActionDispatcher**: The service gateway to durable jobs. Persists dispatched actions in MongoDB, supports deterministic idempotent dispatch, and reports pending job IDs.
-*   **ActionExecutor**: Claims durable jobs with leases and heartbeats and delegates execution to `ActionHandler`. Parent jobs aggregate child states with backoff. Provider deferrals back off from 30 seconds to five minutes, respect provider cooldowns and add jitter; these routine waits log at DEBUG and do not consume transient retries. Transient failures use the bounded `JobExecutionPolicy`; terminal jobs are not restarted. Runs as an FS2 stream in parallel with the HTTP server.
+*   **ActionExecutor**: Claims durable jobs with leases and heartbeats and delegates execution to `ActionHandler`. Parent jobs aggregate child states with backoff. Provider deferrals back off from 30 seconds to five minutes, respect provider cooldowns and add jitter; these routine waits log at DEBUG and do not consume transient retries. Their provider and typed reason (`concurrency-limit`, `request-spacing`, `daily-quota`, or `provider-429`) are recorded in `job.error` and DEBUG messages without provider response text. Persisted cooldown markers distinguish HTTP 429 waits from request spacing across restarts. Transient failures use the bounded `JobExecutionPolicy`; terminal jobs are not restarted. Runs as an FS2 stream in parallel with the HTTP server.
 
 ### Command System
 

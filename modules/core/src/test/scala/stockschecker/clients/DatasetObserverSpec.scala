@@ -1,7 +1,7 @@
 package stockschecker.clients
 
 import stockschecker.domain.{Dataset, DatasetStatus}
-import stockschecker.domain.Provider
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import cats.effect.IO
 import cats.syntax.traverse.*
 import kirill5k.common.cats.Clock
@@ -65,7 +65,7 @@ class DatasetObserverSpec extends IOWordSpec {
 
     "leave dataset availability unchanged when the logical request is deferred" in {
       val quality = mock[DataQualityRepository[IO]]
-      val error   = AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(60), "cooldown")
+      val error   = AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(60), ProviderDeferralReason.Provider429)
       (for
         observer <- DatasetObserver.make[IO](quality)
         result   <- observer.observe(Provider.Finnhub, Dataset.CompanyProfile, AAPL)(IO.raiseError[Option[Int]](error))(_.nonEmpty).attempt

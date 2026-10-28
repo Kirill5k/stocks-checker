@@ -115,13 +115,12 @@ final private class LiveActionExecutor[F[_]](
     val summary = AppError.safeSummary(error)
     JobExecutionPolicy.failure(error, job.retries) match {
       case JobExecutionPolicy.Failure.Defer(retryAt) =>
-        for {
+        for
           now    <- clock.now
           jitter <- F.delay(ThreadLocalRandom.current().nextLong(MaximumProviderDeferJitterMillis + 1))
           until = JobExecutionPolicy.providerDeferUntil(job, now, retryAt, jitter)
           _ <- jobs.defer(job, until, Some(summary), countRetry = false)
-          _ <- logger.debug(s"Job ${job.id} deferred until $until")
-        } yield ()
+        yield ()
       case JobExecutionPolicy.Failure.Pause(provider) =>
         logger.warn(s"Job ${job.id} paused: $summary") >> jobs.pause(job, provider, summary)
       case JobExecutionPolicy.Failure.Retry =>

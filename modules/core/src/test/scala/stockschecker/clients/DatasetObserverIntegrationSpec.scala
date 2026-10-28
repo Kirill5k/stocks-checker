@@ -1,7 +1,7 @@
 package stockschecker.clients
 
 import stockschecker.domain.{Dataset, DatasetStatus}
-import stockschecker.domain.Provider
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import kirill5k.common.cats.Clock
 import cats.effect.{IO, Ref}
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
@@ -104,7 +104,7 @@ class DatasetObserverIntegrationSpec extends RepositorySpec {
           _ <- quality.record(MSFT, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Failed, now, Some("HTTP 503"))
           before <- quality.all
           first  <- observed(access, availability, AAPL)(
-            IO.raiseError(AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(300), "Retry-After"))
+            IO.raiseError(AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(300), ProviderDeferralReason.Provider429))
           ).attempt
           second <- observed(access, availability, MSFT)(IO.raiseError(new AssertionError("Deferred request ran"))).attempt
           after  <- quality.all

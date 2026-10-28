@@ -1,6 +1,6 @@
 package stockschecker.services
 
-import stockschecker.domain.Provider
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import cats.data.NonEmptyList
 import cats.effect.IO
 import stockschecker.actions.{Action, ActionDispatcher}
@@ -62,7 +62,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
 
     "propagate provider deferrals without recording an update" in {
       val (repo, client, dispatcher, history) = mocks
-      val deferred                            = AppError.ProviderDeferred(Provider.Finnhub, ts.plusSeconds(60), "rate-limited")
+      val deferred = AppError.ProviderDeferred(Provider.Finnhub, ts.plusSeconds(60), ProviderDeferralReason.Provider429)
       when(client.getFinancialData(AAPL)).thenRaiseError(deferred)
       (for
         service <- FinancialMetricsService.make(repo, client, dispatcher, history)

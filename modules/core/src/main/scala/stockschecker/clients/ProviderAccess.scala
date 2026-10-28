@@ -1,6 +1,6 @@
 package stockschecker.clients
 
-import stockschecker.domain.Provider
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import cats.effect.{Ref, Temporal}
 import cats.syntax.applicativeError.*
 import cats.syntax.flatMap.*
@@ -48,7 +48,7 @@ object ProviderAccess {
               .map(reason => AppError.ProviderConfiguration(provider, reason): Throwable)
               .orElse(
                 Option.when(s.inFlight >= limits.maxConcurrent)(
-                  AppError.ProviderDeferred(provider, now.plusSeconds(1), "provider concurrency limit")
+                  AppError.ProviderDeferred(provider, now.plusSeconds(1), ProviderDeferralReason.ConcurrencyLimit)
                 )
               )
             deferred match
@@ -68,10 +68,11 @@ object ProviderAccess {
             .flatMap {
               case None =>
                 poll(request).onError {
-                  case error: AppError.ProviderDeferred      => budgets.cooldown(provider, error.retryAt, account)
+                  case error: AppError.ProviderDeferred if error.reason == ProviderDeferralReason.Provider429 =>
+                    budgets.cooldown(provider, error.retryAt, account)
                   case error: AppError.ProviderConfiguration => update(key)(_.copy(disabled = Some(error.message)))
                 }
-              case Some(until) => F.raiseError[A](AppError.ProviderDeferred(provider, until, "shared provider budget or cooldown"))
+              case Some(deferred) => F.raiseError[A](AppError.ProviderDeferred(provider, deferred.retryAt, deferred.reason))
             }
             .guarantee(update(key)(s => s.copy(inFlight = math.max(0, s.inFlight - 1))))
         yield value

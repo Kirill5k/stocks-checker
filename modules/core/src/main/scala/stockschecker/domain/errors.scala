@@ -8,7 +8,7 @@ object errors {
   object AppError:
     /** Safe operational messages: never persist provider response bodies or credentials. */
     def safeSummary(error: Throwable): String = error match
-      case e: ProviderDeferred      => s"Deferred until ${e.retryAt}"
+      case e: ProviderDeferred      => s"Deferred: provider=${e.provider.print} reason=${e.reason.print} retryAt=${e.retryAt}"
       case _: DataUnavailable       => "Recent matching provider price data is unavailable"
       case _: ProviderConfiguration => "Check provider credentials and subscription"
       case e: HttpClient            => s"HTTP ${e.status}"
@@ -26,8 +26,13 @@ object errors {
     final case class FailedValidation(message: String) extends Unprocessable
     final case class Critical(message: String)         extends AppError
 
-    final case class ProviderDeferred(provider: Provider, retryAt: java.time.Instant, reason: String) extends AppError:
-      override def message: String = s"${provider.print} deferred until $retryAt: $reason"
+    final case class ProviderDeferred(
+        provider: Provider,
+        retryAt: java.time.Instant,
+        reason: ProviderDeferralReason,
+        context: Option[String] = None
+    ) extends AppError:
+      override def message: String = safeSummary(this) + context.fold("")(value => s": $value")
 
     final case class ProviderConfiguration(provider: Provider, message: String) extends AppError
 

@@ -1,6 +1,6 @@
 package stockschecker.actions
 
-import stockschecker.domain.Provider
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import stockschecker.domain.{Job, JobId, JobStatusSummary}
@@ -55,7 +55,8 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
     }
 
     "distinguish provider deferral and configuration from bounded transient failures" in {
-      failure(AppError.ProviderDeferred(Provider.Finnhub, ts, "cooldown"), MaxTransientRetries) mustBe Failure.Defer(ts)
+      failure(AppError.ProviderDeferred(Provider.Finnhub, ts, ProviderDeferralReason.Provider429), MaxTransientRetries) mustBe Failure
+        .Defer(ts)
       failure(AppError.ProviderConfiguration(Provider.Finnhub, "key"), 0) mustBe Failure.Pause(Provider.Finnhub)
       failure(AppError.DataUnavailable(AAPL, "missing"), MaxTransientRetries - 1) mustBe Failure.Retry
       failure(AppError.DataUnavailable(AAPL, "missing"), MaxTransientRetries) mustBe Failure.Fail

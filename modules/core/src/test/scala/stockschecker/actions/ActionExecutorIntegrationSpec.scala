@@ -187,7 +187,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       val now      = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       when(services.companyProfile).thenReturn(profiles)
       when(profiles.get(AAPL, true))
-        .thenReturn(IO.raiseError(AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(300), "cooldown")))
+        .thenReturn(IO.raiseError(AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(300), ProviderDeferralReason.Provider429)))
       when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.HttpClient(Provider.Finnhub.print, 503, "unavailable")))
       for {
         jobs      <- JobRepository.make[IO](db)
@@ -205,6 +205,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         cooldown.availableAt.isAfter(now.plusSeconds(330)) mustBe false
         cooldown.retries mustBe 2
         cooldown.waitCount mustBe 1
+        cooldown.error mustBe Some(s"Deferred: provider=Finnhub reason=provider-429 retryAt=${now.plusSeconds(300)}")
         exhausted.state mustBe Job.Failed
         exhausted.retries mustBe 3
         retry.state mustBe Job.Pending
@@ -221,9 +222,13 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         jobs <- JobRepository.make[IO](db)
         now  <- IO.realTimeInstant.map(_.truncatedTo(ChronoUnit.MILLIS))
         _ = when(profiles.get(AAPL, true))
-          .thenReturn(IO.raiseError(AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(1), "busy")))
+          .thenReturn(
+            IO.raiseError(AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(1), ProviderDeferralReason.ConcurrencyLimit))
+          )
         _ = when(profiles.get(MSFT, true))
-          .thenReturn(IO.raiseError(AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(1), "busy")))
+          .thenReturn(
+            IO.raiseError(AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(1), ProviderDeferralReason.ConcurrencyLimit))
+          )
         _ <- enqueue(jobs)(Job(JobId("first-wait"), Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), now, now))
         _ <- enqueue(jobs)(
           Job(JobId("repeated-wait"), Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 3, waitCount = 10)
@@ -242,11 +247,13 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         first.availableAt.isAfter(finishedAt.plusSeconds(60)) mustBe false
         first.waitCount mustBe 1
         first.retries mustBe 0
+        first.error mustBe Some(s"Deferred: provider=Finnhub reason=concurrency-limit retryAt=${now.plusSeconds(1)}")
         repeated.state mustBe Job.Pending
         repeated.availableAt.isBefore(now.plusSeconds(300)) mustBe false
         repeated.availableAt.isAfter(finishedAt.plusSeconds(330)) mustBe false
         repeated.waitCount mustBe 11
         repeated.retries mustBe 3
+        repeated.error mustBe first.error
         early mustBe None
         ready.map(_.id) mustBe Some(first.id)
         readyRepeated.map(_.id) mustBe Some(repeated.id)

@@ -7,7 +7,7 @@ import org.mockito.ArgumentCaptor
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.common.config.ActionExecutorConfig
-import stockschecker.domain.{Job, JobId, JobState, JobStatusSummary, Provider}
+import stockschecker.domain.{Job, JobId, JobState, JobStatusSummary, Provider, ProviderDeferralReason}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.JobRepository
@@ -58,7 +58,12 @@ class ActionExecutorSpec extends IOWordSpec:
         waitCount = 3,
         leaseToken = Some("owner")
       )
-      val error     = AppError.ProviderDeferred(Provider.TwelveData, ts.plusSeconds(1), "provider concurrency limit")
+      val error = AppError.ProviderDeferred(
+        Provider.TwelveData,
+        ts.plusSeconds(1),
+        ProviderDeferralReason.ConcurrencyLimit,
+        Some("provider context with api_key=secret-value")
+      )
       val scheduled = ArgumentCaptor.forClass(classOf[Instant])
       when(jobs.claim(any[Instant], any[FiniteDuration])).thenReturn(IO.pure(Some(job)), IO.pure(None))
       when(jobs.summarize(Nil)).thenReturnIO(JobStatusSummary(Map.empty))
@@ -72,7 +77,9 @@ class ActionExecutorSpec extends IOWordSpec:
         scheduled.getValue.isBefore(ts.plusSeconds(240)) mustBe false
         scheduled.getValue.isAfter(ts.plusSeconds(270)) mustBe false
         verify(jobs, never).finish(any[Job], any[JobState], any[Option[String]])
-        logs mustBe List("debug" -> s"Job ${job.id} deferred until ${scheduled.getValue}")
+        logs mustBe List(
+          "debug" -> s"Job ${job.id} deferred until ${scheduled.getValue}: Deferred: provider=TwelveData reason=concurrency-limit retryAt=${error.retryAt}"
+        )
         succeed
       }
     }

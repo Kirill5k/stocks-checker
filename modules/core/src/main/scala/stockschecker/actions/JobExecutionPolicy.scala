@@ -49,7 +49,7 @@ private[actions] object JobExecutionPolicy:
     else Progress.Finish(Job.Succeeded)
 
   def failure(error: Throwable, retries: Int): Failure = error match
-    case AppError.ProviderDeferred(_, retryAt, _)               => Failure.Defer(retryAt)
+    case error: AppError.ProviderDeferred                       => Failure.Defer(error.retryAt)
     case AppError.ProviderConfiguration(provider, _)            => Failure.Pause(provider)
     case _ if transient(error) && retries < MaxTransientRetries => Failure.Retry
     case _                                                      => Failure.Fail
