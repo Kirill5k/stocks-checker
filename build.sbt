@@ -53,6 +53,9 @@ val root = project
   .in(file("."))
   .settings(noPublish)
   .settings(
-    name := "stocks-checker"
+    name := "stocks-checker",
+    // Delegate once: sbt 2's aggregated test task otherwise runs core tests twice.
+    Test / test / aggregate := false,
+    Test / test             := (core / Test / test).evaluated
   )
   .aggregate(core)
