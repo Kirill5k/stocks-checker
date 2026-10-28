@@ -3,6 +3,7 @@ package stockschecker.actions
 import cats.effect.{Deferred, IO, Ref}
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
+import mongo4cats.errors.MongoJsonParsingException
 import org.mockito.ArgumentCaptor
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -77,9 +78,7 @@ class ActionExecutorSpec extends IOWordSpec:
         scheduled.getValue.isBefore(ts.plusSeconds(240)) mustBe false
         scheduled.getValue.isAfter(ts.plusSeconds(270)) mustBe false
         verify(jobs, never).finish(any[Job], any[JobState], any[Option[String]])
-        logs mustBe List(
-          "debug" -> s"Job ${job.id} deferred until ${scheduled.getValue}: Deferred: provider=TwelveData reason=concurrency-limit retryAt=${error.retryAt}"
-        )
+        logs mustBe Nil
         succeed
       }
     }
@@ -100,6 +99,37 @@ class ActionExecutorSpec extends IOWordSpec:
         verify(jobs).finish(job, Job.Failed, Some(AppError.safeSummary(error)))
         verify(jobs, never).defer(any[Job], any[Instant], any[Option[String]], any[Boolean])
         logs mustBe List("warn" -> s"Job ${job.id} failed: ${AppError.safeSummary(error)}")
+        succeed
+      }
+    }
+
+    "persist safe decoding diagnostics without retrying invalid stored data" in {
+      val jobs  = mock[JobRepository[IO]]
+      val job   = Job(JobId("invalid-data"), Action.RefreshInvestmentResearch, ts, ts, state = Job.Running, leaseToken = Some("owner"))
+      val error = MongoJsonParsingException(
+        "DecodingFailure at .financialSnapshots[0].metrics: Invalid value api_key=secret-value",
+        Some("{\"rawPayload\":\"private-provider-response\",\"api_key\":\"secret-value\"}")
+      )
+      when(jobs.claim(any[Instant], any[FiniteDuration])).thenReturn(IO.pure(Some(job)), IO.pure(None))
+      when(jobs.summarize(Nil)).thenReturnIO(JobStatusSummary(Map.empty))
+      when(jobs.finish(any[Job], any[JobState], any[Option[String]])).thenReturnUnit
+      when(jobs.pruneCompleted(any[Instant])).thenReturnUnit
+      val handler = new ActionHandler[IO] {
+        def execute(action: Action): IO[ActionResult] = IO.raiseError(error)
+      }
+      executeAndRecordLogs(jobs, handler).asserting { logs =>
+        val summary = JobExecutionPolicy.errorSummary(error)
+        verify(jobs).finish(job, Job.Failed, Some(summary))
+        verify(jobs, never).defer(any[Job], any[Instant], any[Option[String]], any[Boolean])
+        summary must include("MongoJsonParsingException")
+        summary must include("financialSnapshots[0].metrics")
+        logs mustBe List("warn" -> s"Job ${job.id} failed: $summary")
+        List(summary, logs.map(_._2).mkString).foreach { value =>
+          value must not include "api_key"
+          value must not include "secret-value"
+          value must not include "private-provider-response"
+          value must not include "rawPayload"
+        }
         succeed
       }
     }

@@ -10,7 +10,6 @@ import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
 import stockschecker.common.config.ActionExecutorConfig
 import stockschecker.domain.{Job, JobCommand, JobId, JobPlan}
-import stockschecker.domain.errors.AppError
 import stockschecker.repositories.JobRepository
 
 import java.util.concurrent.ThreadLocalRandom
@@ -36,7 +35,7 @@ final private class LiveActionExecutor[F[_]](
           .repeatEval(
             clock.now
               .flatMap(jobs.pruneCompleted)
-              .handleErrorWith(error => logger.error(s"Job retention failed: ${AppError.safeSummary(error)}"))
+              .handleErrorWith(error => logger.error(s"Job retention failed: ${JobExecutionPolicy.errorSummary(error)}"))
           )
           .metered(RetentionInterval)
       )
@@ -48,7 +47,9 @@ final private class LiveActionExecutor[F[_]](
         case None      => F.sleep(IdlePollInterval).as(Option.empty[Unit])
         case Some(job) => F.race(process(job), heartbeat(job)).as(Some(()))
       }
-      .handleErrorWith(error => logger.error(s"Job worker failed: ${AppError.safeSummary(error)}") >> F.sleep(WorkerRecoveryDelay).as(None))
+      .handleErrorWith(error =>
+        logger.error(s"Job worker failed: ${JobExecutionPolicy.errorSummary(error)}") >> F.sleep(WorkerRecoveryDelay).as(None)
+      )
   }.unNone
 
   private def heartbeat(job: Job): F[Unit] =
@@ -112,7 +113,7 @@ final private class LiveActionExecutor[F[_]](
     }
 
   private def handleFailure(job: Job, error: Throwable): F[Unit] =
-    val summary = AppError.safeSummary(error)
+    val summary = JobExecutionPolicy.errorSummary(error)
     JobExecutionPolicy.failure(error, job.retries) match {
       case JobExecutionPolicy.Failure.Defer(retryAt) =>
         for

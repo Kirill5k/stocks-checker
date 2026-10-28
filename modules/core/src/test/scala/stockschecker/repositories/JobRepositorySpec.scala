@@ -4,6 +4,8 @@ import cats.effect.IO
 import cats.syntax.foldable.*
 import cats.syntax.parallel.*
 import cats.syntax.traverse.*
+import mongo4cats.errors.MongoJsonParsingException
+import mongo4cats.operations.{Filter, Update}
 import stockschecker.actions.{Action, ActionPriority}
 import stockschecker.domain.*
 import stockschecker.fixtures.*
@@ -20,6 +22,33 @@ class JobRepositorySpec extends RepositorySpec {
   private def enqueue(jobs: JobRepository[IO])(job: Job): IO[Unit] = jobs.enqueue(job, ActionPriority.forAction(job.action))
 
   "Durable jobs" should {
+    "reject a null wait count while decoding a valid failed research job" in withEmbeddedMongoDatabase { db =>
+      val valid = Job(
+        JobId("valid-research"),
+        Action.RefreshInvestmentResearch,
+        ts,
+        ts,
+        state = Job.Failed,
+        retries = 3,
+        waitCount = 3,
+        completedAt = Some(ts)
+      )
+      val invalid = valid.copy(id = JobId("null-wait-count"))
+      for {
+        jobs     <- JobRepository.make[IO](db)
+        _        <- enqueue(jobs)(valid)
+        _        <- enqueue(jobs)(invalid)
+        raw      <- db.getCollection(JobRepository.CollectionName)
+        _        <- raw.updateOne(Filter.idEq(invalid.id.value), Update.set("job.waitCount", Option.empty[Int]))
+        decoded  <- jobs.find(valid.id)
+        rejected <- jobs.find(invalid.id).attempt
+      } yield {
+        decoded mustBe Some(valid)
+        rejected.left.toOption.get mustBe a[MongoJsonParsingException]
+        rejected.left.toOption.get.getMessage must include("job.waitCount")
+      }
+    }
+
     "preserve sub-millisecond activation request timestamps through persistence and claiming" in withEmbeddedMongoDatabase { db =>
       val event = Action.SetSecurityActive(AAPL, true, ts.plusNanos(123456))
       for

@@ -3,6 +3,7 @@ package stockschecker.actions
 import stockschecker.domain.Provider
 import stockschecker.domain.{Job, JobState, JobStatusSummary}
 import stockschecker.domain.errors.AppError
+import mongo4cats.errors.MongoJsonParsingException
 
 import java.time.Instant
 import java.util.concurrent.TimeoutException
@@ -20,6 +21,10 @@ private[actions] object JobExecutionPolicy:
   val InitialProviderDeferDelay        = 30.seconds
   val MaximumProviderDeferDelay        = 5.minutes
   val MaximumProviderDeferJitterMillis = 30.seconds.toMillis
+
+  private val DecodingFailureAt = "(?s)\\ADecodingFailure at ([^:\\r\\n]{0,256}): (.*)\\z".r
+  private val SafeFieldPath     = "(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*".r
+  private val ScalarDecoders    = Set("Int", "Long", "Double", "Float", "BigDecimal", "BigInt", "Boolean", "String")
 
   enum Progress:
     case Ready
@@ -54,6 +59,19 @@ private[actions] object JobExecutionPolicy:
     case _ if transient(error) && retries < MaxTransientRetries => Failure.Retry
     case _                                                      => Failure.Fail
 
+  /** Mongo4Cats retains the whole document separately; neither it nor decoder-provided values belong in job diagnostics. */
+  def errorSummary(error: Throwable): String = error match
+    case error: MongoJsonParsingException =>
+      error.message match
+        case DecodingFailureAt(path, detail) if SafeFieldPath.matches(path) =>
+          val reason = detail match
+            case "Missing required field"         => "missing required field"
+            case scalar if ScalarDecoders(scalar) => s"expected $scalar"
+            case _                                => "invalid value"
+          s"MongoJsonParsingException at $$$path ($reason)"
+        case _ => "MongoJsonParsingException (invalid stored data; field path unavailable)"
+    case _ => AppError.safeSummary(error)
+
   def retryDelay(retries: Int, jitterMillis: Long): FiniteDuration = ((1000L << retries) + jitterMillis).millis
 
   def providerDeferUntil(job: Job, now: Instant, retryAt: Instant, jitterMillis: Long): Instant =
@@ -65,6 +83,7 @@ private[actions] object JobExecutionPolicy:
   def pollDelaySeconds(job: Job): Long = (1L << job.waitCount.min(9)).min(300L)
 
   private def transient(error: Throwable): Boolean = error match
+    case _: MongoJsonParsingException      => false
     case _: AppError.DataUnavailable       => true
     case AppError.HttpClient(_, status, _) => status == 408 || status == 429 || status >= 500
     case _: java.io.IOException | _: TimeoutException | _: com.mongodb.MongoException | _: sttp.client4.SttpClientException => true
