@@ -111,7 +111,7 @@ The application uses a custom action-based task system for background jobs:
 
 *   **Action**: A sealed trait representing different types of background tasks (e.g., `FetchSecurities`, `FetchCompanyProfiles`). Actions are defined in `actions/Action.scala`.
 *   **ActionDispatcher**: The service gateway to durable jobs. Persists dispatched actions in MongoDB, supports deterministic idempotent dispatch, and reports pending job IDs.
-*   **ActionExecutor**: Claims durable jobs with leases and heartbeats and delegates execution to `ActionHandler`. Parent jobs aggregate child states with backoff. Transient failures use the bounded `JobExecutionPolicy`; terminal jobs are not restarted. Runs as an FS2 stream in parallel with the HTTP server.
+*   **ActionExecutor**: Claims durable jobs with leases and heartbeats and delegates execution to `ActionHandler`. Parent jobs aggregate child states with backoff. Provider deferrals back off from 30 seconds to five minutes, respect provider cooldowns and add jitter; these routine waits log at DEBUG and do not consume transient retries. Transient failures use the bounded `JobExecutionPolicy`; terminal jobs are not restarted. Runs as an FS2 stream in parallel with the HTTP server.
 
 ### Command System
 

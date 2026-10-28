@@ -201,13 +201,55 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         retry     <- jobs.find(JobId("retry")).map(_.get)
       } yield {
         cooldown.state mustBe Job.Pending
-        cooldown.availableAt mustBe now.plusSeconds(300)
+        cooldown.availableAt.isBefore(now.plusSeconds(300)) mustBe false
+        cooldown.availableAt.isAfter(now.plusSeconds(330)) mustBe false
         cooldown.retries mustBe 2
+        cooldown.waitCount mustBe 1
         exhausted.state mustBe Job.Failed
         exhausted.retries mustBe 3
         retry.state mustBe Job.Pending
         retry.retries mustBe 3
         retry.availableAt.isAfter(now) mustBe true
+      }
+    }
+
+    "persist increasing backoff for busy keys and leave deferred jobs unclaimable during the wait" in withEmbeddedMongoDatabase { db =>
+      val services = mock(classOf[Services[IO]])
+      val profiles = mock(classOf[CompanyProfileService[IO]])
+      when(services.companyProfile).thenReturn(profiles)
+      for {
+        jobs <- JobRepository.make[IO](db)
+        now  <- IO.realTimeInstant.map(_.truncatedTo(ChronoUnit.MILLIS))
+        _ = when(profiles.get(AAPL, true))
+          .thenReturn(IO.raiseError(AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(1), "busy")))
+        _ = when(profiles.get(MSFT, true))
+          .thenReturn(IO.raiseError(AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(1), "busy")))
+        _ <- enqueue(jobs)(Job(JobId("first-wait"), Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), now, now))
+        _ <- enqueue(jobs)(
+          Job(JobId("repeated-wait"), Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 3, waitCount = 10)
+        )
+        executor      <- makeExecutor(jobs, services, ActionExecutorConfig(1))
+        _             <- executor.run.take(2).compile.drain.timeout(3.seconds)
+        finishedAt    <- IO.realTimeInstant
+        first         <- jobs.find(JobId("first-wait")).map(_.get)
+        repeated      <- jobs.find(JobId("repeated-wait")).map(_.get)
+        early         <- jobs.claim(now.plusSeconds(29), JobExecutionPolicy.Lease)
+        ready         <- jobs.claim(repeated.availableAt, JobExecutionPolicy.Lease)
+        readyRepeated <- jobs.claim(repeated.availableAt, JobExecutionPolicy.Lease)
+      } yield {
+        first.state mustBe Job.Pending
+        first.availableAt.isBefore(now.plusSeconds(30)) mustBe false
+        first.availableAt.isAfter(finishedAt.plusSeconds(60)) mustBe false
+        first.waitCount mustBe 1
+        first.retries mustBe 0
+        repeated.state mustBe Job.Pending
+        repeated.availableAt.isBefore(now.plusSeconds(300)) mustBe false
+        repeated.availableAt.isAfter(finishedAt.plusSeconds(330)) mustBe false
+        repeated.waitCount mustBe 11
+        repeated.retries mustBe 3
+        early mustBe None
+        ready.map(_.id) mustBe Some(first.id)
+        readyRepeated.map(_.id) mustBe Some(repeated.id)
       }
     }
 

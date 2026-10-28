@@ -9,14 +9,17 @@ import java.util.concurrent.TimeoutException
 import scala.concurrent.duration.*
 
 private[actions] object JobExecutionPolicy:
-  val MaxTransientRetries      = 3
-  val Lease                    = 2.minutes
-  val HeartbeatInterval        = 20.seconds
-  val IdlePollInterval         = 250.millis
-  val WorkerRecoveryDelay      = 1.second
-  val RetentionInterval        = 1.hour
-  val MinimumRetryJitterMillis = 500L
-  val MaximumRetryJitterMillis = 1500L
+  val MaxTransientRetries              = 3
+  val Lease                            = 2.minutes
+  val HeartbeatInterval                = 20.seconds
+  val IdlePollInterval                 = 250.millis
+  val WorkerRecoveryDelay              = 1.second
+  val RetentionInterval                = 1.hour
+  val MinimumRetryJitterMillis         = 500L
+  val MaximumRetryJitterMillis         = 1500L
+  val InitialProviderDeferDelay        = 30.seconds
+  val MaximumProviderDeferDelay        = 5.minutes
+  val MaximumProviderDeferJitterMillis = 30.seconds.toMillis
 
   enum Progress:
     case Ready
@@ -52,6 +55,12 @@ private[actions] object JobExecutionPolicy:
     case _                                                      => Failure.Fail
 
   def retryDelay(retries: Int, jitterMillis: Long): FiniteDuration = ((1000L << retries) + jitterMillis).millis
+
+  def providerDeferUntil(job: Job, now: Instant, retryAt: Instant, jitterMillis: Long): Instant =
+    val delayMillis  = (InitialProviderDeferDelay.toMillis << job.waitCount.max(0).min(30)).min(MaximumProviderDeferDelay.toMillis)
+    val backoffUntil = now.plusMillis(delayMillis)
+    val earliest     = if retryAt.isAfter(backoffUntil) then retryAt else backoffUntil
+    earliest.plusMillis(jitterMillis)
 
   def pollDelaySeconds(job: Job): Long = (1L << job.waitCount.min(9)).min(300L)
 

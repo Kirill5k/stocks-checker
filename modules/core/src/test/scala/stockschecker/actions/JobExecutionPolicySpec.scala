@@ -21,6 +21,24 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
       }
     }
 
+    "back off provider deferrals from thirty seconds to five minutes independently of transient retries" in {
+      val job = Job(JobId("deferred"), Action.SetSecurityActive(AAPL, false, ts), ts, ts, retries = MaxTransientRetries)
+      List(-1 -> 30L, 0 -> 30L, 1 -> 60L, 2 -> 120L, 3 -> 240L, 4 -> 300L, 30 -> 300L, Int.MaxValue -> 300L).foreach {
+        case (waitCount, seconds) =>
+          providerDeferUntil(job.copy(waitCount = waitCount), ts, ts.plusSeconds(1), 0) mustBe ts.plusSeconds(seconds)
+      }
+    }
+
+    "respect provider cooldowns and spread retries after both backoff and daily quota resets" in {
+      val job   = Job(JobId("deferred"), Action.SetSecurityActive(AAPL, false, ts), ts, ts)
+      val reset = ts.plusSeconds(86400)
+      providerDeferUntil(job, ts, reset, 0) mustBe reset
+      providerDeferUntil(job, ts, reset, MaximumProviderDeferJitterMillis) mustBe reset.plusSeconds(30)
+      providerDeferUntil(job, ts, ts.minusSeconds(1), 0) mustBe ts.plusSeconds(30)
+      providerDeferUntil(job, ts, ts.plusSeconds(1), MaximumProviderDeferJitterMillis) mustBe ts.plusSeconds(60)
+      providerDeferUntil(job.copy(waitCount = 10), ts, ts.plusSeconds(1), MaximumProviderDeferJitterMillis) mustBe ts.plusSeconds(330)
+    }
+
     "wait for missing dependencies while permitting partially successful preceding steps" in {
       dependencies(2, JobStatusSummary(Map(Job.Succeeded -> 1L))) mustBe Progress.Wait
       dependencies(2, JobStatusSummary(Map(Job.Succeeded -> 1L, Job.Partial -> 1L))) mustBe Progress.Ready

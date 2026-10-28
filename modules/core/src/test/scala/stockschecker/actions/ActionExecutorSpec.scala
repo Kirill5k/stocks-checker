@@ -1,12 +1,14 @@
 package stockschecker.actions
 
-import cats.effect.{Deferred, IO}
+import cats.effect.{Deferred, IO, Ref}
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
+import org.mockito.ArgumentCaptor
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.common.config.ActionExecutorConfig
-import stockschecker.domain.{Job, JobId, JobState, JobStatusSummary}
+import stockschecker.domain.{Job, JobId, JobState, JobStatusSummary, Provider}
+import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.JobRepository
 
@@ -17,7 +19,84 @@ class ActionExecutorSpec extends IOWordSpec:
   given Clock[IO]  = Clock.mock(ts)
   given Logger[IO] = Slf4jLogger.getLogger[IO]
 
+  final private class RecordingLogger(messages: Ref[IO, List[(String, String)]]) extends Logger[IO]:
+    private def record(level: String, message: => String): IO[Unit] =
+      IO.delay(message).flatMap(value => messages.update(_ :+ (level -> value)))
+
+    override def debug(message: => String): IO[Unit]                   = record("debug", message)
+    override def info(message: => String): IO[Unit]                    = record("info", message)
+    override def warn(message: => String): IO[Unit]                    = record("warn", message)
+    override def error(message: => String): IO[Unit]                   = record("error", message)
+    override def trace(message: => String): IO[Unit]                   = record("trace", message)
+    override def debug(error: Throwable)(message: => String): IO[Unit] = record("debug", message)
+    override def info(error: Throwable)(message: => String): IO[Unit]  = record("info", message)
+    override def warn(error: Throwable)(message: => String): IO[Unit]  = record("warn", message)
+    override def error(error: Throwable)(message: => String): IO[Unit] = record("error", message)
+    override def trace(error: Throwable)(message: => String): IO[Unit] = record("trace", message)
+
+  private def executeAndRecordLogs(jobs: JobRepository[IO], handler: ActionHandler[IO]): IO[List[(String, String)]] =
+    Ref.of[IO, List[(String, String)]](Nil).flatMap { messages =>
+      given Logger[IO] = new RecordingLogger(messages)
+      for
+        executor <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), ActionExecutorConfig(1))
+        _        <- executor.run.take(1).compile.drain.timeout(3.seconds)
+        logs     <- messages.get
+      yield logs
+    }
+
   "An action executor" should {
+    "back off repeated provider deferrals without warning or consuming transient retries" in {
+      val jobs   = mock[JobRepository[IO]]
+      val action = Action.SetSecurityActive(AAPL, false, ts)
+      val job    = Job(
+        JobId("deferred"),
+        action,
+        ts,
+        ts,
+        state = Job.Running,
+        retries = JobExecutionPolicy.MaxTransientRetries,
+        waitCount = 3,
+        leaseToken = Some("owner")
+      )
+      val error     = AppError.ProviderDeferred(Provider.TwelveData, ts.plusSeconds(1), "provider concurrency limit")
+      val scheduled = ArgumentCaptor.forClass(classOf[Instant])
+      when(jobs.claim(any[Instant], any[FiniteDuration])).thenReturn(IO.pure(Some(job)), IO.pure(None))
+      when(jobs.summarize(Nil)).thenReturnIO(JobStatusSummary(Map.empty))
+      when(jobs.defer(any[Job], any[Instant], any[Option[String]], any[Boolean])).thenReturnUnit
+      when(jobs.pruneCompleted(any[Instant])).thenReturnUnit
+      val handler = new ActionHandler[IO] {
+        def execute(action: Action): IO[ActionResult] = IO.raiseError(error)
+      }
+      executeAndRecordLogs(jobs, handler).asserting { logs =>
+        verify(jobs).defer(eqTo(job), scheduled.capture(), eqTo(Some(AppError.safeSummary(error))), eqTo(false))
+        scheduled.getValue.isBefore(ts.plusSeconds(240)) mustBe false
+        scheduled.getValue.isAfter(ts.plusSeconds(270)) mustBe false
+        verify(jobs, never).finish(any[Job], any[JobState], any[Option[String]])
+        logs mustBe List("debug" -> s"Job ${job.id} deferred until ${scheduled.getValue}")
+        succeed
+      }
+    }
+
+    "continue warning when an actual job failure is terminal" in {
+      val jobs   = mock[JobRepository[IO]]
+      val action = Action.SetSecurityActive(AAPL, false, ts)
+      val job    = Job(JobId("failed"), action, ts, ts, state = Job.Running, leaseToken = Some("owner"))
+      val error  = AppError.FailedValidation("Invalid provider data")
+      when(jobs.claim(any[Instant], any[FiniteDuration])).thenReturn(IO.pure(Some(job)), IO.pure(None))
+      when(jobs.summarize(Nil)).thenReturnIO(JobStatusSummary(Map.empty))
+      when(jobs.finish(any[Job], any[JobState], any[Option[String]])).thenReturnUnit
+      when(jobs.pruneCompleted(any[Instant])).thenReturnUnit
+      val handler = new ActionHandler[IO] {
+        def execute(action: Action): IO[ActionResult] = IO.raiseError(error)
+      }
+      executeAndRecordLogs(jobs, handler).asserting { logs =>
+        verify(jobs).finish(job, Job.Failed, Some(AppError.safeSummary(error)))
+        verify(jobs, never).defer(any[Job], any[Instant], any[Option[String]], any[Boolean])
+        logs mustBe List("warn" -> s"Job ${job.id} failed: ${AppError.safeSummary(error)}")
+        succeed
+      }
+    }
+
     "cancel ongoing work when heartbeat renewal loses ownership without finishing the job" in {
       val jobs   = mock[JobRepository[IO]]
       val action = Action.SetSecurityActive(AAPL, false, java.time.Instant.EPOCH)
