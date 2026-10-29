@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
-import java.time.YearMonth
+import java.time.{Instant, YearMonth}
 
 class ResearchCodecsSpec extends AnyWordSpec with Matchers {
   private def roundTrip[A: Encoder: Decoder](value: A, json: String): org.scalatest.Assertion = {
@@ -35,6 +35,57 @@ class ResearchCodecsSpec extends AnyWordSpec with Matchers {
     "encode typed map keys as the existing object keys" in {
       roundTrip[Map[Pillar, BigDecimal]](Map(Pillar.Quality -> BigDecimal(75)), """{"quality":75}""")
       roundTrip[Map[DatasetStatus, Int]](Map(DatasetStatus.Available -> 2), """{"available":2}""")
+    }
+
+    "encode financial provenance without an ID and ignore a previously stored ID" in {
+      val snapshot = FinancialSnapshot(
+        Ticker("AAPL"),
+        Provider.Finnhub,
+        Instant.parse("2026-10-29T12:00:00Z"),
+        Map.empty,
+        Nil,
+        Nil,
+        "payload-hash",
+        "mapping-v1",
+        Nil
+      )
+      val json = snapshot.asJson
+      json.hcursor.downField("id").succeeded mustBe false
+      json.as[FinancialSnapshot] mustBe Right(snapshot)
+      json.deepMerge(Json.obj("id" -> Json.fromString("previous-snapshot-id"))).as[FinancialSnapshot] mustBe Right(snapshot)
+    }
+
+    "retain scorecard evidence while omitting and ignoring the removed financial snapshot ID" in {
+      val evidence = InvestmentEvidence(
+        Provider.Finnhub,
+        Instant.parse("2026-10-29T12:00:00Z"),
+        "mapping-v1",
+        "payload-hash",
+        Map.empty,
+        Nil,
+        None,
+        None,
+        Some("USD")
+      )
+      val card = InvestmentScorecard(
+        ticker = Ticker("AAPL"),
+        eligible = true,
+        score = Some(75),
+        pillars = Map.empty,
+        features = Map.empty,
+        exclusions = Nil,
+        warnings = Nil,
+        peerGroup = Some("peer"),
+        peerCount = 20,
+        modelVersion = "quality-fair-value-v1",
+        evidence = Some(evidence)
+      )
+      val json = card.asJson
+      json.hcursor.downField("financialSnapshotId").succeeded mustBe false
+      json.as[InvestmentScorecard] mustBe Right(card)
+      json
+        .deepMerge(Json.obj("financialSnapshotId" -> Json.fromString("previous-snapshot-id")))
+        .as[InvestmentScorecard] mustBe Right(card)
     }
 
     "reject unknown states and pillar keys" in {

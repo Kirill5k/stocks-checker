@@ -13,7 +13,6 @@ import java.time.{Instant, LocalDate}
 class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs:
   override def port: Int = 12159
   private val first      = FinancialSnapshot(
-    "first",
     AAPL,
     Provider.Finnhub,
     ts,
@@ -29,8 +28,8 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
     "retain only the latest canonical snapshot per ticker, preserving observations and provenance without raw payloads" in
       withEmbeddedMongoDatabase { db =>
         val second =
-          first.copy(id = "second", observedAt = ts.plusSeconds(60), metrics = Map(FinancialMetric.PriceToEarningsTtm -> BigDecimal(30)))
-        val other = first.copy(id = "other", ticker = MSFT)
+          first.copy(observedAt = ts.plusSeconds(60), metrics = Map(FinancialMetric.PriceToEarningsTtm -> BigDecimal(30)))
+        val other = first.copy(ticker = MSFT)
         for
           repo       <- FinancialHistoryRepository.make[IO](db)
           _          <- repo.save(first)
@@ -39,18 +38,21 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
           collection <- db.getCollectionWithCodec[FinancialSnapshotEntity](FinancialHistoryRepository.CollectionName)
           retained   <- collection.find.all
           raw        <- db.getCollection(FinancialHistoryRepository.CollectionName)
-          payloads   <- raw.find(Filter.ne("rawPayload", Option.empty[String])).all
+          documents  <- raw.find.all
         yield
           retained.map(_.toDomain).toSet mustBe Set(second, other)
-          payloads mustBe empty
+          documents.map(_.get("_id").flatMap(_.asString)).toSet mustBe Set(Some(AAPL.value), Some(MSFT.value))
+          documents.forall(_.get("id").isEmpty) mustBe true
+          documents.forall(_.get("rawPayload").isEmpty) mustBe true
       }
 
     "keep the newest immutable snapshot after duplicate, out-of-order and tied-timestamp saves" in
       withEmbeddedMongoDatabase { db =>
-        val newest = first.copy(id = "z-newest", observedAt = ts.plusSeconds(60))
-        val tied   = newest.copy(id = "a-tied")
+        val newest = first.copy(observedAt = ts.plusSeconds(60), payloadHash = "newest-hash")
+        val tied   = newest.copy(payloadHash = "tied-hash")
         for
           repo       <- FinancialHistoryRepository.make[IO](db)
+          _          <- repo.save(newest)
           _          <- repo.save(newest)
           _          <- repo.save(newest.copy(metrics = Map.empty))
           _          <- repo.save(first)
@@ -62,7 +64,7 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
 
     "retain the newest snapshot when refreshes finish concurrently" in
       withEmbeddedMongoDatabase { db =>
-        val snapshots = (0 to 4).toList.map(index => first.copy(id = s"snapshot-$index", observedAt = ts.plusSeconds(index.toLong)))
+        val snapshots = (0 to 4).toList.map(index => first.copy(observedAt = ts.plusSeconds(index.toLong), payloadHash = s"hash-$index"))
         for
           repo       <- FinancialHistoryRepository.make[IO](db)
           _          <- snapshots.parTraverse_(repo.save)
@@ -74,9 +76,9 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
     "persist BSON dates at millisecond precision and reject timestamps in the same millisecond" in
       withEmbeddedMongoDatabase { db =>
         val second = Instant.parse("2026-10-29T12:00:00Z")
-        val whole  = first.copy(id = "whole", observedAt = second)
-        val millis = first.copy(id = "millis", observedAt = second.plusMillis(1))
-        val nanos  = first.copy(id = "nanos", observedAt = second.plusMillis(1).plusNanos(1))
+        val whole  = first.copy(observedAt = second, payloadHash = "whole-hash")
+        val millis = first.copy(observedAt = second.plusMillis(1), payloadHash = "millis-hash")
+        val nanos  = first.copy(observedAt = second.plusMillis(1).plusNanos(1), payloadHash = "nanos-hash")
         for
           repo       <- FinancialHistoryRepository.make[IO](db)
           _          <- repo.save(whole)

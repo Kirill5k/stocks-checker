@@ -14,7 +14,6 @@ import stockschecker.fixtures.*
 class FinancialMetricsServiceSpec extends IOWordSpec {
   private val snapshot =
     FinancialSnapshot(
-      "vintage",
       AAPL,
       Provider.Finnhub,
       ts,

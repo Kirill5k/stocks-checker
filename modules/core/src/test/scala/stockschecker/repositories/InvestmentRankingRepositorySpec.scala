@@ -44,7 +44,6 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
       "join the canonical financial snapshot by ticker without mixing other tickers" in {
         val observedAt = java.time.Instant.parse("2026-10-19T12:00:00Z")
         val latest     = FinancialSnapshot(
-          "aapl-latest",
           AAPL,
           Provider.Finnhub,
           observedAt.plusMillis(1),
@@ -55,7 +54,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
           "canonical-test-v1",
           Nil
         )
-        val other    = latest.copy(id = "other-latest", ticker = Ticker("OTHER"), observedAt = observedAt.plusSeconds(60))
+        val other    = latest.copy(ticker = Ticker("OTHER"), observedAt = observedAt.plusSeconds(60), payloadHash = "other-hash")
         val seedData = Map(
           SecurityRepository.CollectionName         -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           CompanyProfileRepository.CollectionName   -> List(toDoc(AAPLCompanyProfile)),
@@ -106,6 +105,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
             row.getDocument("input").map(_.keys) mustBe Some(
               Set("exchange", "country", "industry", "sector", "priceScore", "exclusionExplanation")
             )
+            row.getDocument("scorecard").map(_.keys.contains("financialSnapshotId")) mustBe Some(false)
           }
           succeed
       }
@@ -136,7 +136,6 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
       withEmbeddedMongoDatabase { db =>
         val observation = FinancialObservation(FinancialMetric.FreeCashFlowMargin, LocalDate.parse("2025-12-31"), BigDecimal("0.2"))
         val snapshot    = FinancialSnapshot(
-          "snapshot",
           AAPL,
           Provider.Finnhub,
           now,
@@ -160,7 +159,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
         )
         val value = InvestmentRankingEntry.from(
           InvestmentCandidate(AAPLStock, Some(snapshot)),
-          card.copy(financialSnapshotId = Some(snapshot.id), evidence = Some(evidence))
+          card.copy(evidence = Some(evidence))
         )
         for
           repo  <- InvestmentRankingRepository.make[IO](db)

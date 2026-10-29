@@ -28,7 +28,6 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       )
     }
     val snapshot = FinancialSnapshot(
-      symbol,
       ticker,
       Provider.Finnhub,
       now,
@@ -78,6 +77,8 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
       val evidence = cards.head.evidence.get
       evidence.provider mustBe Provider.Finnhub
       evidence.observedAt mustBe now
+      evidence.payloadHash mustBe "hash"
+      evidence.mappingVersion mustBe "canonical-test-v1"
       evidence.annualPeriods(FinancialMetric.ReturnOnAssets) mustBe (2025 to 2021 by -1).toList.map(year => LocalDate.of(year, 9, 30))
       evidence.financialObservations.count(_.metric == FinancialMetric.DebtToAssets) mustBe 1
       evidence.latestFreeCashFlowPerShareTtm.map(_.value) mustBe Some(BigDecimal(5))

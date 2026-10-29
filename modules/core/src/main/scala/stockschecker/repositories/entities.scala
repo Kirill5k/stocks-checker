@@ -449,7 +449,6 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   final case class FinancialSnapshotEntity(
       _id: Ticker,
-      id: String,
       ticker: Ticker,
       provider: Provider,
       observedAt: Instant,
@@ -461,7 +460,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       issues: List[FinancialSnapshotIssue]
   ) derives Codec.AsObject:
     def toDomain: FinancialSnapshot =
-      FinancialSnapshot(id, ticker, provider, observedAt, metrics, annual, quarterly, payloadHash, mappingVersion, issues)
+      FinancialSnapshot(ticker, provider, observedAt, metrics, annual, quarterly, payloadHash, mappingVersion, issues)
 
   object FinancialSnapshotEntity:
     given MongoCodecProvider[FinancialSnapshotEntity] = deriveCirceCodecProvider[FinancialSnapshotEntity]
@@ -469,7 +468,6 @@ private[repositories] object entities extends MongoJsonCodecs {
     def from(snapshot: FinancialSnapshot): FinancialSnapshotEntity =
       FinancialSnapshotEntity(
         snapshot.ticker,
-        snapshot.id,
         snapshot.ticker,
         snapshot.provider,
         snapshot.observedAt,

@@ -74,7 +74,6 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
         val d           = new Dependencies
         val observation = FinancialObservation(FinancialMetric.FreeCashFlowMargin, date.minusYears(1), BigDecimal("0.2"))
         val financial   = FinancialSnapshot(
-          "facts",
           MSFT,
           Provider.Finnhub,
           now,
@@ -116,7 +115,11 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
               None
             )
           )
-          saved.find(_.scorecard.ticker == MSFT).flatMap(_.scorecard.financialSnapshotId) mustBe Some(financial.id)
+          val evidence = saved.find(_.scorecard.ticker == MSFT).flatMap(_.scorecard.evidence)
+          evidence.map(_.provider) mustBe Some(financial.provider)
+          evidence.map(_.observedAt) mustBe Some(financial.observedAt)
+          evidence.map(_.payloadHash) mustBe Some(financial.payloadHash)
+          evidence.map(_.mappingVersion) mustBe Some(financial.mappingVersion)
           refreshed.summary mustBe InvestmentRankingSummary.from(saved)
           succeed
         }

@@ -46,7 +46,6 @@ object InvestmentScorer:
         warnings,
         None,
         0,
-        candidate.financialSnapshot.map(_.id),
         recipe.version,
         features.keysIterator.map(key => key -> (if key == ScoringFeature.EpsTtm then "reporting-currency-per-share" else "ratio")).toMap,
         evidence = candidate.financialSnapshot.map(evidence(_, stock)),

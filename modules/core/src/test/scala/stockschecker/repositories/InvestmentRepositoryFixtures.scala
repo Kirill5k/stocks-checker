@@ -31,7 +31,6 @@ private[stockschecker] object InvestmentRepositoryFixtures {
     Nil,
     Some("industry:test"),
     20,
-    None,
     "fundamental-v1"
   )
   val entries = List(InvestmentRankingEntry.from(InvestmentCandidate(AAPLStock, None), card))

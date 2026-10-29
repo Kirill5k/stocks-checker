@@ -20,7 +20,6 @@ enum FinancialSnapshotIssue derives Codec.AsObject:
 
 /** Immutable canonical fetch vintage, with source provenance for mapping audits. */
 final case class FinancialSnapshot(
-    id: String,
     ticker: Ticker,
     provider: Provider,
     observedAt: Instant,

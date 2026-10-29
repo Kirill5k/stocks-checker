@@ -89,7 +89,8 @@ class FinnhubFinancialMappingSpec extends AnyWordSpec with Matchers:
       val first  = FinnhubFinancialMapping.decode(body, Ticker("AAPL"), now).toOption.flatten.get.snapshot
       val second = FinnhubFinancialMapping.decode(body, Ticker("AAPL"), now.plusSeconds(1)).toOption.flatten.get.snapshot
       first.payloadHash mustBe second.payloadHash
-      first.id must not be second.id
+      first.observedAt mustBe now
+      second.observedAt mustBe now.plusSeconds(1)
     }
 
     "include unmapped provider fields in the payload hash without retaining the response" in {

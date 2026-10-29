@@ -42,7 +42,6 @@ class MarketDataClientSpec extends IOWordSpec {
   private val financials = FinancialData(
     AAPLFinancialMetrics,
     FinancialSnapshot(
-      "financials",
       AAPL,
       Provider.Finnhub,
       ts,

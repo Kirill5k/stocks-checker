@@ -202,8 +202,8 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
 
     "report near misses separately from unusable inputs and preserve the requested score floor" in {
       val cards = List(
-        InvestmentScorecard(AAPL, true, Some(80), Map.empty, Map.empty, Nil, Nil, Some("peer"), 20, None, "v1"),
-        InvestmentScorecard(MSFT, true, Some(60), Map.empty, Map.empty, Nil, Nil, Some("peer"), 20, None, "v1")
+        InvestmentScorecard(AAPL, true, Some(80), Map.empty, Map.empty, Nil, Nil, Some("peer"), 20, "v1"),
+        InvestmentScorecard(MSFT, true, Some(60), Map.empty, Map.empty, Nil, Nil, Some("peer"), 20, "v1")
       )
       val entries = paired(List(InvestmentCandidate(AAPLStock, None), InvestmentCandidate(MSFTStock, None)), cards)
       readSaved(InvestmentScreenRequest(minScore = Some(70)), entries).asserting { found =>
@@ -229,7 +229,6 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
             Nil,
             Some("peer"),
             25,
-            None,
             "quality-fair-value-v1"
           )
         )
@@ -262,7 +261,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val extra   = Ticker("EXTRA")
       val missing = Ticker("MISSING")
       val card    =
-        InvestmentScorecard(AAPL, true, Some(90), Map(Pillar.Quality -> BigDecimal(90)), Map.empty, Nil, Nil, Some("peer"), 20, None, "v1")
+        InvestmentScorecard(AAPL, true, Some(90), Map(Pillar.Quality -> BigDecimal(90)), Map.empty, Nil, Nil, Some("peer"), 20, "v1")
       val cards = List(
         card,
         card.copy(ticker = MSFT, score = Some(60)),
@@ -287,7 +286,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
           if n <= 2 then BigDecimal("-0.01") else BigDecimal("0.05")
         )
       )
-      val financial = FinancialSnapshot("facts", AAPL, Provider.Finnhub, now, Map.empty, Nil, Nil, "hash", "mapping", Nil)
+      val financial = FinancialSnapshot(AAPL, Provider.Finnhub, now, Map.empty, Nil, Nil, "hash", "mapping", Nil)
       val evidence  = InvestmentEvidence(
         Provider.Finnhub,
         now,
@@ -309,7 +308,6 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         Nil,
         None,
         20,
-        Some("facts"),
         "quality-fair-value-v1",
         evidence = Some(evidence)
       )

@@ -19,7 +19,6 @@ class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
       Nil,
       Some("peer"),
       25,
-      None,
       "v1"
     )
 
@@ -41,7 +40,6 @@ class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
       val excludedTicker = Ticker("NEGATIVE")
       val outsideTicker  = Ticker("OUTSIDE")
       val financial      = FinancialSnapshot(
-        "negative-pe",
         excludedTicker,
         Provider.Finnhub,
         ts,
@@ -51,6 +49,17 @@ class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
         "payload-hash",
         "mapping-v1",
         Nil
+      )
+      val evidence = InvestmentEvidence(
+        financial.provider,
+        financial.observedAt,
+        financial.mappingVersion,
+        financial.payloadHash,
+        Map(FinancialMetric.ReturnOnAssets -> financial.annual.map(_.period)),
+        financial.annual,
+        None,
+        None,
+        Some("USD")
       )
       def candidate(ticker: Ticker, country: String, priceScore: Int): InvestmentCandidate =
         InvestmentCandidate(
@@ -69,7 +78,7 @@ class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
         eligible = false,
         score = None,
         exclusions = List(InvestmentReasons.nonpositiveMetric(FinancialMetric.PriceToEarningsTtm.print)),
-        financialSnapshotId = Some(financial.id)
+        evidence = Some(evidence)
       )
       val full = List(
         candidate(AAPL, "US", 10)          -> selected,

@@ -22,9 +22,7 @@ final private class LiveFinancialHistoryRepository[F[_]](
   import FinancialHistoryRepository.Field
 
   override def save(snapshot: FinancialSnapshot): F[Unit] =
-    val newer = Filter.idEq(snapshot.ticker.value) &&
-      Filter.lt(Field.ObservedAt, snapshot.observedAt) &&
-      Filter.ne(Field.Id, snapshot.id)
+    val newer  = Filter.idEq(snapshot.ticker.value) && Filter.lt(Field.ObservedAt, snapshot.observedAt)
     val entity = FinancialSnapshotEntity.from(snapshot)
     collection
       .replaceOne(newer, entity, ReplaceOptions(upsert = true))
@@ -40,7 +38,6 @@ object FinancialHistoryRepository extends MongoJsonCodecs:
   val CollectionName = "financial-history"
 
   object Field:
-    val Id         = "id"
     val ObservedAt = "observedAt"
 
   def make[F[_]: Concurrent](database: MongoDatabase[F]): F[FinancialHistoryRepository[F]] =

@@ -66,7 +66,6 @@ final case class InvestmentScorecard(
     warnings: List[String],
     peerGroup: Option[String],
     peerCount: Int,
-    financialSnapshotId: Option[String],
     modelVersion: String,
     featureUnits: Map[ScoringFeature, String] = Map.empty,
     evidence: Option[InvestmentEvidence] = None,

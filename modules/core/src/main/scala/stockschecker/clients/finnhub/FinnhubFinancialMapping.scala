@@ -72,7 +72,6 @@ object FinnhubFinancialMapping:
             yield canonical -> (if canonical.unit == MetricUnit.Ratio then number / 100 else number)
           }.toMap
           val snapshot = FinancialSnapshot(
-            id = s"${ticker.value}:$observedAt:$hash",
             ticker = ticker,
             provider = Provider.Finnhub,
             observedAt = observedAt,
