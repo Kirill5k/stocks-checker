@@ -1,6 +1,6 @@
 package stockschecker.actions
 
-import stockschecker.domain.{Provider, ProviderDeferralReason}
+import stockschecker.domain.{FinancialMetric, Provider, ProviderDeferralReason}
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import stockschecker.domain.{Job, JobId, JobStatusSummary}
@@ -85,6 +85,23 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
         "MongoJsonParsingException at $.evaluation.dataThrough (missing required field)"
       errorSummary(MongoJsonParsingException("DecodingFailure at .job.waitCount: Int")) mustBe
         "MongoJsonParsingException at $.job.waitCount (expected Int)"
+    }
+
+    "retain digit-leading metric field paths from real map decoding failures" in {
+      val document = Json.obj(
+        "financialSnapshots" -> Json.arr(Json.obj("metrics" -> Json.obj("26WeekPriceReturnDaily" -> Json.fromString("private-value"))))
+      )
+      val decoding = document.hcursor
+        .downField("financialSnapshots")
+        .downArray
+        .get[Map[FinancialMetric, BigDecimal]]("metrics")
+        .swap
+        .toOption
+        .get
+      val error = MongoJsonParsingException(decoding.getMessage, Some(document.noSpaces))
+      errorSummary(error) mustBe "MongoJsonParsingException at $.financialSnapshots[0].metrics.26WeekPriceReturnDaily (invalid map key)"
+      errorSummary(error) must not include "private-value"
+      failure(error, 0) mustBe Failure.Fail
     }
 
     "omit unrecognized or unsafe Mongo decoding messages and avoid retrying malformed data" in {

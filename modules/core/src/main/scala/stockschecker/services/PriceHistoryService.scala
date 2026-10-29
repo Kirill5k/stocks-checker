@@ -45,7 +45,12 @@ final private class LivePriceHistoryService[F[_]](
           !snapshot.requestedRange.through.isBefore(range.through)
 
         }.map(_.pure[F])
-          .getOrElse(fetch(ticker, range, adjustment))
+          .getOrElse {
+            // Keep the small quote cache so a deferred analytics job can resume its second request.
+            // Full adjusted histories are persisted only by explicit portfolio evaluation captures.
+            if adjustment == PriceAdjustment.Unadjusted then fetch(ticker, range, adjustment)
+            else client.getDailyPriceHistory(ticker, range, adjustment)
+          }
       }
   }
 

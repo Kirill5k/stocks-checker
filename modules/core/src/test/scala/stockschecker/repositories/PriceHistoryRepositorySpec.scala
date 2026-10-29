@@ -2,11 +2,13 @@ package stockschecker.repositories
 
 import cats.effect.IO
 import cats.syntax.foldable.*
+import cats.syntax.parallel.*
 import cats.syntax.traverse.*
 import mongo4cats.bson.Document
 import mongo4cats.bson.syntax.*
 import mongo4cats.operations.Filter
 import stockschecker.domain.*
+import stockschecker.repositories.entities.PriceHistoryEntity
 import java.time.{Instant, LocalDate}
 
 class PriceHistoryRepositorySpec extends RepositorySpec {
@@ -27,12 +29,13 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
   )
 
   "Price history repository" should {
-    "preserve immutable vintages and find only histories covering the requested date range" in
+    "keep retries of the current snapshot immutable and find only histories covering the requested date range" in
       withEmbeddedMongoDatabase { db =>
         for
           repo    <- PriceHistoryRepository.make[IO](db)
           _       <- repo.save(original)
           _       <- repo.save(original.copy(currency = "EUR"))
+          _       <- repo.save(original.copy(currency = "EUR", fetchedAt = original.fetchedAt.plusSeconds(1)))
           latest  <- repo.latest(ticker, PriceAdjustment.SplitsAndDividends)
           covered <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, DateRange(from, through))
           before  <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, DateRange(from.minusDays(1), through))
@@ -45,38 +48,39 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
         }
       }
 
-    "select an older fully covering snapshot when newer snapshots omit either end of the requested range" in
+    "replace the current snapshot in place without merging or retaining older candles" in
       withEmbeddedMongoDatabase { db =>
-        val laterStart = original.copy(
-          id = "later-start",
-          fetchedAt = original.fetchedAt.plusSeconds(1),
-          requestedRange = DateRange(from.plusDays(1), through)
-        )
-        val earlierEnd = original.copy(
-          id = "earlier-end",
-          fetchedAt = original.fetchedAt.plusSeconds(2),
-          requestedRange = DateRange(from, through.minusDays(1))
+        val replacement = original.copy(
+          id = "replacement-vintage",
+          fetchedAt = original.fetchedAt.plusNanos(1),
+          candles = List(bar.copy(date = bar.date.plusDays(1), close = 200)),
+          requestedRange = DateRange(from.plusDays(1), through.minusDays(1))
         )
         for
-          repo    <- PriceHistoryRepository.make[IO](db)
-          _       <- List(original, laterStart, earlierEnd).traverse_(repo.save)
-          latest  <- repo.latest(ticker, PriceAdjustment.SplitsAndDividends)
-          covered <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, DateRange(from, through))
+          repo       <- PriceHistoryRepository.make[IO](db)
+          _          <- repo.save(original)
+          _          <- repo.save(replacement)
+          latest     <- repo.latest(ticker, PriceAdjustment.SplitsAndDividends)
+          covered    <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, replacement.requestedRange)
+          oldRange   <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, original.requestedRange)
+          collection <- db.getCollectionWithCodec[PriceHistoryEntity](PriceHistoryRepository.CollectionName)
+          retained   <- collection.find.all
         yield
-          latest mustBe Some(earlierEnd)
-          covered mustBe Some(original)
+          latest mustBe Some(replacement)
+          covered mustBe Some(replacement)
+          oldRange mustBe None
+          retained.toList mustBe List(PriceHistoryEntity("AAA:split-and-dividend", ticker, original.adjustment, replacement))
       }
 
-    "bound retained vintages without evicting broader history needed by other screens" in
+    "keep one independent cache slot per ticker and adjustment" in
       withEmbeddedMongoDatabase { db =>
-        val broad   = original.copy(id = "broad", requestedRange = DateRange(from.minusYears(13), through))
         val updates = (1 to 6).toList.map(i => original.copy(id = s"short-$i", fetchedAt = original.fetchedAt.plusSeconds(i.toLong)))
         val raw     = original.copy(id = "raw", adjustment = PriceAdjustment.Unadjusted)
         val split   = original.copy(id = "split", adjustment = PriceAdjustment.Splits)
         val other   = original.copy(id = "other", ticker = Ticker("BBB"))
         for
           repo          <- PriceHistoryRepository.make[IO](db)
-          _             <- repo.save(broad)
+          _             <- repo.save(original)
           _             <- repo.save(raw)
           _             <- repo.save(split)
           _             <- repo.save(other)
@@ -87,14 +91,32 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
           splitRetained <- repo.latest(ticker, PriceAdjustment.Splits)
           otherRetained <- repo.latest(other.ticker, PriceAdjustment.SplitsAndDividends)
           latest        <- repo.latest(ticker, PriceAdjustment.SplitsAndDividends)
-          covered       <- repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, DateRange(from.minusYears(10), through))
+          all           <- collection.find.all
         yield
-          retained.size mustBe 4
+          retained.size mustBe 1
+          all.size mustBe 4
           rawRetained mustBe Some(raw)
           splitRetained mustBe Some(split)
           otherRetained mustBe Some(other)
           latest mustBe updates.lastOption
-          covered mustBe Some(broad)
+      }
+
+    "keep the newest snapshot across concurrent, out-of-order and tied-timestamp saves" in
+      withEmbeddedMongoDatabase { db =>
+        val snapshots = (0 to 8).toList.map(i => original.copy(id = s"vintage-$i", fetchedAt = original.fetchedAt.plusNanos(i.toLong)))
+        val newest    = snapshots.last
+        for
+          repo       <- PriceHistoryRepository.make[IO](db)
+          _          <- snapshots.reverse.parTraverse_(repo.save)
+          _          <- repo.save(original)
+          _          <- repo.save(newest.copy(id = "tied-vintage", currency = "EUR"))
+          _          <- repo.save(newest.copy(currency = "EUR", fetchedAt = newest.fetchedAt.plusSeconds(1)))
+          collection <- db.getCollectionWithCodec[PriceHistoryEntity](PriceHistoryRepository.CollectionName)
+          retained   <- collection.find.all
+          latest     <- repo.latest(ticker, original.adjustment)
+        yield
+          latest mustBe Some(newest)
+          retained.toList mustBe List(PriceHistoryEntity("AAA:split-and-dividend", ticker, original.adjustment, newest))
       }
 
     "round-trip adjustment labels and nested requested ranges in BSON" in
@@ -109,7 +131,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
           _          <- collection.insertMany(adjustments.map { case (_, label) =>
             val id = s"seeded-$label"
             Document(
-              "_id"        := id,
+              "_id"        := s"${ticker.value}:$label",
               "ticker"     := ticker.value,
               "adjustment" := label,
               "data"       := Document(
@@ -144,7 +166,8 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
               latest   <- repo.latest(ticker, adjustment)
               raw      <- collection
                 .find(
-                  Filter.idEq(saved.id) && Filter.eq("adjustment", label) && Filter.eq("data.adjustment", label) &&
+                  Filter.idEq(s"${ticker.value}:$label") && Filter.eq("data.id", saved.id) &&
+                    Filter.eq("adjustment", label) && Filter.eq("data.adjustment", label) &&
                     Filter.eq("data.requestedRange.from", from.toString) && Filter.eq("data.requestedRange.through", through.toString)
                 )
                 .first

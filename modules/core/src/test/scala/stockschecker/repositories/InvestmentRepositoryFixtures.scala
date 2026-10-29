@@ -20,7 +20,7 @@ private[stockschecker] object InvestmentRepositoryFixtures {
     None,
     "fundamental-v1"
   )
-  val entries = List(InvestmentRankingEntry(InvestmentCandidate(AAPLStock, None), card))
+  val entries = List(InvestmentRankingEntry.from(InvestmentCandidate(AAPLStock, None), card))
   val ranking = InvestmentRanking(InvestmentRankingId("rank-1"), now, InvestmentRecipe(), InvestmentRankingSummary.from(entries))
   val screen  = InvestmentScreen.create(
     InvestmentScreenId("immutable-run"),

@@ -2,6 +2,7 @@ package stockschecker.domain
 
 import io.circe.Codec
 import stockschecker.common.types.StringType
+import stockschecker.domain.investment.Eligibility
 import sttp.tapir.{Codec as TapirCodec, DecodeResult, Schema}
 
 import java.time.Instant
@@ -62,8 +63,32 @@ final case class InvestmentRanking(
     summary: InvestmentRankingSummary
 )
 
-/** Persisted candidates retain compact diagnostics; scorecards preserve the observations used by the recipe. */
-final case class InvestmentRankingEntry(candidate: InvestmentCandidate, scorecard: InvestmentScorecard)
+/** Only the frozen values needed to select and explain screens; scoring evidence remains in the scorecard. */
+final case class InvestmentScreenInput(
+    exchange: Exchange,
+    country: Option[String],
+    industry: Option[String],
+    sector: Option[Sector],
+    priceScore: Option[BigDecimal],
+    exclusionExplanation: Option[String]
+) derives Codec.AsObject
+
+final case class InvestmentRankingEntry(input: InvestmentScreenInput, scorecard: InvestmentScorecard)
+
+object InvestmentRankingEntry:
+  def from(candidate: InvestmentCandidate, scorecard: InvestmentScorecard): InvestmentRankingEntry =
+    val stock = candidate.stock
+    InvestmentRankingEntry(
+      InvestmentScreenInput(
+        stock.security.exchange,
+        stock.profile.map(_.country),
+        stock.profile.map(_.industry),
+        stock.profile.flatMap(_.sector),
+        stock.priceAnalytics.map(_.scores.overallScore),
+        Eligibility.explainExclusion(scorecard, candidate.financialSnapshot)
+      ),
+      scorecard
+    )
 
 final case class InvestmentScreenSummary(
     id: InvestmentScreenId,

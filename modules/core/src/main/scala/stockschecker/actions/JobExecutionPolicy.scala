@@ -23,7 +23,7 @@ private[actions] object JobExecutionPolicy:
   val MaximumProviderDeferJitterMillis = 30.seconds.toMillis
 
   private val DecodingFailureAt = "(?s)\\ADecodingFailure at ([^:\\r\\n]{0,256}): (.*)\\z".r
-  private val SafeFieldPath     = "(?:\\.[A-Za-z_][A-Za-z0-9_-]*|\\[[0-9]+\\])*".r
+  private val SafeFieldPath     = "(?:\\.[A-Za-z0-9_][A-Za-z0-9_-]*|\\[[0-9]+\\])*".r
   private val ScalarDecoders    = Set("Int", "Long", "Double", "Float", "BigDecimal", "BigInt", "Boolean", "String")
 
   enum Progress:
@@ -66,6 +66,7 @@ private[actions] object JobExecutionPolicy:
         case DecodingFailureAt(path, detail) if SafeFieldPath.matches(path) =>
           val reason = detail match
             case "Missing required field"         => "missing required field"
+            case "Couldn't decode key."           => "invalid map key"
             case scalar if ScalarDecoders(scalar) => s"expected $scalar"
             case _                                => "invalid value"
           s"MongoJsonParsingException at $$$path ($reason)"

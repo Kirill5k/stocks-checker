@@ -54,7 +54,7 @@ final private class LiveInvestmentRankingService[F[_]: {Sync, Clock}](
             id         <- Sync[F].delay(InvestmentRankingId.gen)
             scorecards        = InvestmentScorer.rank(candidates, capturedAt, recipe)
             candidateByTicker = candidates.map(c => c.stock.security.ticker -> c).toMap
-            entries           = scorecards.map(card => InvestmentRankingEntry(candidateByTicker(card.ticker).compact, card))
+            entries           = scorecards.map(card => InvestmentRankingEntry.from(candidateByTicker(card.ticker), card))
             ranking           = InvestmentRanking(id, capturedAt, recipe, InvestmentRankingSummary.from(entries))
             _ <- rankings.save(ranking, entries)
             _ <- prune(capturedAt.minus(InvestmentRecipe.RankingRetention))

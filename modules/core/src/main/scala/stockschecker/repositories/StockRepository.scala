@@ -72,9 +72,8 @@ final private class LiveStockRepository[F[_]](
         "from"     := FinancialHistoryRepository.CollectionName,
         "let"      := Document("ticker" := s"$$${Field.Stock}.${Field.Security}.${Field.Id}"),
         "pipeline" := List(
-          Document("$match"   := Document("$expr" := Document("$eq" := List(s"$$${history.Ticker}", "$$ticker")))),
-          Document("$sort"    := Document(history.ObservedAt := -1, history.Id := -1)),
-          Document("$limit"   := 1),
+          Document("$match" := Document("$expr" := Document("$eq" := List(s"$$${history.Ticker}", "$$ticker")))),
+          // Compare decoded Instants below; fractional ISO timestamps do not sort chronologically as strings.
           Document("$project" := Document(history.RawPayload := 0))
         ),
         "as" := Field.FinancialSnapshots

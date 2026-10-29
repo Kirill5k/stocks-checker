@@ -36,8 +36,9 @@ final private class LivePriceService[F[_]](
       through    = LocalDate.ofInstant(now, ZoneOffset.UTC)
       totalRange = DateRange(through.minus(PriceHistoryService.SharedHistoryLookback), through)
       quoteRange = DateRange(through.minusDays(14), through)
-      total     <- history.recent(ticker, totalRange, PriceAdjustment.SplitsAndDividends, now)
+      // Cache the small quote first; on provider deferral the retry can proceed directly to the large history.
       quoted    <- history.recent(ticker, quoteRange, PriceAdjustment.Unadjusted, now)
+      total     <- history.recent(ticker, totalRange, PriceAdjustment.SplitsAndDividends, now)
       analytics <- F.fromEither(PriceAnalyticsAlignment.calculate(ticker, total, quoted, through))
     yield analytics
 

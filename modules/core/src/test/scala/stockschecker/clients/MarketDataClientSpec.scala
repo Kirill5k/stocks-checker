@@ -52,8 +52,7 @@ class MarketDataClientSpec extends IOWordSpec {
       "hash",
       "mapping",
       Nil
-    ),
-    "{}"
+    )
   )
 
   private def budgets: ProviderBudgetRepository[IO] = {

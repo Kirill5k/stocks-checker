@@ -13,26 +13,36 @@ class InvestmentRankingRepositorySpec extends RepositorySpec:
   override val port = 12223
 
   "An InvestmentRankingRepository" should {
-    "preserve analytics with and without basis in frozen ranking inputs" in
+    "store only screen selection fields instead of copying stock profiles and analytics" in
       withEmbeddedMongoDatabase { db =>
         val withoutBasis = AAPLStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(basis = None)))
         val withBasis    = MSFTStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(ticker = MSFT)))
         val values       = List(
-          InvestmentRankingEntry(InvestmentCandidate(withoutBasis, None), card),
-          InvestmentRankingEntry(InvestmentCandidate(withBasis, None), card.copy(ticker = MSFT))
+          InvestmentRankingEntry.from(InvestmentCandidate(withoutBasis, None), card),
+          InvestmentRankingEntry.from(InvestmentCandidate(withBasis, None), card.copy(ticker = MSFT))
         )
         for
-          repo  <- InvestmentRankingRepository.make[IO](db)
-          _     <- repo.save(ranking, values)
-          saved <- repo.findEntries(ranking.id)
-        yield saved mustBe values
+          repo   <- InvestmentRankingRepository.make[IO](db)
+          _      <- repo.save(ranking, values)
+          saved  <- repo.findEntries(ranking.id)
+          raw    <- db.getCollection(InvestmentRankingRepository.InputsCollectionName)
+          stored <- raw.find.all
+        yield
+          saved mustBe values
+          stored.foreach { row =>
+            row.keys mustBe Set("_id", "rankingId", "ordinal", "input", "scorecard", "createdAt")
+            row.getDocument("input").map(_.keys) mustBe Some(
+              Set("exchange", "country", "industry", "sector", "priceScore", "exclusionExplanation")
+            )
+          }
+          succeed
       }
 
     "preserve published metadata and ordered entries in the existing collections" in
       withEmbeddedMongoDatabase { db =>
         val values = List(
-          InvestmentRankingEntry(InvestmentCandidate(MSFTStock, None), card.copy(ticker = MSFT)),
-          InvestmentRankingEntry(InvestmentCandidate(AAPLStock, None), card)
+          InvestmentRankingEntry.from(InvestmentCandidate(MSFTStock, None), card.copy(ticker = MSFT)),
+          InvestmentRankingEntry.from(InvestmentCandidate(AAPLStock, None), card)
         )
         val published = ranking.copy(summary = InvestmentRankingSummary.from(values))
         for
@@ -50,7 +60,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec:
           stored.size mustBe 2
       }
 
-    "preserve supplied candidates and scorecard evidence without transforming them" in
+    "preserve compact selection inputs and complete scorecard evidence" in
       withEmbeddedMongoDatabase { db =>
         val observation = FinancialObservation(FinancialMetric.FreeCashFlowMargin, LocalDate.parse("2025-12-31"), BigDecimal("0.2"))
         val snapshot    = FinancialSnapshot(
@@ -76,7 +86,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec:
           None,
           Some("USD")
         )
-        val value = InvestmentRankingEntry(
+        val value = InvestmentRankingEntry.from(
           InvestmentCandidate(AAPLStock, Some(snapshot)),
           card.copy(financialSnapshotId = Some(snapshot.id), evidence = Some(evidence))
         )
@@ -89,7 +99,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec:
 
     "prune only old rankings without a referencing screen and remove their inputs" in
       withEmbeddedMongoDatabase { db =>
-        val before     = now.minusSeconds(30L * 86400)
+        val before     = now.minusSeconds(3L * 86400)
         val referenced = ranking.copy(createdAt = before.minusSeconds(1))
         val obsolete   = ranking.copy(id = InvestmentRankingId("obsolete"), createdAt = before.minusSeconds(1))
         val boundary   = ranking.copy(id = InvestmentRankingId("boundary"), createdAt = before)

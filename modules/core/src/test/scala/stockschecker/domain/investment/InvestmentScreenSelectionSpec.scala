@@ -5,6 +5,8 @@ import org.scalatest.wordspec.AnyWordSpec
 import stockschecker.domain.*
 import stockschecker.fixtures.*
 
+import java.time.LocalDate
+
 class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
   private def card(ticker: Ticker, score: Int): InvestmentScorecard =
     InvestmentScorecard(
@@ -22,7 +24,9 @@ class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
     )
 
   private def entries(cards: List[InvestmentScorecard]): List[InvestmentRankingEntry] =
-    cards.map(c => InvestmentRankingEntry(InvestmentCandidate(AAPLStock.copy(security = AAPLSecurity.copy(ticker = c.ticker)), None), c))
+    cards.map(c =>
+      InvestmentRankingEntry.from(InvestmentCandidate(AAPLStock.copy(security = AAPLSecurity.copy(ticker = c.ticker)), None), c)
+    )
 
   private def screen(
       values: List[InvestmentRankingEntry],
@@ -33,6 +37,71 @@ class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
     InvestmentScreen.create(InvestmentScreenId("selection"), ts, ranking, request, cohorts)
 
   "InvestmentScreenSelection" should {
+    "preserve scope, cohort ordering and financial explanations after compacting full candidates" in {
+      val excludedTicker = Ticker("NEGATIVE")
+      val outsideTicker  = Ticker("OUTSIDE")
+      val financial      = FinancialSnapshot(
+        "negative-pe",
+        excludedTicker,
+        Provider.Finnhub,
+        ts,
+        Map(FinancialMetric.PriceToEarningsTtm -> BigDecimal(-3)),
+        List(FinancialObservation(FinancialMetric.ReturnOnAssets, LocalDate.parse("2025-12-31"), BigDecimal("0.2"))),
+        Nil,
+        "payload-hash",
+        "mapping-v1",
+        Nil
+      )
+      def candidate(ticker: Ticker, country: String, priceScore: Int): InvestmentCandidate =
+        InvestmentCandidate(
+          AAPLStock.copy(
+            security = AAPLSecurity.copy(ticker = ticker),
+            profile =
+              Some(AAPLCompanyProfile.copy(ticker = ticker, country = country, industry = "Software", sector = Some(Sector.Technology))),
+            priceAnalytics =
+              Some(AAPLPriceAnalytics.copy(ticker = ticker, scores = AAPLPriceAnalytics.scores.copy(overallScore = priceScore)))
+          ),
+          Option.when(ticker == excludedTicker)(financial)
+        )
+      val selected = card(AAPL, 90).copy(pillars = Map(Pillar.Quality -> BigDecimal(50), Pillar.Value -> BigDecimal(80)))
+      val nearMiss = card(MSFT, 60).copy(pillars = Map(Pillar.Quality -> BigDecimal(90), Pillar.Value -> BigDecimal(40)))
+      val excluded = card(excludedTicker, 0).copy(
+        eligible = false,
+        score = None,
+        exclusions = List(InvestmentReasons.nonpositiveMetric(FinancialMetric.PriceToEarningsTtm.print)),
+        financialSnapshotId = Some(financial.id)
+      )
+      val full = List(
+        candidate(AAPL, "US", 10)          -> selected,
+        candidate(MSFT, "US", 90)          -> nearMiss,
+        candidate(excludedTicker, "US", 5) -> excluded,
+        candidate(outsideTicker, "GB", 99) -> card(outsideTicker, 99)
+      )
+      val values    = full.map { case (input, scorecard) => InvestmentRankingEntry.from(input, scorecard) }
+      val request   = InvestmentScreenRequest(exchange = Some(Exchange.NASDAQ), country = Some("US"), minScore = Some(70))
+      val selection = InvestmentScreenSelection(values, request)
+      val result    = selection.result(screen(values, request, selection.cohorts))
+
+      values.map(_.scorecard) mustBe full.map(_._2)
+      result.candidates mustBe List(selected)
+      result.nearMisses mustBe List(
+        InvestmentNearMiss(nearMiss, "score 60 is below required score 70"),
+        InvestmentNearMiss(excluded, s"${FinancialMetric.PriceToEarningsTtm.print} = -3; requires a positive value")
+      )
+      result.exclusions mustBe List(excluded)
+      result.cohorts.map(c => c.name -> c.tickers).toMap mustBe Map(
+        CohortName.Investment    -> List(AAPL),
+        CohortName.OldPriceScore -> List(MSFT, AAPL),
+        CohortName.Quality       -> List(MSFT, AAPL),
+        CohortName.Value         -> List(AAPL, MSFT),
+        CohortName.EqualUniverse -> List(AAPL, MSFT)
+      )
+      result.cohorts.foreach { cohort =>
+        cohort.concentration.map(_.sectorWeightsPercent) mustBe Some(Map("technology" -> BigDecimal(100)))
+        cohort.concentration.map(_.industryWeightsPercent) mustBe Some(Map("Software" -> BigDecimal(100)))
+      }
+    }
+
     "apply the same score criteria to displayed candidates and the fixed top-twenty cohort" in {
       val cards     = (0 until 25).toList.map(n => card(Ticker(f"TEST$n%02d"), 100 - n))
       val values    = entries(cards)
@@ -81,13 +150,7 @@ class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
 
     "preserve sector labels when calculating concentration weights" in {
       val values = entries(List(card(AAPL, 90))).map { entry =>
-        entry.copy(candidate =
-          entry.candidate.copy(stock =
-            entry.candidate.stock.copy(
-              profile = entry.candidate.stock.profile.map(_.copy(industry = "Communications", sector = Some(Sector.CommunicationServices)))
-            )
-          )
-        )
+        entry.copy(input = entry.input.copy(industry = Some("Communications"), sector = Some(Sector.CommunicationServices)))
       }
       val selection     = InvestmentScreenSelection(values, InvestmentScreenRequest())
       val concentration = selection.cohorts.find(_.name == CohortName.Investment).flatMap(_.concentration).get

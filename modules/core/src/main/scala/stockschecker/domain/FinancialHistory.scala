@@ -34,6 +34,5 @@ final case class FinancialSnapshot(
 
 final case class FinancialData(
     metrics: FinancialMetrics,
-    snapshot: FinancialSnapshot,
-    rawPayload: String
+    snapshot: FinancialSnapshot
 ) derives Codec.AsObject

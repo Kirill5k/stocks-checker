@@ -17,7 +17,7 @@ class FinnhubFinancialMappingSpec extends AnyWordSpec with Matchers:
   ).toOption.get.asObject.get
 
   "FinnhubFinancialMapping" should {
-    "translate supported keys and units while retaining unmapped fields only in the raw response" in {
+    "translate supported keys and units while retaining provenance of the complete response" in {
       val data = FinnhubFinancialMapping.decode(body, Ticker("AAPL"), now).toOption.flatten.get
       data.metrics.freeCashFlowPerShareTtm mustBe Some(BigDecimal("6.6855"))
       data.snapshot.metrics.keySet mustBe Set(
@@ -37,8 +37,6 @@ class FinnhubFinancialMappingSpec extends AnyWordSpec with Matchers:
       data.snapshot.quarterly.map(_.unit).distinct mustBe List(MetricUnit.PerShare)
       FinancialMetric.PriceToFreeCashFlowTtm.unit mustBe MetricUnit.Multiple
       data.snapshot.issues mustBe Nil
-      data.rawPayload must include("cashFlowPerShareTTM")
-      data.rawPayload must include("netMargin")
       data.snapshot.payloadHash.length mustBe 64
       data.snapshot.mappingVersion mustBe FinnhubFinancialMapping.Version
     }
@@ -46,7 +44,6 @@ class FinnhubFinancialMappingSpec extends AnyWordSpec with Matchers:
     "keep generic cash flow out of free cash flow when the explicit FCF series is missing" in {
       val data = FinnhubFinancialMapping.decode(body.remove("series"), Ticker("AAPL"), now).toOption.flatten.get
       data.metrics.freeCashFlowPerShareTtm mustBe None
-      data.rawPayload must include("cashFlowPerShareTTM")
     }
 
     "record typed malformed observations, invalid series, duplicate periods and symbol mismatches" in {
@@ -81,7 +78,6 @@ class FinnhubFinancialMappingSpec extends AnyWordSpec with Matchers:
       val data = FinnhubFinancialMapping.decode(body.add("series", series), Ticker("AAPL"), now).toOption.flatten.get
       data.snapshot.issues mustBe Nil
       data.snapshot.annual mustBe Nil
-      data.rawPayload must include("unused")
     }
 
     "reject a response without a metric object and preserve a valid no-data response" in {
@@ -94,5 +90,19 @@ class FinnhubFinancialMappingSpec extends AnyWordSpec with Matchers:
       val second = FinnhubFinancialMapping.decode(body, Ticker("AAPL"), now.plusSeconds(1)).toOption.flatten.get.snapshot
       first.payloadHash mustBe second.payloadHash
       first.id must not be second.id
+    }
+
+    "include unmapped provider fields in the payload hash without retaining the response" in {
+      val first   = FinnhubFinancialMapping.decode(body, Ticker("AAPL"), now).toOption.flatten.get.snapshot
+      val changed = FinnhubFinancialMapping
+        .decode(body.add("unmapped", Json.fromString("provider detail")), Ticker("AAPL"), now)
+        .toOption
+        .flatten
+        .get
+        .snapshot
+      changed.metrics mustBe first.metrics
+      changed.annual mustBe first.annual
+      changed.quarterly mustBe first.quarterly
+      changed.payloadHash must not be first.payloadHash
     }
   }

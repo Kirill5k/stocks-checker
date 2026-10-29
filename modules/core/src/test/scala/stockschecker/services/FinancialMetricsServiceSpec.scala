@@ -29,8 +29,8 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
   "FinancialMetricsService" should {
     "persist financial evidence before publishing metrics and dispatch the update event" in {
       val (repo, client, dispatcher, history) = mocks
-      when(client.getFinancialData(AAPL)).thenReturnSome(FinancialData(AAPLFinancialMetrics, snapshot, "raw response"))
-      when(history.save(snapshot, "raw response")).thenReturnUnit
+      when(client.getFinancialData(AAPL)).thenReturnSome(FinancialData(AAPLFinancialMetrics, snapshot))
+      when(history.save(snapshot)).thenReturnUnit
       when(repo.save(anyList[FinancialMetrics])).thenReturnUnit
       when(dispatcher.dispatch(any[Action])).thenReturnUnit
       (for
@@ -38,7 +38,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
         result  <- service.find(AAPL, true)
       yield result).asserting { result =>
         result mustBe AAPLFinancialMetrics
-        verify(history).save(snapshot, "raw response")
+        verify(history).save(snapshot)
         verify(repo).save(List(AAPLFinancialMetrics))
         verify(dispatcher).dispatch(Action.RecordFinancialMetricsUpdate(NonEmptyList.one(AAPL)))
         succeed
@@ -48,8 +48,8 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
     "not publish metrics when financial evidence cannot be saved" in {
       val (repo, client, dispatcher, history) = mocks
       val error                               = new RuntimeException("History unavailable")
-      when(client.getFinancialData(AAPL)).thenReturnSome(FinancialData(AAPLFinancialMetrics, snapshot, "raw response"))
-      when(history.save(snapshot, "raw response")).thenRaiseError(error)
+      when(client.getFinancialData(AAPL)).thenReturnSome(FinancialData(AAPLFinancialMetrics, snapshot))
+      when(history.save(snapshot)).thenRaiseError(error)
       (for
         service <- FinancialMetricsService.make(repo, client, dispatcher, history)
         result  <- service.find(AAPL, true)

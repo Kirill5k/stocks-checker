@@ -169,7 +169,7 @@ class PriceServiceSpec extends IOWordSpec {
         service <- d.service
         _       <- service.findPriceAnalytics(AAPL, fetch = true)
       yield full).asserting { full =>
-        verify(d.history).save(full)
+        verify(d.history, never).save(any[PriceHistorySnapshot])
         verify(d.client).getDailyPriceHistory(
           AAPL,
           full.requestedRange,
@@ -179,40 +179,40 @@ class PriceServiceSpec extends IOWordSpec {
       }
     }
 
-    "retain the first fetched observation when the second request is rate limited" in {
+    "retain only the small quote when the adjusted history request is rate limited" in {
       val d = mocks
       (for
         now <- IO.pure(fixedNow)
-        full = snapshot(now, PriceAdjustment.SplitsAndDividends)
-        _    = when(d.history.latest(any[Ticker], any[PriceAdjustment])).thenReturnIO(None)
-        _    = when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, full.requestedRange)).thenReturnIO(None)
-        _    = when(
-          d.client.getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
-        ).thenReturnIO(full)
-        deferred = AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(60), ProviderDeferralReason.Provider429)
-        _        = when(
+        full       = snapshot(now, PriceAdjustment.SplitsAndDividends)
+        quoteRange = DateRange(full.requestedRange.through.minusDays(14), full.requestedRange.through)
+        quoted     = snapshot(now, PriceAdjustment.Unadjusted).copy(requestedRange = quoteRange)
+        _          = when(d.history.latest(any[Ticker], any[PriceAdjustment])).thenReturnIO(None)
+        _          = when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, full.requestedRange)).thenReturnIO(None)
+        deferred   = AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(60), ProviderDeferralReason.Provider429)
+        _ = when(d.client.getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)).thenRaiseError(deferred)
+        _ = when(
           d.client
             .getDailyPriceHistory(
               AAPL,
-              DateRange(full.requestedRange.through.minusDays(14), full.requestedRange.through),
+              quoteRange,
               PriceAdjustment.Unadjusted
             )
         )
-          .thenRaiseError(deferred)
+          .thenReturnIO(quoted)
         service <- d.service
         result  <- service.findPriceAnalytics(AAPL, fetch = true).attempt
-      yield (full, deferred, result)).asserting { case (full, deferred, result) =>
+      yield (full, quoted, deferred, result)).asserting { case (full, quoted, deferred, result) =>
         result mustBe Left(deferred)
         val ordered = org.mockito.Mockito.inOrder(d.client, d.history)
-        ordered.verify(d.client).getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
-        ordered.verify(d.history).save(full)
         ordered
           .verify(d.client)
           .getDailyPriceHistory(
             AAPL,
-            DateRange(full.requestedRange.through.minusDays(14), full.requestedRange.through),
+            quoted.requestedRange,
             PriceAdjustment.Unadjusted
           )
+        ordered.verify(d.history).save(quoted)
+        ordered.verify(d.client).getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
         verify(d.repo, never).save(anyList[PriceAnalytics])
         succeed
       }

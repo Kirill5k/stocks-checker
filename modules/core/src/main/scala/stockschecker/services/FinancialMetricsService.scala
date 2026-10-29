@@ -27,7 +27,7 @@ final private class LiveFinancialMetricsService[F[_]](
       if fetch then
         client.getFinancialData(ticker).flatMap {
           case Some(data) =>
-            historyRepository.save(data.snapshot, data.rawPayload) >>
+            historyRepository.save(data.snapshot) >>
               metricsRepository.save(List(data.metrics)) >>
               dispatcher.dispatch(Action.RecordFinancialMetricsUpdate(NonEmptyList.one(ticker))).as(Some(data.metrics))
           case None => F.pure(None)

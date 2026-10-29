@@ -33,7 +33,7 @@ final private class LiveInvestmentRankingRepository[F[_]: MonadThrow](
         s"${ranking.id.value}:${entry.scorecard.ticker.value}",
         ranking.id,
         ordinal,
-        entry.candidate,
+        entry.input,
         entry.scorecard,
         ranking.createdAt
       )
@@ -50,7 +50,7 @@ final private class LiveInvestmentRankingRepository[F[_]: MonadThrow](
       .find(Filter.eq(Field.RankingId, id.value))
       .sort(Sort.asc(Field.Ordinal))
       .all
-      .mapList(row => InvestmentRankingEntry(row.candidate, row.scorecard))
+      .mapList(row => InvestmentRankingEntry(row.input, row.scorecard))
 
   override def latest: F[Option[InvestmentRanking]] =
     collection.find.sort(Sort.desc(Field.CreatedAt)).first.mapOpt(_.toDomain)

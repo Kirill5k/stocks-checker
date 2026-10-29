@@ -4,19 +4,7 @@ import io.circe.Codec
 import java.time.{Instant, LocalDate}
 import scala.concurrent.duration.*
 
-final case class InvestmentCandidate(stock: Stock, financialSnapshot: Option[FinancialSnapshot]) derives Codec.AsObject:
-  def compact: InvestmentCandidate =
-    copy(financialSnapshot =
-      financialSnapshot.map(snapshot =>
-        snapshot.copy(
-          metrics = snapshot.metrics.filter { case (metric, _) =>
-            Set(FinancialMetric.PriceToEarningsTtm, FinancialMetric.PriceToFreeCashFlowTtm, FinancialMetric.EpsTtm)(metric)
-          },
-          annual = Nil,
-          quarterly = Nil
-        )
-      )
-    )
+final case class InvestmentCandidate(stock: Stock, financialSnapshot: Option[FinancialSnapshot]) derives Codec.AsObject
 
 final case class InvestmentEvidence(
     provider: Provider,
@@ -59,8 +47,9 @@ final case class InvestmentRecipe(
     else Right(())
 
 object InvestmentRecipe:
-  val RankingMaxAge         = 2.days
-  val RankingRetention      = 30.days
+  val RankingMaxAge = 2.days
+  // Allow an in-flight screen creation to pin a ranking accepted just before the freshness deadline.
+  val RankingRetention      = RankingMaxAge + 1.day
   val MinimumEligibleStocks = 20
   val CohortSize            = 20
   val NearMissLimit         = 10

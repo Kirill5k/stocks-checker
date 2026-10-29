@@ -86,21 +86,21 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
           val captured = org.mockito.ArgumentCaptor.forClass(classOf[List[InvestmentRankingEntry]])
           val ordered  = org.mockito.Mockito.inOrder(d.rankings)
           ordered.verify(d.rankings).save(org.mockito.ArgumentMatchers.eq(refreshed), captured.capture())
-          ordered.verify(d.rankings).prune(now.minusSeconds(30L * 86400))
+          ordered.verify(d.rankings).prune(now.minusSeconds(3L * 86400))
           val saved = captured.getValue
           refreshed.id.value must not be empty
           refreshed.createdAt mustBe now
           refreshed.recipe mustBe recipe
-          val compactFinancial = financial.copy(
-            metrics = Map(
-              FinancialMetric.PriceToEarningsTtm     -> BigDecimal(10),
-              FinancialMetric.PriceToFreeCashFlowTtm -> BigDecimal(12),
-              FinancialMetric.EpsTtm                 -> BigDecimal(4)
-            ),
-            annual = Nil,
-            quarterly = Nil
+          saved.map(_.input) mustBe List(AAPLStock, MSFTStock).map(stock =>
+            InvestmentScreenInput(
+              stock.security.exchange,
+              stock.profile.map(_.country),
+              stock.profile.map(_.industry),
+              stock.profile.flatMap(_.sector),
+              stock.priceAnalytics.map(_.scores.overallScore),
+              None
+            )
           )
-          saved.map(_.candidate) mustBe List(InvestmentCandidate(AAPLStock, None), InvestmentCandidate(MSFTStock, Some(compactFinancial)))
           saved.find(_.scorecard.ticker == MSFT).flatMap(_.scorecard.financialSnapshotId) mustBe Some(financial.id)
           refreshed.summary mustBe InvestmentRankingSummary.from(saved)
           succeed
@@ -163,7 +163,7 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
 
     "load ranking metadata and entries independently" in {
       val d     = new Dependencies
-      val entry = InvestmentRankingEntry(InvestmentCandidate(AAPLStock, None), InvestmentRepositoryFixtures.card)
+      val entry = InvestmentRankingEntry.from(InvestmentCandidate(AAPLStock, None), InvestmentRepositoryFixtures.card)
       when(d.rankings.find(ranking.id)).thenReturnSome(ranking)
       when(d.rankings.findEntries(ranking.id)).thenReturnIO(List(entry))
       (for

@@ -1,16 +1,19 @@
 package stockschecker.repositories
 
 import cats.effect.Concurrent
+import cats.syntax.applicativeError.*
 import cats.syntax.flatMap.*
-import cats.syntax.foldable.*
 import cats.syntax.functor.*
 import mongo4cats.circe.MongoJsonCodecs
 import stockschecker.repositories.entities.{PriceHistoryEntity, PriceHistorySnapshotRef}
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort, Update}
+import mongo4cats.operations.{Aggregate, Filter, Projection, Update}
 import mongo4cats.models.collection.UpdateOptions
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
+
+import java.time.Instant
+import scala.util.Try
 
 trait PriceHistoryRepository[F[_]]:
   def save(snapshot: PriceHistorySnapshot): F[Unit]
@@ -21,66 +24,60 @@ final private class LivePriceHistoryRepository[F[_]: Concurrent](collection: Mon
     extends PriceHistoryRepository[F] {
   import PriceHistoryRepository.Field
 
-  override def save(snapshot: PriceHistorySnapshot): F[Unit] = collection
-    .updateOne(
-      Filter.idEq(snapshot.id),
-      Update
-        .setOnInsert(Field.Id, snapshot.id)
-        .setOnInsert(Field.Ticker, snapshot.ticker)
-        .setOnInsert(Field.Adjustment, snapshot.adjustment)
-        .setOnInsert(Field.Data, snapshot),
-      UpdateOptions(upsert = true)
-    )
-    .void >> retainRecent(snapshot.ticker, snapshot.adjustment)
+  private def key(ticker: Ticker, adjustment: PriceAdjustment): String = s"${ticker.value}:${adjustment.value}"
 
-  // Completed analytics/evaluations retain computed results and provenance IDs, not a permanent candle archive.
-  // Raw candles retain three recent vintages plus the broadest cached history; older IDs may no longer resolve.
-  // Keep each vintage intact; merging adjusted series across corporate actions is unsafe.
-  private def retainRecent(ticker: Ticker, adjustment: PriceAdjustment): F[Unit] = {
-    val matching  = Filter.eq(Field.Ticker, ticker) && Filter.eq(Field.Adjustment, adjustment)
-    val reference = Projection.include(Field.Id).computed(Field.SnapshotFetchedAt, "$" + Field.FetchedAt)
-    for
-      recent <- collection
-        .aggregate[PriceHistorySnapshotRef](
-          Aggregate
-            .matchBy(matching)
-            .sort(Sort.desc(Field.FetchedAt))
-            .limit(3)
-            .project(reference)
-        )
-        .all
-      broadest <- collection
-        .aggregate[PriceHistorySnapshotRef](
-          Aggregate
-            .matchBy(matching)
-            .sort(Sort.asc(Field.RangeFrom).desc(Field.FetchedAt))
-            .limit(1)
-            .project(reference)
-        )
-        .first
-      retained = recent.map(_._id).toList ++ broadest.map(_._id).toList
-      _ <- recent.headOption.traverse_(newest =>
-        collection.deleteMany(matching && Filter.nin(Field.Id, retained) && Filter.lte(Field.FetchedAt, newest.fetchedAt)).void
-      )
-    yield ()
+  // A stable cache slot contains one complete adjustment vintage. Never merge corporate-action vintages.
+  override def save(snapshot: PriceHistorySnapshot): F[Unit] = {
+    val matching = Filter.idEq(key(snapshot.ticker, snapshot.adjustment))
+    val metadata = Aggregate
+      .matchBy(matching)
+      .project(Projection.computed("id", "$" + Field.SnapshotId).computed("fetchedAt", "$" + Field.FetchedAt).excludeId)
+    collection
+      .aggregate[PriceHistorySnapshotRef](metadata)
+      .first
+      .flatMap {
+        case Some(current) if current.id == snapshot.id =>
+          Concurrent[F].unit
+        case Some(current) =>
+          // Compare Instants in Scala: ISO strings with different fractional precision do not sort chronologically.
+          Concurrent[F].fromTry(Try(Instant.parse(current.fetchedAt))).flatMap { fetchedAt =>
+            if !fetchedAt.isBefore(snapshot.fetchedAt) then Concurrent[F].unit
+            else
+              val unchanged = matching && Filter.eq(Field.SnapshotId, current.id) && Filter.eq(Field.FetchedAt, current.fetchedAt)
+              collection.updateOne(unchanged, Update.set(Field.Data, snapshot)).flatMap { result =>
+                if result.getMatchedCount == 0 then save(snapshot) else Concurrent[F].unit
+              }
+          }
+        case None =>
+          val insert = Update
+            .setOnInsert(Field.Id, key(snapshot.ticker, snapshot.adjustment))
+            .setOnInsert(Field.Ticker, snapshot.ticker)
+            .setOnInsert(Field.Adjustment, snapshot.adjustment)
+            .setOnInsert(Field.Data, snapshot)
+          collection
+            .updateOne(matching, insert, UpdateOptions(upsert = true))
+            .flatMap(result => if result.getMatchedCount == 0 then Concurrent[F].unit else save(snapshot))
+            .handleErrorWith {
+              // Another refresh can insert this slot first; compare its vintage before attempting an update.
+              case error: com.mongodb.MongoWriteException if error.getError.getCode == 11000 => save(snapshot)
+              case error                                                                     => Concurrent[F].raiseError(error)
+            }
+      }
   }
 
   override def latest(ticker: Ticker, adjustment: PriceAdjustment): F[Option[PriceHistorySnapshot]] =
     collection
-      .find(Filter.eq(Field.Ticker, ticker) && Filter.eq(Field.Adjustment, adjustment))
-      .sort(Sort.desc(Field.FetchedAt))
+      .find(Filter.idEq(key(ticker, adjustment)))
       .first
       .map(_.map(_.data))
 
   override def latestCovering(ticker: Ticker, adjustment: PriceAdjustment, range: DateRange): F[Option[PriceHistorySnapshot]] =
     collection
       .find(
-        Filter.eq(Field.Ticker, ticker) &&
-          Filter.eq(Field.Adjustment, adjustment) &&
+        Filter.idEq(key(ticker, adjustment)) &&
           Filter.lte(Field.RangeFrom, range.from.toString) &&
           Filter.gte(Field.RangeThrough, range.through.toString)
       )
-      .sort(Sort.desc(Field.FetchedAt))
       .first
       .map(_.map(_.data))
 }
@@ -89,26 +86,24 @@ object PriceHistoryRepository extends MongoJsonCodecs {
   val CollectionName = "price-observations"
 
   object Field:
-    val Id                = "_id"
-    val Ticker            = "ticker"
-    val Adjustment        = "adjustment"
-    val Data              = "data"
-    val FetchedAt         = "data.fetchedAt"
-    val RangeFrom         = "data.requestedRange.from"
-    val RangeThrough      = "data.requestedRange.through"
-    val SnapshotFetchedAt = "fetchedAt"
+    val Id           = "_id"
+    val Ticker       = "ticker"
+    val Adjustment   = "adjustment"
+    val Data         = "data"
+    val SnapshotId   = "data.id"
+    val FetchedAt    = "data.fetchedAt"
+    val RangeFrom    = "data.requestedRange.from"
+    val RangeThrough = "data.requestedRange.through"
 
   def make[F[_]: Concurrent](db: MongoDatabase[F]): F[PriceHistoryRepository[F]] =
-    for
-      collection <- db.getCollectionWithCodec[PriceHistoryEntity](CollectionName)
-      _          <- collection.createIndex(Index.ascending(List(Field.Ticker, Field.Adjustment, Field.FetchedAt)))
-      _          <- collection.createIndex(Index.ascending(List(Field.Ticker, Field.Adjustment, Field.RangeFrom, Field.FetchedAt)))
-    yield new LivePriceHistoryRepository[F](
-      collection
-        .withAddedCodec[Ticker]
-        .withAddedCodec[PriceAdjustment]
-        .withAddedCodec[PriceHistorySnapshot]
-        .withAddedCodec[PriceHistorySnapshotRef]
-    )
+    db.getCollectionWithCodec[PriceHistoryEntity](CollectionName).map { collection =>
+      new LivePriceHistoryRepository[F](
+        collection
+          .withAddedCodec[Ticker]
+          .withAddedCodec[PriceAdjustment]
+          .withAddedCodec[PriceHistorySnapshot]
+          .withAddedCodec[PriceHistorySnapshotRef]
+      )
+    }
 
 }

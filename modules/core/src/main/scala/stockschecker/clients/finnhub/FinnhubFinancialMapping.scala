@@ -47,7 +47,7 @@ object FinnhubFinancialMapping:
                         period <- cursor.get[String]("period").toOption.flatMap(p => Try(LocalDate.parse(p)).toOption)
                         value  <- cursor.get[BigDecimal]("v").toOption
                       yield FinancialObservation(canonical, period, value)
-                      // Null means unavailable; the original response retains it without inventing a zero.
+                      // Null means unavailable; do not invent a zero.
                       if decoded.isEmpty && !cursor.downField("v").focus.exists(_.isNull) then
                         issues += FinancialSnapshotIssue.InvalidObservation(frequency, canonical)
                       decoded
@@ -84,6 +84,6 @@ object FinnhubFinancialMapping:
             issues = issues.result().distinct
           )
           val fcf = quarterly.filter(_.metric == FinancialMetric.FreeCashFlowPerShareTtm).sortBy(_.period).lastOption.map(_.value)
-          Some(FinancialData(parsed.toDomain(ticker).copy(freeCashFlowPerShareTtm = fcf), snapshot, raw))
+          Some(FinancialData(parsed.toDomain(ticker).copy(freeCashFlowPerShareTtm = fcf), snapshot))
         }
     }

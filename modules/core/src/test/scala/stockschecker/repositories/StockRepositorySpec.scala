@@ -3,6 +3,7 @@ package stockschecker.repositories
 import cats.data.NonEmptyList
 import cats.effect.IO
 import mongo4cats.bson.BsonValue
+import mongo4cats.circe.MongoJsonCodecs
 import stockschecker.domain.{
   Exchange,
   FinancialMetric,
@@ -29,7 +30,7 @@ import stockschecker.fixtures.{
   MSFTStock
 }
 
-class StockRepositorySpec extends RepositorySpec {
+class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
 
   override def port: Int = 12150
 
@@ -65,13 +66,13 @@ class StockRepositorySpec extends RepositorySpec {
         }
       }
 
-      "join only each ticker's latest financial snapshot without its raw payload" in {
+      "join each ticker's latest canonical financial snapshot across fractional timestamp boundaries" in {
         val observedAt = java.time.Instant.parse("2026-10-19T12:00:00Z")
         val latest     = FinancialSnapshot(
           "aapl-latest",
           AAPL,
           Provider.Finnhub,
-          observedAt,
+          observedAt.plusMillis(1).plusNanos(1),
           Map(FinancialMetric.RevenueGrowth5Y -> BigDecimal(100)),
           Nil,
           Nil,
@@ -79,7 +80,8 @@ class StockRepositorySpec extends RepositorySpec {
           "canonical-test-v1",
           Nil
         )
-        val older    = latest.copy(id = "aapl-older", observedAt = observedAt.minusSeconds(60), payloadHash = "older-hash")
+        val older    = latest.copy(id = "aapl-older", observedAt = observedAt, payloadHash = "older-hash")
+        val millis   = latest.copy(id = "aapl-millis", observedAt = observedAt.plusMillis(1))
         val other    = latest.copy(id = "other-latest", ticker = Ticker("OTHER"), observedAt = observedAt.plusSeconds(60))
         val seedData = Map(
           SecurityRepository.CollectionName         -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
@@ -89,10 +91,8 @@ class StockRepositorySpec extends RepositorySpec {
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
-            history <- FinancialHistoryRepository.make[IO](db)
-            _       <- history.save(older, "older raw provider payload")
-            _       <- history.save(latest, "latest raw provider payload")
-            _       <- history.save(other, "other raw provider payload")
+            history <- db.getCollectionWithCodec[FinancialSnapshot](FinancialHistoryRepository.CollectionName)
+            _       <- history.insertMany(List(older, millis, latest, other))
             repo    <- StockRepository.make[IO](db)
             result  <- repo.findInvestmentCandidates
           yield result mustBe List(

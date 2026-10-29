@@ -7,26 +7,24 @@ final class InvestmentScreenSelection(
     entries: List[InvestmentRankingEntry],
     request: InvestmentScreenRequest
 ):
-  private val inputs   = entries.map(_.candidate)
+  private val inputs   = entries.filter(e => inScope(e.input, request)).map(e => e.scorecard.ticker -> e.input).toMap
   private val cards    = entries.map(_.scorecard)
-  private val stocks   = inputs.filter(inScope(_, request)).map(i => i.stock.security.ticker -> i.stock).toMap
-  private val scoped   = cards.filter(c => stocks.contains(c.ticker))
+  private val scoped   = cards.filter(c => inputs.contains(c.ticker))
   private val eligible = scoped.filter(_.eligible)
   private val assessed = eligible.map(c => c -> failedCriteria(c, request))
   private val matching = assessed.collect { case (card, Nil) => card }
 
-  private def inScope(input: InvestmentCandidate, request: InvestmentScreenRequest): Boolean =
-    request.exchange.forall(_ == input.stock.security.exchange) &&
-      request.country.forall(country => input.stock.profile.exists(_.country == country))
+  private def inScope(input: InvestmentScreenInput, request: InvestmentScreenRequest): Boolean =
+    request.exchange.forall(_ == input.exchange) && request.country.forall(country => input.country.contains(country))
 
   def cohorts: List[InvestmentCohort] =
     def cohort(name: CohortName, tickers: List[Ticker]): InvestmentCohort =
-      val count                                                    = tickers.size
-      def weights(group: Stock => String): Map[String, BigDecimal] =
+      val count                                                                    = tickers.size
+      def weights(group: InvestmentScreenInput => String): Map[String, BigDecimal] =
         if count == 0 then Map.empty
         else
           tickers
-            .map(ticker => group(stocks(ticker)))
+            .map(ticker => group(inputs(ticker)))
             .groupMapReduce(identity)(_ => 1)(_ + _)
             .view
             .mapValues(n => (BigDecimal(n) / count * 100).setScale(4, BigDecimal.RoundingMode.HALF_UP))
@@ -40,8 +38,8 @@ final class InvestmentScreenSelection(
           InvestmentConcentration(
             count,
             maxWeight,
-            weights(s => s.profile.flatMap(_.sector).fold("unknown")(_.print)),
-            weights(s => s.profile.map(_.industry).getOrElse("unknown")),
+            weights(_.sector.fold("unknown")(_.print)),
+            weights(_.industry.getOrElse("unknown")),
             herfindahl
           )
         )
@@ -51,8 +49,8 @@ final class InvestmentScreenSelection(
     def byPillar(name: Pillar): List[InvestmentScorecard] =
       eligible.sortBy(c => (-c.pillars.getOrElse(name, BigDecimal(0)), c.ticker.value))
     val oldPrice = eligible
-      .filter(c => stocks(c.ticker).priceAnalytics.isDefined)
-      .sortBy(c => (-stocks(c.ticker).priceAnalytics.get.scores.overallScore, c.ticker.value))
+      .filter(c => inputs(c.ticker).priceScore.isDefined)
+      .sortBy(c => (-inputs(c.ticker).priceScore.get, c.ticker.value))
     List(
       top(CohortName.Investment, matching),
       top(CohortName.OldPriceScore, oldPrice),
@@ -75,10 +73,8 @@ final class InvestmentScreenSelection(
 
   def result(screen: InvestmentScreen): InvestmentScreenResult =
     val requestedNearMisses = assessed.collect { case (card, failed :: Nil) => InvestmentNearMiss(card, failed) }
-    val snapshotByTicker    = inputs.flatMap(i => i.financialSnapshot.map(i.stock.security.ticker -> _)).toMap
     val financialNearMisses = scoped.filterNot(_.eligible).flatMap { card =>
-      val explanation = Eligibility.explainExclusion(card, snapshotByTicker.get(card.ticker))
-      explanation.map(InvestmentNearMiss(card, _))
+      inputs(card.ticker).exclusionExplanation.map(InvestmentNearMiss(card, _))
     }
     val nearMisses = (requestedNearMisses ++ financialNearMisses).take(InvestmentRecipe.NearMissLimit)
     InvestmentScreenResult(

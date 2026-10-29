@@ -29,7 +29,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
 
   private def paired(inputs: List[InvestmentCandidate], cards: List[InvestmentScorecard]): List[InvestmentRankingEntry] =
     val byTicker = inputs.map(c => c.stock.security.ticker -> c).toMap
-    cards.map(card => InvestmentRankingEntry(byTicker(card.ticker), card))
+    cards.map(card => InvestmentRankingEntry.from(byTicker(card.ticker), card))
 
   private def publishedRanking(value: InvestmentRanking, entries: List[InvestmentRankingEntry]): InvestmentRankingService[IO] =
     val rankings = mock[InvestmentRankingService[IO]]
@@ -177,7 +177,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
     "freeze a monthly top twenty independently of user display limits and only once per month" in {
       val entries = (1 to 25).toList.map { n =>
         val ticker = Ticker(f"TEST$n%02d")
-        InvestmentRankingEntry(
+        InvestmentRankingEntry.from(
           InvestmentCandidate(AAPLStock.copy(security = AAPLSecurity.copy(ticker = ticker)), None),
           InvestmentScorecard(
             ticker,
@@ -232,7 +232,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         card.copy(ticker = missing, eligible = false, score = None, exclusions = List("missing-financial-snapshot"))
       )
       val entries = cards.map(c =>
-        InvestmentRankingEntry(InvestmentCandidate(AAPLStock.copy(security = AAPLSecurity.copy(ticker = c.ticker)), None), c)
+        InvestmentRankingEntry.from(InvestmentCandidate(AAPLStock.copy(security = AAPLSecurity.copy(ticker = c.ticker)), None), c)
       )
       readSaved(InvestmentScreenRequest(minScore = Some(70), minQuality = Some(70)), entries).asserting { found =>
         found.candidates.map(_.ticker) mustBe List(AAPL)
@@ -292,7 +292,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         "quality-fair-value-v1",
         evidence = Some(evidence)
       )
-      val entries = List(InvestmentRankingEntry(InvestmentCandidate(AAPLStock, Some(financial)), card))
+      val entries = List(InvestmentRankingEntry.from(InvestmentCandidate(AAPLStock, Some(financial)), card))
       readSaved(InvestmentScreenRequest(), entries).asserting { found =>
         found.candidates mustBe Nil
         found.nearMisses.head.scorecard.score mustBe None

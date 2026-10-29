@@ -165,6 +165,10 @@ The composition root wires repositories into their owners. Job execution, comman
 
 Persistence entities use the current schema; there are no legacy decoders, startup backfills or migrations. Price analytics provenance (`basis`) is optional: missing or null values mean unknown provenance, while fresh calculations populate it. Monthly evaluation documents track both pending and settled captures in `investment-evaluations`; reads do not create captures or jobs. Each capture stores its dispatched history requests in an internal `requestedHistory` list, updated atomically after dispatch and preserved across report saves. Resuming that capture does not recreate pruned history jobs, so job retention does not depend on evaluations. `InvestmentRankingRepository` owns `investment-rankings` and `investment-ranking-inputs`, publishing metadata only after all entries are stored.
 
+Price observations keep one current snapshot per ticker and adjustment under a stable `ticker:adjustment` Mongo ID; `data.id` preserves provider provenance. Routine analytics persist only the short unadjusted quote cache, fetched before adjusted history so provider deferrals can resume. Full adjusted histories are persisted only for explicit evaluation captures. Financial history retains only the latest canonical snapshot per ticker without raw provider payloads. Unreferenced rankings are retained for three days; screens pin their rankings. Existing cached data is cleaned explicitly using the procedure in README, never by a startup migration.
+
+Ranking input rows contain a full scorecard plus compact screen-selection fields (exchange, country, industry, sector, old price score and exclusion explanation), rather than copying complete stock records or financial snapshots. Scoring still runs over full candidates before publication.
+
 ### Controller Security
 
 Controllers use Tapir for endpoint definition with built-in API key authentication:

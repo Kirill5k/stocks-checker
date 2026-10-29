@@ -56,7 +56,7 @@ class PriceHistoryServiceSpec extends IOWordSpec {
             verify(d.repo, never).save(any[PriceHistorySnapshot])
           } else {
             verify(d.client).getDailyPriceHistory(ticker, range, PriceAdjustment.SplitsAndDividends)
-            verify(d.repo).save(d.fetched)
+            verify(d.repo, never).save(any[PriceHistorySnapshot])
           }
           succeed
         }
@@ -89,7 +89,7 @@ class PriceHistoryServiceSpec extends IOWordSpec {
         when(d.repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(invalid))
         d.service.flatMap(_.recent(ticker, range, PriceAdjustment.SplitsAndDividends, now)).asserting { result =>
           result mustBe d.fetched
-          verify(d.repo).save(d.fetched)
+          verify(d.repo, never).save(any[PriceHistorySnapshot])
           succeed
         }
       }
