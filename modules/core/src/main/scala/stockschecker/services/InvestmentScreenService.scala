@@ -11,19 +11,16 @@ import stockschecker.domain.errors.AppError
 import stockschecker.domain.investment.InvestmentScreenSelection
 import stockschecker.repositories.InvestmentScreenRepository
 
-import java.time.{YearMonth, ZoneOffset}
+import java.time.{Instant, YearMonth, ZoneOffset}
 
 trait InvestmentScreenService[F[_]]:
   def create(request: InvestmentScreenRequest): F[InvestmentScreenResult]
   def get(id: InvestmentScreenId): F[InvestmentScreenResult]
-  def find(id: InvestmentScreenId): F[InvestmentScreen]
-  def all: F[List[InvestmentScreen]]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
-  def generateScheduledScreen: F[Option[InvestmentScreenSummary]]
+  def createMonthlyScreen: F[Option[InvestmentScreenSummary]]
 
 final private class LiveInvestmentScreenService[F[_]](
     private val screens: InvestmentScreenRepository[F],
-    private val rankings: InvestmentRankingService[F],
     private val recipe: InvestmentRecipe
 )(using
     F: Sync[F],
@@ -35,7 +32,7 @@ final private class LiveInvestmentScreenService[F[_]](
       ranking: InvestmentRanking
   ): F[InvestmentScreenResult] =
     for
-      entries <- rankings.entries(ranking.id)
+      entries <- screens.rankingEntries(ranking.id)
       now     <- C.now
       selection = InvestmentScreenSelection(entries, request)
       screen    = InvestmentScreen.create(id, now, ranking, request, selection.cohorts)
@@ -45,51 +42,59 @@ final private class LiveInvestmentScreenService[F[_]](
   override def create(request: InvestmentScreenRequest): F[InvestmentScreenResult] =
     for
       _       <- F.fromEither(request.validate(recipe).left.map(AppError.FailedValidation(_)))
-      ranking <- rankings.latest
+      now     <- C.now
+      ranking <- latestRanking(now)
       id      <- F.delay(InvestmentScreenId.gen)
       saved   <- saveScreen(id, request, ranking)
     yield saved
 
   override def get(id: InvestmentScreenId): F[InvestmentScreenResult] =
     for
-      screen    <- find(id)
-      published <- rankings.find(screen.rankingId)
-      _         <- F.fromOption(published, AppError.EntityDoesNotExist("Investment screen", id.value))
-      entries   <- rankings.entries(screen.rankingId)
+      context <- screens.findWithRanking(id)
+      (screen, ranking) = context
+      entries <- screens.rankingEntries(ranking.id)
     yield InvestmentScreenSelection(entries, screen.request).result(screen)
 
-  override def find(id: InvestmentScreenId): F[InvestmentScreen] =
-    screens.find(id)
-
-  override def all: F[List[InvestmentScreen]] =
-    screens.all
+  private def latestRanking(now: Instant): F[InvestmentRanking] =
+    for
+      published <- screens.latestRanking
+      ranking   <- F.fromOption(
+        published,
+        AppError.FailedValidation("No completed ranking for this recipe is available; wait for the scheduled ranking run")
+      )
+      usable <- F.fromEither(ranking.requireUsable(recipe, now).left.map(AppError.FailedValidation(_)))
+    yield usable
 
   override def list(limit: Int): F[List[InvestmentScreenSummary]] =
     F.raiseWhen(limit < InvestmentRecipe.MinimumLimit || limit > InvestmentRecipe.MaximumLimit)(
       AppError.FailedValidation(s"limit must be between ${InvestmentRecipe.MinimumLimit} and ${InvestmentRecipe.MaximumLimit}")
     ) >> screens.list(limit)
 
-  override def generateScheduledScreen: F[Option[InvestmentScreenSummary]] =
+  override def createMonthlyScreen: F[Option[InvestmentScreenSummary]] =
     for
       now <- C.now
-      date = now.atZone(ZoneOffset.UTC).toLocalDate
-      ranking <- rankings.refresh(date)
+      date      = now.atZone(ZoneOffset.UTC).toLocalDate
       monthlyId = InvestmentScreenId(s"monthly:${YearMonth.from(date)}:${recipe.version}")
       existing <- screens.get(monthlyId)
       created  <- existing match
         case Some(_) =>
           none[InvestmentScreenSummary].pure[F]
-        case None if ranking.summary.eligibleCount < InvestmentRecipe.MinimumEligibleStocks =>
-          none[InvestmentScreenSummary].pure[F]
         case None =>
-          saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking).map(r => Some(r.summary))
+          for
+            ranking <- latestRanking(now)
+            _       <- F.raiseWhen(ranking.createdAt.atZone(ZoneOffset.UTC).toLocalDate != date)(
+              AppError.FailedValidation("The latest completed ranking is not from today; wait for the scheduled ranking run")
+            )
+            created <-
+              if ranking.summary.eligibleCount < InvestmentRecipe.MinimumEligibleStocks then none[InvestmentScreenSummary].pure[F]
+              else saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking).map(r => Some(r.summary))
+          yield created
     yield created
 }
 
 object InvestmentScreenService:
   def make[F[_]: {Sync, Clock}](
       screens: InvestmentScreenRepository[F],
-      rankings: InvestmentRankingService[F],
       recipe: InvestmentRecipe = InvestmentRecipe()
   ): F[InvestmentScreenService[F]] =
-    Sync[F].pure(LiveInvestmentScreenService(screens, rankings, recipe))
+    Sync[F].pure(LiveInvestmentScreenService(screens, recipe))

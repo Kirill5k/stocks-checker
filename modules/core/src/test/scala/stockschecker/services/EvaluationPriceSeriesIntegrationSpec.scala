@@ -1,22 +1,15 @@
 package stockschecker.services
 
 import cats.effect.IO
-import cats.syntax.foldable.*
-import kirill5k.common.cats.Clock
-import kirill5k.common.cats.test.IOWordSpec
-import stockschecker.clients.MarketDataClient
+import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.*
 import stockschecker.domain.investment.InvestmentEvaluator
-import stockschecker.domain.errors.AppError
-import stockschecker.repositories.PriceHistoryRepository
-import java.time.{Instant, LocalDate, ZoneOffset}
+import stockschecker.repositories.{InvestmentEvaluationRepository, PriceHistoryRepository, RepositorySpec}
 
-class EvaluationPriceSeriesIntegrationSpec extends IOWordSpec {
-  private val fixedNow = Instant.parse("2026-10-27T12:00:00Z")
-  given Clock[IO]      = Clock.mock(fixedNow)
+import java.time.{Instant, LocalDate, YearMonth, ZoneOffset}
 
-  private def makeHistory(client: MarketDataClient[IO], repo: PriceHistoryRepository[IO]): IO[PriceHistoryService[IO]] =
-    PriceHistoryService.make(client, repo)
+class EvaluationPriceSeriesIntegrationSpec extends RepositorySpec:
+  override val port = 12225
 
   private val ticker   = Ticker("AAA")
   private val from     = LocalDate.parse("2025-01-01")
@@ -31,111 +24,54 @@ class EvaluationPriceSeriesIntegrationSpec extends IOWordSpec {
     "USD",
     PriceAdjustment.SplitsAndDividends,
     Instant.parse("2025-02-02T12:00:00Z"),
-    DateRange(from, through)
+    range
   )
 
   "Evaluation price history" should {
-    "reuse a retained complete vintage and include its provenance ID" in {
-      val repo   = mock[PriceHistoryRepository[IO]]
-      val client = mock[MarketDataClient[IO]]
-      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(snapshot))
-      makeHistory(client, repo).flatMap(_.cachedHistorical(ticker, range).map(_.map(EvaluationPriceSeries.from(_, range)))).asserting {
-        result =>
-          result.get.snapshotIds mustBe List(snapshot.id)
-          result.get.fetchedAt mustBe snapshot.fetchedAt
-          result.get.audited mustBe true
-          result.get.issues mustBe Nil
-          verifyNoInteractions(client)
-          succeed
+    "reuse a retained complete vintage with its provenance and leave cached documents unchanged" in
+      withEmbeddedMongoDatabase { db =>
+        for
+          prices      <- PriceHistoryRepository.make[IO](db)
+          evaluations <- InvestmentEvaluationRepository.make[IO](db)
+          _           <- prices.save(snapshot)
+          before      <- prices.latest(ticker, PriceAdjustment.SplitsAndDividends)
+          found       <- evaluations.findPriceSeries(List(ticker), range)
+          after       <- prices.latest(ticker, PriceAdjustment.SplitsAndDividends)
+        yield
+          val series = found(ticker)
+          series.snapshotIds mustBe List(snapshot.id)
+          series.fetchedAt mustBe snapshot.fetchedAt
+          series.audited mustBe true
+          series.issues mustBe Nil
+          before mustBe Some(snapshot)
+          after mustBe before
       }
-    }
 
-    "refresh an old vintage on explicit retry and share the full analytics range across screens" in {
-      val repo   = mock[PriceHistoryRepository[IO]]
-      val client = mock[MarketDataClient[IO]]
-      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(snapshot))
-      when(repo.save(any[PriceHistorySnapshot])).thenReturnUnit
-      (for
-        now <- IO.pure(fixedNow)
-        today      = LocalDate.ofInstant(now, ZoneOffset.UTC)
-        sharedFrom = today.minusYears(13)
-        refreshed  = snapshot.copy(id = "refreshed", fetchedAt = now, requestedRange = DateRange(sharedFrom, today))
-        _          = when(client.getDailyPriceHistory(ticker, refreshed.requestedRange, PriceAdjustment.SplitsAndDividends)).thenReturnIO(
-          refreshed
-        )
-        history <- makeHistory(client, repo)
-        result  <- history.historical(ticker, range).map(EvaluationPriceSeries.from(_, range))
-      yield (result, refreshed)).asserting { case (result, refreshed) =>
-        result.snapshotIds mustBe List("refreshed")
-        result.closes mustBe List(EvaluationClose(bar.date, bar.close))
-        verify(repo).save(refreshed)
-        verify(client).getDailyPriceHistory(
-          ticker,
-          refreshed.requestedRange,
-          PriceAdjustment.SplitsAndDividends
-        )
-        succeed
-      }
-    }
-
-    "reuse a fresh broad vintage for multiple screen dates without extra requests" in {
-      val repo   = mock[PriceHistoryRepository[IO]]
-      val client = mock[MarketDataClient[IO]]
-      (for
-        now <- IO.pure(fixedNow)
-        today  = LocalDate.ofInstant(now, ZoneOffset.UTC)
-        shared = snapshot.copy(fetchedAt = now, requestedRange = DateRange(today.minusYears(13), today))
-        _      = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(shared))
-        _      = when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range.copy(from = from.plusDays(10))))
-          .thenReturnIO(Some(shared))
-        history <- makeHistory(client, repo)
-        first   <- history.historical(ticker, range).map(EvaluationPriceSeries.from(_, range))
-        second  <- history
-          .historical(ticker, range.copy(from = from.plusDays(10)))
-          .map(EvaluationPriceSeries.from(_, range.copy(from = from.plusDays(10))))
-      yield (first, second)).asserting { case (first, second) =>
-        first.snapshotIds mustBe second.snapshotIds
-        verifyNoInteractions(client)
-        succeed
-      }
-    }
-
-    "keep an incomplete vintage available when a subsequent refresh fails" in {
-      val repo       = mock[PriceHistoryRepository[IO]]
-      val client     = mock[MarketDataClient[IO]]
-      val later      = through.plusMonths(1)
-      val laterRange = DateRange(from, later)
-      when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, laterRange)).thenReturnIO(Some(snapshot))
-      val failure = AppError.HttpClient(Provider.TwelveData.print, 404, "unavailable")
-      when(client.getDailyPriceHistory(any[Ticker], any[DateRange], any[PriceAdjustment])).thenRaiseError(failure)
-      (for
-        history <- makeHistory(client, repo)
-        cache   <- history.cachedHistorical(ticker, laterRange).map(_.map(EvaluationPriceSeries.from(_, laterRange)))
-        refresh <- history.historical(ticker, laterRange).map(EvaluationPriceSeries.from(_, laterRange)).attempt
-      yield (cache, refresh)).asserting { case (cache, refresh) =>
-        cache mustBe None
-        refresh mustBe Left(failure)
-        verify(repo, never).save(any[PriceHistorySnapshot])
-        succeed
-      }
-    }
-
-    "exclude unsupported currencies, missing total-return adjustments and possibly truncated vintages from investment returns" in {
-      val truncated = snapshot.copy(
-        candles = (0 until 5000).toList.map(n => bar.copy(date = through.minusDays(n.toLong))),
-        requestedRange = DateRange(through.minusDays(4999), through)
-      )
-      List(
-        snapshot.copy(currency = "EUR")                    -> "unsupported evaluation currency",
-        snapshot.copy(adjustment = PriceAdjustment.Splits) -> "total-return adjustments unavailable",
-        truncated                                          -> "provider response may be truncated"
-      ).traverse_ { case (invalid, issue) =>
-        val repo   = mock[PriceHistoryRepository[IO]]
-        val client = mock[MarketDataClient[IO]]
-        when(repo.latestCovering(ticker, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(invalid))
-        makeHistory(client, repo).flatMap(_.cachedHistorical(ticker, range).map(_.map(EvaluationPriceSeries.from(_, range)))).map {
-          result =>
-            val series = result.get
+    val truncated = snapshot.copy(
+      candles = (0 until 5000).toList.map(n => bar.copy(date = through.minusDays(n.toLong))),
+      requestedRange = DateRange(through.minusDays(4999), through)
+    )
+    List(
+      snapshot.copy(currency = "EUR")                    -> "unsupported evaluation currency",
+      snapshot.copy(adjustment = PriceAdjustment.Splits) -> "total-return adjustments unavailable",
+      truncated                                          -> "provider response may be truncated"
+    ).foreach { case (invalid, issue) =>
+      s"exclude cached observations with $issue from investment returns" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            // Exercise validation even when a cache slot contains inconsistent provider adjustment metadata.
+            prices <- PriceHistoryRepository.make[IO](db)
+            _      <- prices.save(invalid.copy(adjustment = PriceAdjustment.SplitsAndDividends))
+            raw    <- db.getCollection(PriceHistoryRepository.CollectionName)
+            _      <- raw.updateOne(
+              Filter.idEq(s"${ticker.value}:${PriceAdjustment.SplitsAndDividends.value}"),
+              Update.set("data.adjustment", invalid.adjustment.value)
+            )
+            evaluations <- InvestmentEvaluationRepository.make[IO](db)
+            found       <- evaluations.findPriceSeries(List(ticker), range)
+            retained    <- prices.latest(ticker, PriceAdjustment.SplitsAndDividends)
+          yield
+            val series = found(ticker)
             series.audited mustBe false
             series.issues must contain(issue)
             val report = InvestmentEvaluator.evaluate(
@@ -144,7 +80,7 @@ class EvaluationPriceSeriesIntegrationSpec extends IOWordSpec {
               snapshot.fetchedAt,
               List(InvestmentCohort(CohortName.Investment, List(ticker))),
               Map(ticker -> series, InvestmentEvaluator.Benchmark -> series.copy(ticker = InvestmentEvaluator.Benchmark)),
-              java.time.YearMonth.from(through),
+              YearMonth.from(through),
               through
             )
             report.horizons.flatMap(_.cohorts).foreach { cohort =>
@@ -153,9 +89,7 @@ class EvaluationPriceSeriesIntegrationSpec extends IOWordSpec {
               cohort.observedReturnPercent mustBe None
               cohort.issues.mkString must include(issue)
             }
-            verifyNoInteractions(client)
+            retained mustBe Some(invalid)
         }
-      }.asserting(_ => succeed)
     }
   }
-}

@@ -1,11 +1,25 @@
 package stockschecker.repositories
 
+import cats.effect.IO
+import mongo4cats.database.MongoDatabase
+import mongo4cats.operations.{Filter, Sort}
+import stockschecker.repositories.entities.{InvestmentRankingEntity, InvestmentRankingInputEntity}
 import stockschecker.domain.*
 import stockschecker.fixtures.*
 
 import java.time.Instant
 
 private[stockschecker] object InvestmentRepositoryFixtures {
+  def storedRanking(db: MongoDatabase[IO], id: InvestmentRankingId): IO[Option[InvestmentRanking]] =
+    db.getCollectionWithCodec[InvestmentRankingEntity](InvestmentRankingRepository.CollectionName)
+      .flatMap(_.find(Filter.idEq(id.value)).first)
+      .map(_.map(_.toDomain))
+
+  def storedRankingEntries(db: MongoDatabase[IO], id: InvestmentRankingId): IO[List[InvestmentRankingEntry]] =
+    db.getCollectionWithCodec[InvestmentRankingInputEntity](InvestmentRankingRepository.InputsCollectionName)
+      .flatMap(_.find(Filter.eq("rankingId", id.value)).sort(Sort.asc("ordinal")).all)
+      .map(_.toList.map(row => InvestmentRankingEntry(row.input, row.scorecard)))
+
   val now  = Instant.parse("2026-10-19T12:00:00Z")
   val card = InvestmentScorecard(
     AAPL,

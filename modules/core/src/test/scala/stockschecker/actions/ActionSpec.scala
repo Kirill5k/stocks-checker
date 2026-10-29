@@ -27,6 +27,9 @@ class ActionSpec extends AnyWordSpec with Matchers {
     Action.UpdateFinancialMetrics(NonEmptyList.one(Ticker("AAPL"))),
     Action.UpdatePriceAnalytics(NonEmptyList.one(Ticker("AAPL"))),
     Action.RefreshInvestmentResearch,
+    Action.RefreshInvestmentRanking,
+    Action.CreateMonthlyScreen,
+    Action.CaptureMonthlyEvaluations,
     Action.RefreshEvaluationPrices(Ticker("AAPL"), LocalDate.parse("2026-01-01")),
     Action.RecordCompanyProfileUpdate(NonEmptyList.of(Ticker("AAPL"), Ticker("MSFT"))),
     Action.RecordPriceAnalyticsUpdate(NonEmptyList.one(Ticker("AAPL"))),
@@ -48,6 +51,9 @@ class ActionSpec extends AnyWordSpec with Matchers {
         """{"kind":"set-security-active","ticker":"AAPL","active":false,"requestedAt":"2026-10-27T12:00:00Z","extra":true}"""
       ) mustBe
         Right(Action.SetSecurityActive(Ticker("AAPL"), false, requestedAt))
+      Action.CaptureMonthlyEvaluations.asJson.noSpaces mustBe """{"kind":"capture-monthly-evaluations"}"""
+      Action.CreateMonthlyScreen.asJson.noSpaces mustBe """{"kind":"create-monthly-screen"}"""
+      Action.RefreshInvestmentRanking.asJson.noSpaces mustBe """{"kind":"refresh-investment-ranking"}"""
       Action.RefreshInvestmentResearch.asJson.noSpaces mustBe """{"kind":"refresh-investment-research"}"""
     }
 
@@ -88,6 +94,14 @@ class ActionSpec extends AnyWordSpec with Matchers {
     }
   }
 
+  "Investment research actions" should {
+    "allow independent scheduling and scheduling their ordered sequence" in {
+      val stages = NonEmptyList.of(Action.RefreshInvestmentRanking, Action.CreateMonthlyScreen, Action.CaptureMonthlyEvaluations)
+      stages.toList.foreach(_.isSchedulable mustBe true)
+      Action.Sequence(stages).isSchedulable mustBe true
+    }
+  }
+
   "Action priority" should {
     "claim internal events before fan-out work and retain lower evaluation priority" in {
       actions.filterNot(_.isSchedulable).filterNot(_.isInstanceOf[Action.RefreshEvaluationPrices]).foreach { action =>
@@ -114,6 +128,9 @@ class ActionSpec extends AnyWordSpec with Matchers {
         case action: Action.UpdateFinancialMetrics => action
         case action: Action.UpdatePriceAnalytics   => action
         case Action.RefreshInvestmentResearch      => Action.RefreshInvestmentResearch
+        case Action.CaptureMonthlyEvaluations      => Action.CaptureMonthlyEvaluations
+        case Action.CreateMonthlyScreen            => Action.CreateMonthlyScreen
+        case Action.RefreshInvestmentRanking       => Action.RefreshInvestmentRanking
       }
       publicActions.foreach(_.isSchedulable mustBe true)
       actions.filterNot(publicActions.contains).foreach(_.isSchedulable mustBe false)
@@ -122,6 +139,9 @@ class ActionSpec extends AnyWordSpec with Matchers {
         .Sequence(
           NonEmptyList.of(
             Action.RefreshInvestmentResearch,
+            Action.RefreshInvestmentRanking,
+            Action.CreateMonthlyScreen,
+            Action.CaptureMonthlyEvaluations,
             Action.Sequence(NonEmptyList.one(Action.RecordPriceAnalyticsUpdate(NonEmptyList.one(Ticker("AAPL")))))
           )
         )

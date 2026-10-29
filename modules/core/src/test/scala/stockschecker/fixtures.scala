@@ -10,7 +10,6 @@ import stockschecker.domain.{
   CompanyProfile,
   Exchange,
   FinancialMetrics,
-  LatestPrice,
   PriceAnalytics,
   PriceCandle,
   PricePerformanceSummary,
@@ -133,30 +132,6 @@ object fixtures {
   val AAPLPriceAnalytics: PriceAnalytics = PriceAnalyticsCalculator.from(AAPL, AAPLPriceCandles)
 
   val AAPLPricePerformanceSummary: PricePerformanceSummary = AAPLPriceAnalytics.performanceSummary
-
-  val AAPLLatestPrice1: LatestPrice = LatestPrice(
-    ticker = AAPL,
-    price = BigDecimal("228.50"),
-    date = LocalDate.parse("2025-10-01")
-  )
-
-  val AAPLLatestPrice2: LatestPrice = LatestPrice(
-    ticker = AAPL,
-    price = BigDecimal("230.00"),
-    date = LocalDate.parse("2025-10-02")
-  )
-
-  val AAPLLatestPrice3: LatestPrice = LatestPrice(
-    ticker = AAPL,
-    price = BigDecimal("232.50"),
-    date = LocalDate.parse("2025-10-03")
-  )
-
-  val MSFTLatestPrice1: LatestPrice = LatestPrice(
-    ticker = MSFT,
-    price = BigDecimal("380.00"),
-    date = LocalDate.parse("2025-10-01")
-  )
 
   val FetchLatestSecuritiesCommand: Command = Command(
     id = CommandId(ObjectId.gen),

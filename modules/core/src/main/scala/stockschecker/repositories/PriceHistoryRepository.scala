@@ -2,18 +2,15 @@ package stockschecker.repositories
 
 import cats.effect.Concurrent
 import cats.syntax.applicativeError.*
-import cats.syntax.flatMap.*
 import cats.syntax.functor.*
+import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.circe.MongoJsonCodecs
-import stockschecker.repositories.entities.{PriceHistoryEntity, PriceHistorySnapshotRef}
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.operations.{Aggregate, Filter, Projection, Update}
-import mongo4cats.models.collection.UpdateOptions
+import mongo4cats.operations.Filter
+import mongo4cats.models.collection.ReplaceOptions
+import stockschecker.repositories.entities.PriceHistoryEntity
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
-
-import java.time.Instant
-import scala.util.Try
 
 trait PriceHistoryRepository[F[_]]:
   def save(snapshot: PriceHistorySnapshot): F[Unit]
@@ -26,84 +23,46 @@ final private class LivePriceHistoryRepository[F[_]: Concurrent](collection: Mon
 
   private def key(ticker: Ticker, adjustment: PriceAdjustment): String = s"${ticker.value}:${adjustment.value}"
 
-  // A stable cache slot contains one complete adjustment vintage. Never merge corporate-action vintages.
-  override def save(snapshot: PriceHistorySnapshot): F[Unit] = {
-    val matching = Filter.idEq(key(snapshot.ticker, snapshot.adjustment))
-    val metadata = Aggregate
-      .matchBy(matching)
-      .project(Projection.computed("id", "$" + Field.SnapshotId).computed("fetchedAt", "$" + Field.FetchedAt).excludeId)
+  // Replace a complete vintage atomically; never merge corporate-action vintages.
+  override def save(snapshot: PriceHistorySnapshot): F[Unit] =
+    val newer = Filter.idEq(key(snapshot.ticker, snapshot.adjustment)) &&
+      Filter.lt(Field.FetchedAt, snapshot.fetchedAt) && Filter.ne(Field.SnapshotId, snapshot.id)
+    val entity = PriceHistoryEntity(key(snapshot.ticker, snapshot.adjustment), snapshot.ticker, snapshot.adjustment, snapshot)
     collection
-      .aggregate[PriceHistorySnapshotRef](metadata)
-      .first
-      .flatMap {
-        case Some(current) if current.id == snapshot.id =>
-          Concurrent[F].unit
-        case Some(current) =>
-          // Compare Instants in Scala: ISO strings with different fractional precision do not sort chronologically.
-          Concurrent[F].fromTry(Try(Instant.parse(current.fetchedAt))).flatMap { fetchedAt =>
-            if !fetchedAt.isBefore(snapshot.fetchedAt) then Concurrent[F].unit
-            else
-              val unchanged = matching && Filter.eq(Field.SnapshotId, current.id) && Filter.eq(Field.FetchedAt, current.fetchedAt)
-              collection.updateOne(unchanged, Update.set(Field.Data, snapshot)).flatMap { result =>
-                if result.getMatchedCount == 0 then save(snapshot) else Concurrent[F].unit
-              }
-          }
-        case None =>
-          val insert = Update
-            .setOnInsert(Field.Id, key(snapshot.ticker, snapshot.adjustment))
-            .setOnInsert(Field.Ticker, snapshot.ticker)
-            .setOnInsert(Field.Adjustment, snapshot.adjustment)
-            .setOnInsert(Field.Data, snapshot)
-          collection
-            .updateOne(matching, insert, UpdateOptions(upsert = true))
-            .flatMap(result => if result.getMatchedCount == 0 then Concurrent[F].unit else save(snapshot))
-            .handleErrorWith {
-              // Another refresh can insert this slot first; compare its vintage before attempting an update.
-              case error: com.mongodb.MongoWriteException if error.getError.getCode == 11000 => save(snapshot)
-              case error                                                                     => Concurrent[F].raiseError(error)
-            }
+      .replaceOne(newer, entity, ReplaceOptions(upsert = true))
+      .void
+      .handleErrorWith {
+        // A concurrent first insert can win with an older timestamp. Retry without upsert so the newer vintage still wins.
+        case error: com.mongodb.MongoWriteException if error.getError.getCode == 11000 =>
+          collection.replaceOne(newer, entity, ReplaceOptions(upsert = false)).void
+        case error => Concurrent[F].raiseError(error)
       }
-  }
 
   override def latest(ticker: Ticker, adjustment: PriceAdjustment): F[Option[PriceHistorySnapshot]] =
     collection
       .find(Filter.idEq(key(ticker, adjustment)))
       .first
-      .map(_.map(_.data))
+      .mapOpt(_.data)
 
   override def latestCovering(ticker: Ticker, adjustment: PriceAdjustment, range: DateRange): F[Option[PriceHistorySnapshot]] =
     collection
       .find(
         Filter.idEq(key(ticker, adjustment)) &&
-          Filter.lte(Field.RangeFrom, range.from.toString) &&
-          Filter.gte(Field.RangeThrough, range.through.toString)
+          Filter.lte(Field.RangeFrom, range.from.toString) && Filter.gte(Field.RangeThrough, range.through.toString)
       )
       .first
-      .map(_.map(_.data))
+      .mapOpt(_.data)
 }
 
 object PriceHistoryRepository extends MongoJsonCodecs {
   val CollectionName = "price-observations"
 
   object Field:
-    val Id           = "_id"
-    val Ticker       = "ticker"
-    val Adjustment   = "adjustment"
-    val Data         = "data"
     val SnapshotId   = "data.id"
     val FetchedAt    = "data.fetchedAt"
     val RangeFrom    = "data.requestedRange.from"
     val RangeThrough = "data.requestedRange.through"
 
   def make[F[_]: Concurrent](db: MongoDatabase[F]): F[PriceHistoryRepository[F]] =
-    db.getCollectionWithCodec[PriceHistoryEntity](CollectionName).map { collection =>
-      new LivePriceHistoryRepository[F](
-        collection
-          .withAddedCodec[Ticker]
-          .withAddedCodec[PriceAdjustment]
-          .withAddedCodec[PriceHistorySnapshot]
-          .withAddedCodec[PriceHistorySnapshotRef]
-      )
-    }
-
+    db.getCollectionWithCodec[PriceHistoryEntity](CollectionName).map(new LivePriceHistoryRepository[F](_))
 }

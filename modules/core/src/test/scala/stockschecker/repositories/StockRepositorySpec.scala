@@ -1,21 +1,10 @@
 package stockschecker.repositories
 
-import cats.data.NonEmptyList
 import cats.effect.IO
-import mongo4cats.bson.BsonValue
+import mongo4cats.bson.{BsonValue, Document}
+import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
-import stockschecker.domain.{
-  Exchange,
-  FinancialMetric,
-  FinancialSnapshot,
-  InvestmentCandidate,
-  Provider,
-  SecurityKind,
-  StockFilters,
-  StockSortField,
-  Ticker,
-  TimePeriod
-}
+import stockschecker.domain.{Exchange, SecurityKind, StockFilters, StockSortField, Ticker, TimePeriod}
 import stockschecker.fixtures.{
   AAPL,
   AAPLCompanyProfile,
@@ -35,8 +24,53 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
   override def port: Int = 12150
 
   "A StockRepository" when {
-    "findInvestmentCandidates" should {
-      "retain joined analytics with missing or null basis in stocks and research candidates" in {
+    "exists" should {
+      "find a security without any joined records and reject an absent ticker" in {
+        val seed = Map(SecurityRepository.CollectionName -> List(toDoc(AAPLSecurity)))
+        withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo    <- StockRepository.make[IO](db)
+            present <- repo.exists(AAPL)
+            absent  <- repo.exists(MSFT)
+          yield
+            present mustBe true
+            absent mustBe false
+        }
+      }
+
+      "read only the security ID without decoding stock fields or foreign collections" in {
+        val idOnly = Document("_id" := AAPL.value)
+        val seed   = Map(
+          SecurityRepository.CollectionName         -> List(idOnly),
+          CompanyProfileRepository.CollectionName   -> List(idOnly),
+          PriceAnalyticsRepository.CollectionName   -> List(idOnly),
+          FinancialMetricsRepository.CollectionName -> List(idOnly)
+        )
+        withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo   <- StockRepository.make[IO](db)
+            exists <- repo.exists(AAPL)
+          yield exists mustBe true
+        }
+      }
+
+      "ignore foreign records when the security does not exist" in {
+        val seed = Map(
+          CompanyProfileRepository.CollectionName   -> List(toDoc(AAPLCompanyProfile)),
+          PriceAnalyticsRepository.CollectionName   -> List(toDoc(AAPLPriceAnalytics)),
+          FinancialMetricsRepository.CollectionName -> List(toDoc(AAPLFinancialMetrics))
+        )
+        withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo   <- StockRepository.make[IO](db)
+            exists <- repo.exists(AAPL)
+          yield exists mustBe false
+        }
+      }
+    }
+
+    "find" should {
+      "retain joined analytics with missing or null basis" in {
         val msftAnalytics = AAPLPriceAnalytics.copy(ticker = MSFT)
         val aapl          = AAPLStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(basis = None)))
         val msft          = MSFTStock.copy(
@@ -55,63 +89,15 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
         )
         withEmbeddedMongoDatabase(seedData) { db =>
           for
-            repo       <- StockRepository.make[IO](db)
-            foundAapl  <- repo.find(AAPL)
-            foundMsft  <- repo.find(MSFT)
-            candidates <- repo.findInvestmentCandidates
+            repo      <- StockRepository.make[IO](db)
+            foundAapl <- repo.find(AAPL)
+            foundMsft <- repo.find(MSFT)
           yield
             foundAapl mustBe Some(aapl)
             foundMsft mustBe Some(msft)
-            candidates mustBe List(InvestmentCandidate(aapl, None), InvestmentCandidate(msft, None))
         }
       }
 
-      "join each ticker's latest canonical financial snapshot across fractional timestamp boundaries" in {
-        val observedAt = java.time.Instant.parse("2026-10-19T12:00:00Z")
-        val latest     = FinancialSnapshot(
-          "aapl-latest",
-          AAPL,
-          Provider.Finnhub,
-          observedAt.plusMillis(1).plusNanos(1),
-          Map(FinancialMetric.RevenueGrowth5Y -> BigDecimal(100)),
-          Nil,
-          Nil,
-          "latest-hash",
-          "canonical-test-v1",
-          Nil
-        )
-        val older    = latest.copy(id = "aapl-older", observedAt = observedAt, payloadHash = "older-hash")
-        val millis   = latest.copy(id = "aapl-millis", observedAt = observedAt.plusMillis(1))
-        val other    = latest.copy(id = "other-latest", ticker = Ticker("OTHER"), observedAt = observedAt.plusSeconds(60))
-        val seedData = Map(
-          SecurityRepository.CollectionName         -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          CompanyProfileRepository.CollectionName   -> List(toDoc(AAPLCompanyProfile)),
-          PriceAnalyticsRepository.CollectionName   -> List(toDoc(AAPLPriceAnalytics)),
-          FinancialMetricsRepository.CollectionName -> List(toDoc(AAPLFinancialMetrics))
-        )
-        withEmbeddedMongoDatabase(seedData) { db =>
-          for
-            history <- db.getCollectionWithCodec[FinancialSnapshot](FinancialHistoryRepository.CollectionName)
-            _       <- history.insertMany(List(older, millis, latest, other))
-            repo    <- StockRepository.make[IO](db)
-            result  <- repo.findInvestmentCandidates
-          yield result mustBe List(
-            InvestmentCandidate(AAPLStock, Some(latest)),
-            InvestmentCandidate(MSFTStock.copy(profile = None, priceAnalytics = None, financialMetrics = None), None)
-          )
-        }
-      }
-
-      "return no candidates when there are no securities" in
-        withEmbeddedMongoDatabase(Map.empty) { db =>
-          for
-            repo   <- StockRepository.make[IO](db)
-            result <- repo.findInvestmentCandidates
-          yield result mustBe Nil
-        }
-    }
-
-    "find" should {
       "return stock with all associated data" in {
         val seedData = Map(
           "securities"        -> List(toDoc(AAPLSecurity)),
@@ -1248,82 +1234,5 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
       }
     }
 
-    "findByTickers" should {
-      "return stocks for all specified tickers" in {
-        val seedData = Map(
-          "securities"        -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles"  -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
-          "price-analytics"   -> List(toDoc(AAPLPriceAnalytics)),
-          "financial-metrics" -> List(toDoc(AAPLFinancialMetrics), toDoc(MSFTFinancialMetrics))
-        )
-        withEmbeddedMongoDatabase(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findByTickers(NonEmptyList.of(AAPL, MSFT))
-          yield res.size mustBe 2
-        }
-      }
-
-      "return only existing stocks when some tickers don't exist" in {
-        val seedData = Map(
-          "securities"        -> List(toDoc(AAPLSecurity)),
-          "company-profiles"  -> List(toDoc(AAPLCompanyProfile)),
-          "financial-metrics" -> List(toDoc(AAPLFinancialMetrics))
-        )
-        withEmbeddedMongoDatabase(seedData) { db =>
-          val nonExistent = Ticker("GOOG")
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findByTickers(NonEmptyList.of(AAPL, nonExistent))
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe AAPL
-        }
-      }
-
-      "return stock for single ticker" in {
-        val seedData = Map(
-          "securities"        -> List(toDoc(AAPLSecurity)),
-          "company-profiles"  -> List(toDoc(AAPLCompanyProfile)),
-          "price-analytics"   -> List(toDoc(AAPLPriceAnalytics)),
-          "financial-metrics" -> List(toDoc(AAPLFinancialMetrics))
-        )
-        withEmbeddedMongoDatabase(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findByTickers(NonEmptyList.of(AAPL))
-          yield
-            res.size mustBe 1
-            res.head mustBe AAPLStock
-        }
-      }
-
-      "return empty list when no tickers exist" in
-        withEmbeddedMongoDatabase(Map.empty) { db =>
-          val nonExistent1 = Ticker("GOOG")
-          val nonExistent2 = Ticker("AMZN")
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findByTickers(NonEmptyList.of(nonExistent1, nonExistent2))
-          yield res mustBe List.empty
-        }
-
-      "return stocks with partial data when profile or performance missing" in {
-        val seedData = Map(
-          "securities"        -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles"  -> List(toDoc(AAPLCompanyProfile)),
-          "financial-metrics" -> List(toDoc(AAPLFinancialMetrics), toDoc(MSFTFinancialMetrics))
-        )
-        withEmbeddedMongoDatabase(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findByTickers(NonEmptyList.of(AAPL, MSFT))
-          yield
-            res.size mustBe 2
-            res.exists(s => s.security.ticker == AAPL && s.profile.isDefined && s.financialMetrics.isDefined) mustBe true
-            res.exists(s => s.security.ticker == MSFT && s.profile.isEmpty && s.financialMetrics.isDefined) mustBe true
-        }
-      }
-    }
   }
 }

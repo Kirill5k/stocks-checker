@@ -7,7 +7,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.domain.*
-import stockschecker.domain.investment.InvestmentEvaluator
+import stockschecker.domain.investment.{EvaluationCapture, InvestmentEvaluator}
 import stockschecker.fixtures.AAPL
 import stockschecker.repositories.*
 
@@ -59,10 +59,8 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
       jobs: Ref[IO, Map[JobId, Boolean]],
       cache: Ref[IO, Map[Ticker, PriceHistorySnapshot]],
       writes: Ref[IO, List[InvestmentEvaluation]],
-      prices: PriceHistoryService[IO],
       dispatcher: ActionDispatcher[IO],
       repository: InvestmentEvaluationRepository[IO],
-      screens: InvestmentScreenService[IO],
       requests: Ref[IO, Map[(InvestmentScreenId, YearMonth), Set[Ticker]]]
   ) {
     def persist(report: InvestmentEvaluation): IO[Unit] =
@@ -81,33 +79,45 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
       jobs     <- Ref.of[IO, Map[JobId, Boolean]](Map.empty)
       cache    <- Ref.of[IO, Map[Ticker, PriceHistorySnapshot]](Map.empty)
       writes   <- Ref.of[IO, List[InvestmentEvaluation]](Nil)
-      prices        = mock[PriceHistoryService[IO]]
-      dispatcher    = mock[ActionDispatcher[IO]]
-      repository    = mock[InvestmentEvaluationRepository[IO]]
-      screenService = mock[InvestmentScreenService[IO]]
-      _             = when(screenService.all).thenReturnIO(screens)
-      _             = when(screenService.find(any[InvestmentScreenId])).thenAnswer(i =>
-        IO.pure(screens.find(_.id == i.getArgument[InvestmentScreenId](0)).get)
-      )
-      _ = when(repository.findMonthly(any[InvestmentScreenId], any[YearMonth])).thenAnswer(i =>
-        documents.get.map(_.get(i.getArgument[InvestmentScreenId](0) -> i.getArgument[YearMonth](1)))
-      )
-      _ = when(repository.requestedHistory(any[InvestmentScreenId], any[YearMonth])).thenAnswer(i =>
-        requests.get.map(_.getOrElse(i.getArgument[InvestmentScreenId](0) -> i.getArgument[YearMonth](1), Set.empty))
-      )
-      _ = when(repository.recordHistoryRequest(any[InvestmentScreenId], any[YearMonth], any[Ticker])).thenAnswer { i =>
-        val key    = i.getArgument[InvestmentScreenId](0) -> i.getArgument[YearMonth](1)
-        val ticker = i.getArgument[Ticker](2)
-        requests.update(saved => saved.updated(key, saved.getOrElse(key, Set.empty) + ticker))
+      dispatcher = mock[ActionDispatcher[IO]]
+      repository = mock[InvestmentEvaluationRepository[IO]]
+      _          = when(repository.findContext(any[InvestmentScreenId], any[YearMonth])).thenAnswer { i =>
+        val id    = i.getArgument[InvestmentScreenId](0)
+        val month = i.getArgument[YearMonth](1)
+        documents.get.map { saved =>
+          screens.find(_.id == id).map { screen =>
+            val monthly  = saved.get(id -> month)
+            val finished = saved.values.filter(e => e.screenId == id && e.isFinished).toList.sortBy(_.captureMonth).lastOption
+            EvaluationCapture.Context(screen, monthly, finished)
+          }
+        }
       }
-      _ = when(repository.unsettled).thenReturn(documents.get.map(_.values.filterNot(_.settled).toList))
-      _ = when(repository.finishedScreenIds).thenReturn(documents.get.map(_.values.filter(_.isFinished).map(_.screenId).toSet))
-      _ = when(repository.findFinished(any[InvestmentScreenId])).thenAnswer(i =>
-        documents.get.map(
-          _.values.filter(e => e.screenId == i.getArgument[InvestmentScreenId](0) && e.isFinished).toList.sortBy(_.captureMonth).lastOption
-        )
-      )
-      _ = when(prices.cachedHistorical(any[Ticker], any[DateRange])).thenAnswer(i => cache.get.map(_.get(i.getArgument[Ticker](0))))
+      _ = when(repository.recordHistoryRequests(any[InvestmentScreenId], any[YearMonth], any[List[Ticker]])).thenAnswer { i =>
+        val key     = i.getArgument[InvestmentScreenId](0) -> i.getArgument[YearMonth](1)
+        val tickers = i.getArgument[List[Ticker]](2)
+        requests.update(saved => saved.updated(key, saved.getOrElse(key, Set.empty) ++ tickers))
+      }
+      _ = when(repository.captureTasks(any[YearMonth])).thenAnswer { i =>
+        val month = i.getArgument[YearMonth](0)
+        for
+          saved    <- documents.get
+          recorded <- requests.get
+        yield screens.flatMap { screen =>
+          val reports = saved.values.filter(_.screenId == screen.id).toList
+          val months  = (Option.when(!reports.exists(_.isFinished))(month).toList ++
+            reports.filterNot(_.settled).map(_.captureMonth)).distinct
+          months.filterNot(m => saved.get(screen.id -> m).exists(_.settled)).map { m =>
+            val existing =
+              saved.get(screen.id -> m).map(_ => EvaluationCapture.State(recorded.getOrElse(screen.id -> m, Set.empty)))
+            EvaluationCapture.Task(screen, m, existing)
+          }
+        }
+      }
+      _ = when(repository.findPriceSeries(any[List[Ticker]], any[DateRange])).thenAnswer { i =>
+        val tickers = i.getArgument[List[Ticker]](0).toSet
+        val range   = i.getArgument[DateRange](1)
+        cache.get.map(_.collect { case (ticker, snapshot) if tickers(ticker) => ticker -> EvaluationPriceSeries.from(snapshot, range) })
+      }
       _ = when(dispatcher.dispatchOnce(any[JobId], any[Action])).thenAnswer { i =>
         val id = i.getArgument[JobId](0)
         jobs.update(values => values.updated(id, values.getOrElse(id, true)))
@@ -116,8 +126,8 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
         val ids = i.getArgument[List[JobId]](0).toSet
         jobs.get.map(_.collect { case (id, true) if ids(id) => id }.toSet)
       }
-      service <- InvestmentEvaluationService.make(screenService, repository, prices, dispatcher)
-      result = Harness(service, documents, jobs, cache, writes, prices, dispatcher, repository, screenService, requests)
+      service <- InvestmentEvaluationService.make(repository, dispatcher)
+      result = Harness(service, documents, jobs, cache, writes, dispatcher, repository, requests)
       _ = when(repository.saveMonthly(any[InvestmentEvaluation])).thenAnswer(i => result.persist(i.getArgument[InvestmentEvaluation](0)))
     yield result
 
@@ -132,7 +142,8 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
         report.horizons.map(_.status) mustBe List(EvaluationStatus.Pending, EvaluationStatus.Pending)
         report.captureMonth mustBe currentMonth
         writes mustBe Nil
-        verifyNoInteractions(h.prices, h.dispatcher)
+        verifyNoInteractions(h.dispatcher)
+        verify(h.repository, never).findPriceSeries(any[List[Ticker]], any[DateRange])
         succeed
       }).asserting(identity)
     }
@@ -149,7 +160,6 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
         report.pendingDataJobs mustBe Nil
         writes mustBe Nil
         verify(h.dispatcher, never).dispatchOnce(any[JobId], any[Action])
-        verify(h.prices, never).historical(any[Ticker], any[DateRange])
         succeed
       }).asserting(identity)
     }
@@ -161,7 +171,10 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
       (for
         h <- harness(List(broken, healthy))
         _ <- h.cache.set(snapshots(healthy))
-        _ = when(h.repository.findMonthly(broken.id, currentMonth)).thenReturn(IO.raiseError(failure))
+        _ = when(h.repository.saveMonthly(any[InvestmentEvaluation])).thenAnswer { i =>
+          val report = i.getArgument[InvestmentEvaluation](0)
+          if report.screenId == broken.id then IO.raiseError(failure) else h.persist(report)
+        }
         count <- h.service.captureMonthlyEvaluations
         saved <- h.documents.get
       yield {
@@ -178,12 +191,11 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
       val failure = new IllegalStateException("capture unavailable")
       (for
         h <- harness(List(first, second))
-        _ = when(h.repository.findMonthly(any[InvestmentScreenId], any[YearMonth])).thenReturn(IO.raiseError(failure))
+        _ = when(h.repository.saveMonthly(any[InvestmentEvaluation])).thenReturn(IO.raiseError(failure))
         result <- h.service.captureMonthlyEvaluations.attempt
       yield {
         result mustBe Left(failure)
-        verify(h.repository).findMonthly(first.id, currentMonth)
-        verify(h.repository).findMonthly(second.id, currentMonth)
+        verify(h.repository, times(2)).saveMonthly(any[InvestmentEvaluation])
         succeed
       }).asserting(identity)
     }
@@ -212,7 +224,6 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
         settled.isComplete mustBe true
         third mustBe 0
         frozen mustBe settled
-        verify(h.prices, never).historical(any[Ticker], any[DateRange])
         succeed
       }).asserting(identity)
     }
@@ -225,7 +236,8 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
         .evaluate(current.id, current.createdAt, now, current.cohorts, Map.empty, previous, through)
       (for
         h <- harness(List(current), List(saved))
-        _ = when(h.repository.finishedScreenIds).thenReturnIO(Set(current.id))
+        _ = when(h.repository.captureTasks(currentMonth))
+          .thenReturnIO(List(EvaluationCapture.Task(current, previous, Some(EvaluationCapture.State(Set.empty)))))
         _         <- h.cache.set(snapshots(current, previous))
         count     <- h.service.captureMonthlyEvaluations
         documents <- h.documents.get
@@ -312,8 +324,8 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
         jobs.size mustBe 2
         documents.size mustBe 2
         documents.values.map(_.pendingDataJobs.toSet).toSet.size mustBe 1
-        verify(h.screens).all
-        verify(h.screens, never).find(any[InvestmentScreenId])
+        verify(h.repository).captureTasks(currentMonth)
+        verify(h.repository, never).findContext(any[InvestmentScreenId], any[YearMonth])
         succeed
       }).asserting(identity)
     }
@@ -462,7 +474,8 @@ class InvestmentEvaluationServiceSpec extends IOWordSpec {
         report.isFinished mustBe true
         count mustBe 0
         result mustBe report
-        verifyNoInteractions(h.prices, h.dispatcher)
+        verifyNoInteractions(h.dispatcher)
+        verify(h.repository, never).findPriceSeries(any[List[Ticker]], any[DateRange])
         verify(h.repository, never).saveMonthly(any[InvestmentEvaluation])
         succeed
       }).asserting(identity)

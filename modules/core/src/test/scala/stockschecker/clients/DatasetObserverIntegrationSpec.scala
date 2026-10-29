@@ -61,17 +61,17 @@ class DatasetObserverIntegrationSpec extends RepositorySpec {
             case _ => IO.pure(snapshot.copy(ticker = MSFT))
           })
           first       <- apple.attempt
-          unavailable <- quality.all
+          unavailable <- quality.report(snapshot.fetchedAt).map(_.datasets)
           _           <- IO.sleep(5.millis)
           _           <- microsoft.attempt
           _           <- IO.sleep(5.millis)
           recovered   <- apple
           _           <- IO.sleep(5.millis)
           _           <- microsoft
-          available   <- quality.all
+          available   <- quality.report(snapshot.fetchedAt).map(_.datasets)
           _           <- IO.sleep(5.millis)
           _           <- apple.attempt
-          failed      <- quality.all
+          failed      <- quality.report(snapshot.fetchedAt).map(_.datasets)
           excluded    <- securities.find(AAPL)
           included    <- securities.find(MSFT)
         yield
@@ -102,12 +102,12 @@ class DatasetObserverIntegrationSpec extends RepositorySpec {
           now          <- IO.realTimeInstant
           _ <- quality.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, now, None)
           _ <- quality.record(MSFT, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Failed, now, Some("HTTP 503"))
-          before <- quality.all
+          before <- quality.report(snapshot.fetchedAt).map(_.datasets)
           first  <- observed(access, availability, AAPL)(
             IO.raiseError(AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(300), ProviderDeferralReason.Provider429))
           ).attempt
           second <- observed(access, availability, MSFT)(IO.raiseError(new AssertionError("Deferred request ran"))).attempt
-          after  <- quality.all
+          after  <- quality.report(snapshot.fetchedAt).map(_.datasets)
         yield
           first.left.toOption.get mustBe a[AppError.ProviderDeferred]
           second.left.toOption.get mustBe a[AppError.ProviderDeferred]

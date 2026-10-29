@@ -24,10 +24,13 @@ object EvaluationPriceSeries:
   private val ProviderCandleLimit = 5000
 
   def from(snapshot: PriceHistorySnapshot, range: DateRange): EvaluationPriceSeries =
+    from(snapshot, range, snapshot.candles.size)
+
+  private[stockschecker] def from(snapshot: PriceHistorySnapshot, range: DateRange, candleCount: Int): EvaluationPriceSeries =
     val issues = List(
       Option.when(snapshot.currency != "USD")("unsupported evaluation currency"),
       Option.when(snapshot.adjustment != PriceAdjustment.SplitsAndDividends)("total-return adjustments unavailable"),
-      Option.when(snapshot.candles.size >= ProviderCandleLimit)("provider response may be truncated")
+      Option.when(candleCount >= ProviderCandleLimit)("provider response may be truncated")
     ).flatten
     EvaluationPriceSeries(
       snapshot.ticker,

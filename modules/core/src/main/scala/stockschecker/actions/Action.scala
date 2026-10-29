@@ -20,6 +20,9 @@ enum Action:
   case UpdateFinancialMetrics(tickers: NonEmptyList[Ticker])
   case UpdatePriceAnalytics(tickers: NonEmptyList[Ticker])
   case RefreshInvestmentResearch
+  case RefreshInvestmentRanking
+  case CreateMonthlyScreen
+  case CaptureMonthlyEvaluations
   case RefreshEvaluationPrices(ticker: Ticker, through: LocalDate)
   // Internal events
   case RecordCompanyProfileUpdate(tickers: NonEmptyList[Ticker])

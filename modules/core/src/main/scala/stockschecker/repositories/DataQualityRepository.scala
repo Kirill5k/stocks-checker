@@ -11,7 +11,7 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.UpdateOptions
 import mongo4cats.operations.{Accumulator, Aggregate, Filter, Index, Projection, Sort, Update}
-import stockschecker.domain.{DataQualityReport, Dataset, DatasetAvailability, Ticker}
+import stockschecker.domain.{DataQualityReport, Dataset, Ticker}
 import java.time.Instant
 
 trait DataQualityRepository[F[_]]:
@@ -23,7 +23,6 @@ trait DataQualityRepository[F[_]]:
       at: Instant,
       failure: Option[String]
   ): F[Unit]
-  def all: F[List[DatasetAvailability]]
   def report(at: Instant): F[DataQualityReport]
 
 final private class LiveDataQualityRepository[F[_]: Concurrent](
@@ -79,9 +78,6 @@ final private class LiveDataQualityRepository[F[_]: Concurrent](
     val dated = if (status == DatasetStatus.Available) update.set(Field.LastSuccessAt, at) else update
     collection.updateOne(Filter.idEq(id), dated, UpdateOptions(upsert = true)).void
   }
-
-  override def all: F[List[DatasetAvailability]] =
-    collection.find.all.map(_.toList.map(_.toDomain))
 
   override def report(at: Instant): F[DataQualityReport] =
     collection

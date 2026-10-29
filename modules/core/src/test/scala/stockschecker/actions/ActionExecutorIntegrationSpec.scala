@@ -17,6 +17,7 @@ import stockschecker.services.{
   CommandService,
   CompanyProfileService,
   InvestmentEvaluationService,
+  InvestmentRankingService,
   InvestmentScreenService,
   SecurityService,
   Services
@@ -46,6 +47,12 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       .make(services)
       .flatMap(handler => ActionExecutor.make(jobs, handler, command => services.command.isCurrent(command), config))
 
+  private def allowRankingRefresh(services: Services[IO]): Unit =
+    val rankings = mock(classOf[InvestmentRankingService[IO]])
+    when(services.investmentRankings).thenReturn(rankings)
+    when(rankings.refresh).thenReturn(IO.unit)
+    ()
+
   "An action executor" should {
     "run ready work with sixteen future schedules and no free timer workers" in withEmbeddedMongoDatabase { db =>
       val now      = Instant.now().truncatedTo(ChronoUnit.MILLIS)
@@ -72,11 +79,12 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       val screens     = mock(classOf[InvestmentScreenService[IO]])
       val evaluations = mock(classOf[InvestmentEvaluationService[IO]])
       when(services.investmentScreens).thenReturn(screens)
+      allowRankingRefresh(services)
       when(services.investmentEvaluations).thenReturn(evaluations)
       when(evaluations.captureMonthlyEvaluations).thenReturn(IO.pure(0))
       for {
         runs <- Ref.of[IO, Int](0)
-        _ = when(screens.generateScheduledScreen).thenReturn(runs.update(_ + 1).as(None))
+        _ = when(screens.createMonthlyScreen).thenReturn(runs.update(_ + 1).as(None))
         jobs           <- JobRepository.make[IO](db)
         commands       <- CommandRepository.make[IO](db)
         dispatcher     <- ActionDispatcher.make(jobs)
@@ -87,8 +95,9 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         queued  <- commands.find(command.id)
         runId = queued.activeRunId.get
         executor  <- makeExecutor(jobs, services, ActionExecutorConfig(1))
-        _         <- executor.run.take(1).compile.drain.timeout(3.seconds)
-        result    <- jobs.find(runId).map(_.get)
+        result    <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, runId))
+        sequence  <- jobs.find(JobId(s"${runId.value}/0")).map(_.get)
+        capture   <- jobs.find(JobId(s"${runId.value}/1")).map(_.get)
         count     <- runs.get
         _         <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
         completed <- commands.find(command.id)
@@ -96,6 +105,10 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         count mustBe 1
         result.action mustBe Action.RefreshInvestmentResearch
         result.state mustBe Job.Succeeded
+        sequence.action mustBe Action.Sequence(NonEmptyList.of(Action.RefreshInvestmentRanking, Action.CreateMonthlyScreen))
+        sequence.state mustBe Job.Succeeded
+        capture.action mustBe Action.CaptureMonthlyEvaluations
+        capture.state mustBe Job.Succeeded
         result.command.map(_.commandId) mustBe Some(command.id)
         completed.executionCount mustBe 1
         completed.activeRunId mustBe None
@@ -103,19 +116,16 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       }
     }
 
-    "persist investment research failures and bound their transient retries" in withEmbeddedMongoDatabase { db =>
-      val services    = mock(classOf[Services[IO]])
-      val screens     = mock(classOf[InvestmentScreenService[IO]])
-      val evaluations = mock(classOf[InvestmentEvaluationService[IO]])
-      val now         = Instant.now().truncatedTo(ChronoUnit.MILLIS)
+    "persist monthly screen failures and bound their transient retries" in withEmbeddedMongoDatabase { db =>
+      val services = mock(classOf[Services[IO]])
+      val screens  = mock(classOf[InvestmentScreenService[IO]])
+      val now      = Instant.now().truncatedTo(ChronoUnit.MILLIS)
       when(services.investmentScreens).thenReturn(screens)
-      when(services.investmentEvaluations).thenReturn(evaluations)
-      when(evaluations.captureMonthlyEvaluations).thenReturn(IO.pure(0))
-      when(screens.generateScheduledScreen).thenReturn(IO.raiseError(new java.io.IOException("research storage unavailable")))
+      when(screens.createMonthlyScreen).thenReturn(IO.raiseError(new java.io.IOException("research storage unavailable")))
       for {
         jobs      <- JobRepository.make[IO](db)
-        _         <- enqueue(jobs)(Job(JobId("research-exhausted"), Action.RefreshInvestmentResearch, now, now, retries = 3))
-        _         <- enqueue(jobs)(Job(JobId("research-retry"), Action.RefreshInvestmentResearch, now, now, retries = 2))
+        _         <- enqueue(jobs)(Job(JobId("research-exhausted"), Action.CreateMonthlyScreen, now, now, retries = 3))
+        _         <- enqueue(jobs)(Job(JobId("research-retry"), Action.CreateMonthlyScreen, now, now, retries = 2))
         executor  <- makeExecutor(jobs, services, ActionExecutorConfig(1))
         _         <- executor.run.take(2).compile.drain.timeout(3.seconds)
         exhausted <- jobs.find(JobId("research-exhausted")).map(_.get)
@@ -123,11 +133,92 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       } yield {
         exhausted.state mustBe Job.Failed
         exhausted.retries mustBe 3
-        exhausted.error mustBe Some("IOException")
+        exhausted.error mustBe Some("research storage unavailable")
         retry.state mustBe Job.Pending
         retry.retries mustBe 3
-        retry.error mustBe Some("IOException")
+        retry.error mustBe Some("research storage unavailable")
         retry.availableAt.isAfter(now) mustBe true
+      }
+    }
+
+    List(true, false).foreach { failRanking =>
+      val failedStage = if failRanking then "ranking" else "screen"
+      s"retain captured evaluations and finish research as partial when the $failedStage stage fails" in withEmbeddedMongoDatabase { db =>
+        val services    = mock(classOf[Services[IO]])
+        val rankings    = mock(classOf[InvestmentRankingService[IO]])
+        val screens     = mock(classOf[InvestmentScreenService[IO]])
+        val evaluations = mock(classOf[InvestmentEvaluationService[IO]])
+        val failure     = AppError.FailedValidation(s"$failedStage failed")
+        val parentId    = JobId(s"research-$failedStage-failure")
+        when(services.investmentRankings).thenReturn(rankings)
+        when(services.investmentScreens).thenReturn(screens)
+        when(services.investmentEvaluations).thenReturn(evaluations)
+        when(rankings.refresh)
+          .thenReturn(if failRanking then IO.raiseError(failure) else IO.unit)
+        for {
+          captures    <- Ref.of[IO, Int](0)
+          screenCalls <- Ref.of[IO, Int](0)
+          _ = when(evaluations.captureMonthlyEvaluations).thenReturn(captures.update(_ + 1).as(0))
+          _ = when(screens.createMonthlyScreen).thenReturn(screenCalls.update(_ + 1) >> IO.raiseError(failure))
+          jobs     <- JobRepository.make[IO](db)
+          now      <- IO.realTimeInstant
+          _        <- enqueue(jobs)(Job(parentId, Action.RefreshInvestmentResearch, now, now))
+          executor <- makeExecutor(jobs, services, ActionExecutorConfig(3))
+          result   <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, parentId))
+          sequence <- jobs.find(JobId(s"${parentId.value}/0")).map(_.get)
+          ranking  <- jobs.find(JobId(s"${parentId.value}/0/0")).map(_.get)
+          screen   <- jobs.find(JobId(s"${parentId.value}/0/1")).map(_.get)
+          capture  <- jobs.find(JobId(s"${parentId.value}/1")).map(_.get)
+          captured <- captures.get
+          created  <- screenCalls.get
+        } yield {
+          result.state mustBe Job.Partial
+          result.retries mustBe 0
+          sequence.state mustBe (if failRanking then Job.Failed else Job.Partial)
+          ranking.state mustBe (if failRanking then Job.Failed else Job.Succeeded)
+          screen.state mustBe (if failRanking then Job.Cancelled else Job.Failed)
+          screen.dependsOn mustBe List(ranking.id)
+          capture.state mustBe Job.Succeeded
+          captured mustBe 1
+          created mustBe (if failRanking then 0 else 1)
+        }
+      }
+    }
+
+    "capture evaluations while ranking runs and wait for ranking before creating its screen" in withEmbeddedMongoDatabase { db =>
+      val services    = mock(classOf[Services[IO]])
+      val rankings    = mock(classOf[InvestmentRankingService[IO]])
+      val screens     = mock(classOf[InvestmentScreenService[IO]])
+      val evaluations = mock(classOf[InvestmentEvaluationService[IO]])
+      val parentId    = JobId("research-ordering")
+      when(services.investmentRankings).thenReturn(rankings)
+      when(services.investmentScreens).thenReturn(screens)
+      when(services.investmentEvaluations).thenReturn(evaluations)
+      for {
+        rankingStarted  <- Deferred[IO, Unit]
+        releaseRanking  <- Deferred[IO, Unit]
+        captureFinished <- Deferred[IO, Unit]
+        screenRan       <- Ref.of[IO, Boolean](false)
+        _ = when(rankings.refresh)
+          .thenReturn(rankingStarted.complete(()).void >> releaseRanking.get)
+        _ = when(screens.createMonthlyScreen).thenReturn(screenRan.set(true).as(None))
+        _ = when(evaluations.captureMonthlyEvaluations).thenReturn(captureFinished.complete(()).as(0))
+        jobs     <- JobRepository.make[IO](db)
+        now      <- IO.realTimeInstant
+        _        <- enqueue(jobs)(Job(parentId, Action.RefreshInvestmentResearch, now, now))
+        executor <- makeExecutor(jobs, services, ActionExecutorConfig(3))
+        result   <- executor.run.compile.drain.background.use { _ =>
+          rankingStarted.get.timeout(3.seconds) >> captureFinished.get.timeout(3.seconds) >> screenRan.get.flatMap { early =>
+            releaseRanking.complete(()) >> awaitTerminal(jobs, parentId).tupleLeft(early)
+          }
+        }
+        created <- screenRan.get
+        screen  <- jobs.find(JobId(s"${parentId.value}/0/1")).map(_.get)
+      } yield {
+        result._1 mustBe false
+        result._2.state mustBe Job.Succeeded
+        created mustBe true
+        screen.dependsOn mustBe List(JobId(s"${parentId.value}/0/0"))
       }
     }
 

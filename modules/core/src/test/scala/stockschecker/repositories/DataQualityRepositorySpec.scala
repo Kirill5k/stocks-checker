@@ -134,7 +134,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
       for
         repo <- DataQualityRepository.make[IO](db)
         _ <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Unavailable, now, Some("HTTP 404"))
-        result <- repo.all
+        result <- repo.report(now).map(_.datasets)
       yield result mustBe List(
         DatasetAvailability(
           AAPL,
@@ -155,9 +155,9 @@ class DataQualityRepositorySpec extends RepositorySpec {
         repo <- DataQualityRepository.make[IO](db)
         _    <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, now, None)
         _ <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Failed, failedAt, Some("HTTP 503"))
-        failed <- repo.all
+        failed <- repo.report(now).map(_.datasets)
         _      <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, recoveredAt, None)
-        recovered <- repo.all
+        recovered <- repo.report(now).map(_.datasets)
       yield
         failed mustBe List(
           DatasetAvailability(
@@ -190,7 +190,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
         _    <- repo.record(AAPL, Provider.Finnhub, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Unavailable, now, Some("HTTP 404"))
         _    <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplits, DatasetStatus.Failed, now, Some("HTTP 503"))
         _    <- repo.record(MSFT, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, now, None)
-        rows <- repo.all
+        rows <- repo.report(now).map(_.datasets)
       yield rows.toSet mustBe Set(
         DatasetAvailability(
           AAPL,

@@ -6,7 +6,6 @@ import cats.effect.Concurrent
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
 import cats.syntax.applicative.*
-import fs2.Stream
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.syntax.applicative.*
 import kirill5k.common.syntax.time.*
@@ -25,8 +24,6 @@ trait SecurityRepository[F[_]]:
   def save(securities: List[Security]): F[Unit]
   def find(ticker: Ticker): F[Option[Security]]
   def findByExchange(exchange: Exchange): F[List[Security]]
-  def findExcluded: F[List[Security]]
-  def streamAll: Stream[F, Security]
   def getAllTickers: F[List[Ticker]]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
   def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit]
@@ -68,21 +65,12 @@ final private class LiveSecurityRepository[F[_]](
       collection.bulkWrite(List(security.toUpdateCommand(now))).void
     }
 
-  override def streamAll: Stream[F, Security] =
-    collection.find.stream.map(_.toDomain)
-
   override def find(ticker: Ticker): F[Option[Security]] =
     collection.find(Filter.idEq(ticker.value)).first.map(_.map(_.toDomain))
 
   override def findByExchange(exchange: Exchange): F[List[Security]] =
     collection
       .find(Filter.eq(Field.Exchange, exchange))
-      .all
-      .mapList(_.toDomain)
-
-  override def findExcluded: F[List[Security]] =
-    collection
-      .find(Filter.isNull(Field.ExclusionReason).not)
       .all
       .mapList(_.toDomain)
 
@@ -121,10 +109,16 @@ final private class LiveSecurityRepository[F[_]](
       .currentDate(Field.UpdatedAt)
     if active then
       collection
-        .updateOne(newerRequest && Filter.ne(Field.ListingStatus, ListingStatus.Delisted.print), update.set(Field.IsActive, true))
+        .updateOne(
+          newerRequest && Filter.ne(Field.ListingStatus, ListingStatus.Delisted.print),
+          update.set(Field.IsActive, true)
+        )
         .void >>
         collection
-          .updateOne(newerRequest && Filter.eq(Field.ListingStatus, ListingStatus.Delisted.print), update.set(Field.IsActive, false))
+          .updateOne(
+            newerRequest && Filter.eq(Field.ListingStatus, ListingStatus.Delisted.print),
+            update.set(Field.IsActive, false)
+          )
           .void
     else collection.updateOne(newerRequest, update.set(Field.IsActive, false)).void
 
@@ -132,20 +126,19 @@ final private class LiveSecurityRepository[F[_]](
     F.whenA(securities.nonEmpty) {
       val listed = securities.map(_.ticker.value)
       for
-        current <- findByExchange(exchange)
-        _       <- save(securities)
-        _       <- collection
-          .updateMany(Filter.in(Field.Id, listed) && Filter.isNull(Field.ExclusionReason), Update.set(Field.IsActive, true))
+        _ <- save(securities)
+        _ <- collection
+          .updateMany(
+            Filter.in(Field.Id, listed) && Filter.isNull(Field.ExclusionReason),
+            Update.set(Field.IsActive, true)
+          )
           .void
-        missing = current.map(_.ticker.value).filterNot(listed.toSet)
-        _ <- F.whenA(missing.nonEmpty)(
-          collection
-            .updateMany(
-              Filter.in(Field.Id, missing),
-              Update.set(Field.ListingStatus, ListingStatus.Delisted.print).set(Field.IsActive, false)
-            )
-            .void
-        )
+        _ <- collection
+          .updateMany(
+            Filter.eq(Field.Exchange, exchange) && Filter.nin(Field.Id, listed),
+            Update.set(Field.ListingStatus, ListingStatus.Delisted.print).set(Field.IsActive, false)
+          )
+          .void
       yield ()
     }
 

@@ -4,7 +4,7 @@ import cats.effect.IO
 import kirill5k.common.cats.Clock
 import stockschecker.actions.{Action, ActionDispatcher}
 import kirill5k.common.cats.test.IOWordSpec
-import stockschecker.domain.{InvestmentCandidate, StockFilters, Ticker}
+import stockschecker.domain.{StockFilters, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.StockRepository
 import stockschecker.fixtures.*
@@ -13,19 +13,6 @@ class StockServiceSpec extends IOWordSpec {
   given Clock[IO] = Clock.mock(ts)
 
   "A StockService" when {
-    "findInvestmentCandidates" should {
-      "return joined investment candidates from its repository" in {
-        val repo       = mock[StockRepository[IO]]
-        val candidates = List(InvestmentCandidate(AAPLStock, None))
-        when(repo.findInvestmentCandidates).thenReturnIO(candidates)
-        StockService.make(repo, mock[ActionDispatcher[IO]]).flatMap(_.findInvestmentCandidates).asserting { result =>
-          result mustBe candidates
-          verify(repo).findInvestmentCandidates
-          succeed
-        }
-      }
-    }
-
     "findByTicker" should {
       "return stock when found" in {
         val repo = mock[StockRepository[IO]]
@@ -76,10 +63,11 @@ class StockServiceSpec extends IOWordSpec {
       "dispatch activation after checking the stock exists" in {
         val repo       = mock[StockRepository[IO]]
         val dispatcher = mock[ActionDispatcher[IO]]
-        when(repo.find(AAPL)).thenReturnSome(AAPLStock)
+        when(repo.exists(AAPL)).thenReturnIO(true)
         when(dispatcher.dispatch(any[Action])).thenReturnUnit
         StockService.make(repo, dispatcher).flatMap(_.activate(AAPL)).asserting { _ =>
-          verify(repo).find(AAPL)
+          verify(repo).exists(AAPL)
+          verify(repo, never).find(any[Ticker])
           verify(dispatcher).dispatch(Action.SetSecurityActive(AAPL, true, ts))
           succeed
         }
@@ -88,9 +76,11 @@ class StockServiceSpec extends IOWordSpec {
       "not dispatch activation for a missing stock" in {
         val repo       = mock[StockRepository[IO]]
         val dispatcher = mock[ActionDispatcher[IO]]
-        when(repo.find(AAPL)).thenReturnNone
+        when(repo.exists(AAPL)).thenReturnIO(false)
         StockService.make(repo, dispatcher).flatMap(_.activate(AAPL)).attempt.asserting { result =>
           result mustBe Left(AppError.SecurityNotFound(AAPL))
+          verify(repo).exists(AAPL)
+          verify(repo, never).find(any[Ticker])
           verifyNoInteractions(dispatcher)
           succeed
         }
@@ -101,9 +91,11 @@ class StockServiceSpec extends IOWordSpec {
       "not dispatch deactivation for a missing stock" in {
         val repo       = mock[StockRepository[IO]]
         val dispatcher = mock[ActionDispatcher[IO]]
-        when(repo.find(AAPL)).thenReturnNone
+        when(repo.exists(AAPL)).thenReturnIO(false)
         StockService.make(repo, dispatcher).flatMap(_.deactivate(AAPL)).attempt.asserting { result =>
           result mustBe Left(AppError.SecurityNotFound(AAPL))
+          verify(repo).exists(AAPL)
+          verify(repo, never).find(any[Ticker])
           verifyNoInteractions(dispatcher)
           succeed
         }
@@ -112,11 +104,12 @@ class StockServiceSpec extends IOWordSpec {
       "dispatch deactivation after checking the stock exists" in {
         val repo       = mock[StockRepository[IO]]
         val dispatcher = mock[ActionDispatcher[IO]]
-        when(repo.find(AAPL)).thenReturnSome(AAPLStock)
+        when(repo.exists(AAPL)).thenReturnIO(true)
         when(dispatcher.dispatch(any[Action])).thenReturnUnit
         StockService.make(repo, dispatcher).flatMap(_.deactivate(AAPL)).asserting { _ =>
           verify(dispatcher).dispatch(Action.SetSecurityActive(AAPL, false, ts))
-          verify(repo).find(AAPL)
+          verify(repo).exists(AAPL)
+          verify(repo, never).find(any[Ticker])
           verifyNoMoreInteractions(dispatcher)
           succeed
         }

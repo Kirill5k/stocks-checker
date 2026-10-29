@@ -1,7 +1,7 @@
 package stockschecker.actions
 
 import cats.data.NonEmptyList
-import cats.effect.{IO, Ref}
+import cats.effect.IO
 import cats.syntax.traverse.*
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.domain.*
@@ -9,6 +9,7 @@ import stockschecker.services.{
   CompanyProfileService,
   FinancialMetricsService,
   InvestmentEvaluationService,
+  InvestmentRankingService,
   InvestmentScreenService,
   PriceService,
   SecurityService,
@@ -18,6 +19,58 @@ import stockschecker.fixtures.*
 
 class ActionHandlerSpec extends IOWordSpec:
   "An action handler" should {
+    "route monthly screen creation to the screen service" in {
+      val services = mock[Services[IO]]
+      val screens  = mock[InvestmentScreenService[IO]]
+      val rankings = mock[InvestmentRankingService[IO]]
+      when(services.investmentScreens).thenReturn(screens)
+      when(services.investmentRankings).thenReturn(rankings)
+      when(screens.createMonthlyScreen).thenReturnNone
+      (for
+        handler <- ActionHandler.make(services)
+        result  <- handler.execute(Action.CreateMonthlyScreen)
+      yield result).asserting { result =>
+        result mustBe ActionResult.Completed
+        verify(screens).createMonthlyScreen
+        verifyNoInteractions(rankings)
+        succeed
+      }
+    }
+
+    "route investment ranking refresh to its owning service" in {
+      val services = mock[Services[IO]]
+      val rankings = mock[InvestmentRankingService[IO]]
+      val screens  = mock[InvestmentScreenService[IO]]
+      when(services.investmentRankings).thenReturn(rankings)
+      when(services.investmentScreens).thenReturn(screens)
+      when(rankings.refresh).thenReturnUnit
+      (for
+        handler <- ActionHandler.make(services)
+        result  <- handler.execute(Action.RefreshInvestmentRanking)
+      yield result).asserting { result =>
+        result mustBe ActionResult.Completed
+        verify(rankings).refresh
+        verifyNoInteractions(screens)
+        succeed
+      }
+    }
+
+    "route evaluation price refreshes directly to the price service" in {
+      val services    = mock[Services[IO]]
+      val prices      = mock[PriceService[IO]]
+      val evaluations = mock[InvestmentEvaluationService[IO]]
+      val through     = java.time.LocalDate.parse("2026-09-30")
+      when(services.price).thenReturn(prices)
+      when(services.investmentEvaluations).thenReturn(evaluations)
+      when(prices.refreshHistory(AAPL, through)).thenReturnUnit
+      ActionHandler.make(services).flatMap(_.execute(Action.RefreshEvaluationPrices(AAPL, through))).asserting { result =>
+        result mustBe ActionResult.Completed
+        verify(prices).refreshHistory(AAPL, through)
+        verifyNoInteractions(evaluations)
+        succeed
+      }
+    }
+
     "execute single-ticker updates and expand batches without calling providers" in {
       val services   = mock[Services[IO]]
       val profiles   = mock[CompanyProfileService[IO]]
@@ -92,40 +145,48 @@ class ActionHandlerSpec extends IOWordSpec:
       }
     }
 
-    "generate the scheduled screen before capturing evaluations" in {
+    "expand research into a ranking-screen sequence and an independent evaluation capture" in {
       val services    = mock[Services[IO]]
+      val rankings    = mock[InvestmentRankingService[IO]]
       val screens     = mock[InvestmentScreenService[IO]]
       val evaluations = mock[InvestmentEvaluationService[IO]]
+      when(services.investmentRankings).thenReturn(rankings)
       when(services.investmentScreens).thenReturn(screens)
       when(services.investmentEvaluations).thenReturn(evaluations)
-      (for {
-        steps <- Ref.of[IO, List[String]](Nil)
-        _ = when(screens.generateScheduledScreen).thenReturn(steps.update(_ :+ "screen").as(Option.empty[InvestmentScreenSummary]))
-        _ = when(evaluations.captureMonthlyEvaluations).thenReturn(steps.update(_ :+ "evaluations").as(1))
-        handler  <- ActionHandler.make(services)
-        result   <- handler.execute(Action.RefreshInvestmentResearch)
-        recorded <- steps.get
-      } yield (result, recorded)).asserting { case (result, steps) =>
-        result mustBe ActionResult.Completed
-        steps mustBe List("screen", "evaluations")
+      (for
+        handler <- ActionHandler.make(services)
+        result  <- handler.execute(Action.RefreshInvestmentResearch)
+      yield result).asserting { result =>
+        result mustBe ActionResult.Expand(
+          JobPlan(
+            List(
+              Action.Sequence(NonEmptyList.of(Action.RefreshInvestmentRanking, Action.CreateMonthlyScreen)),
+              Action.CaptureMonthlyEvaluations
+            ),
+            sequential = false
+          )
+        )
+        verifyNoInteractions(rankings, screens, evaluations)
+        succeed
       }
     }
 
-    "capture evaluations even if scheduled screen generation fails" in {
+    "route monthly evaluation capture to its owning service" in {
       val services    = mock[Services[IO]]
-      val screens     = mock[InvestmentScreenService[IO]]
       val evaluations = mock[InvestmentEvaluationService[IO]]
-      val error       = new IllegalStateException("ranking unavailable")
-      when(services.investmentScreens).thenReturn(screens)
+      val rankings    = mock[InvestmentRankingService[IO]]
+      val screens     = mock[InvestmentScreenService[IO]]
       when(services.investmentEvaluations).thenReturn(evaluations)
-      when(screens.generateScheduledScreen).thenRaiseError(error)
+      when(services.investmentRankings).thenReturn(rankings)
+      when(services.investmentScreens).thenReturn(screens)
       when(evaluations.captureMonthlyEvaluations).thenReturnIO(1)
-      (for {
+      (for
         handler <- ActionHandler.make(services)
-        result  <- handler.execute(Action.RefreshInvestmentResearch).attempt
-      } yield result).asserting { result =>
-        result mustBe Left(error)
+        result  <- handler.execute(Action.CaptureMonthlyEvaluations)
+      yield result).asserting { result =>
+        result mustBe ActionResult.Completed
         verify(evaluations).captureMonthlyEvaluations
+        verifyNoInteractions(rankings, screens)
         succeed
       }
     }

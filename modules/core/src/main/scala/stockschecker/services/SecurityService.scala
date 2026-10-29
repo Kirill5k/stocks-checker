@@ -18,9 +18,7 @@ trait SecurityService[F[_]]:
   def find(ticker: Ticker): F[Security]
   def findByExchange(exchange: Exchange): F[List[Security]]
   def getAllTickers: F[List[Ticker]]
-  def streamAll: Stream[F, Security]
   def fetchLatest(exchanges: NonEmptyList[Exchange]): F[Unit]
-  def findExcluded: F[List[Security]]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
   def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit]
   def recordCompanyProfileUpdate(tickers: NonEmptyList[Ticker]): F[Unit]
@@ -43,9 +41,6 @@ final private class LiveSecurityService[F[_]](
   override def getAllTickers: F[List[Ticker]] =
     repository.getAllTickers
 
-  override def streamAll: Stream[F, Security] =
-    repository.streamAll
-
   override def fetchLatest(exchanges: NonEmptyList[Exchange]): F[Unit] =
     logger.info(s"Fetching latest securities for ${exchanges}") >>
       Stream
@@ -63,9 +58,6 @@ final private class LiveSecurityService[F[_]](
 
   override def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
-
-  override def findExcluded: F[List[Security]] =
-    repository.findExcluded
 
   override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit] =
     for

@@ -4,7 +4,7 @@ import stockschecker.domain.ListingStatus
 import cats.data.NonEmptyList
 import cats.effect.IO
 import org.scalatest.wordspec.AsyncWordSpec
-import stockschecker.domain.{Exchange, Security, SecurityFilter, SecurityKind, Ticker}
+import stockschecker.domain.{Exchange, SecurityFilter, SecurityKind, Ticker}
 import stockschecker.fixtures.*
 
 import scala.concurrent.Future
@@ -21,7 +21,7 @@ class SecurityRepositorySpec extends RepositorySpec {
           for
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
-            all  <- repo.streamAll.compile.toList
+            all  <- repo.findByExchange(Exchange.NASDAQ)
           yield all mustBe List(AAPLSecurity)
         }
 
@@ -31,7 +31,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo <- SecurityRepository.make(db)
             securities = List(AAPLSecurity, MSFTSecurity)
             _   <- repo.save(securities)
-            all <- repo.streamAll.compile.toList
+            all <- repo.findByExchange(Exchange.NASDAQ)
           yield all mustBe securities
         }
     }
@@ -69,6 +69,41 @@ class SecurityRepositorySpec extends RepositorySpec {
     }
 
     "reconcile" should {
+      "delist missing tickers only in the reconciled exchange" in
+        withEmbeddedMongoDatabase { db =>
+          val otherExchange = AAPLSecurity.copy(ticker = Ticker("IBM"), exchange = Exchange.NYSE)
+          for
+            repo      <- SecurityRepository.make(db)
+            _         <- repo.save(List(AAPLSecurity, MSFTSecurity, otherExchange))
+            _         <- repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))
+            missing   <- repo.find(AAPL)
+            listed    <- repo.find(MSFT)
+            untouched <- repo.find(otherExchange.ticker)
+          yield
+            missing.map(_.listingStatus) mustBe Some(ListingStatus.Delisted)
+            missing.map(_.isActive) mustBe Some(false)
+            listed mustBe Some(MSFTSecurity)
+            untouched mustBe Some(otherExchange)
+        }
+
+      "preserve manual exclusions while delisting and relisting a missing ticker" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo     <- SecurityRepository.make(db)
+            _        <- repo.save(List(AAPLSecurity, MSFTSecurity))
+            _        <- repo.setActive(AAPL, false, ts)
+            _        <- repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))
+            missing  <- repo.find(AAPL)
+            _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
+            relisted <- repo.find(AAPL)
+          yield
+            missing.map(_.listingStatus) mustBe Some(ListingStatus.Delisted)
+            missing.flatMap(_.exclusionReason) mustBe Some("user-excluded")
+            relisted.map(_.listingStatus) mustBe Some(ListingStatus.Listed)
+            relisted.map(_.isActive) mustBe Some(false)
+            relisted.flatMap(_.exclusionReason) mustBe Some("user-excluded")
+        }
+
       "preserve manual exclusions when the provider still lists the security" in
         withEmbeddedMongoDatabase { db =>
           for
@@ -146,41 +181,6 @@ class SecurityRepositorySpec extends RepositorySpec {
             s    <- repo.findByExchange(Exchange.NASDAQ)
           yield s must contain theSameElementsAs List(AAPLSecurity, MSFTSecurity)
         }
-    }
-
-    "findExcluded" should {
-      "return only securities with an exclusion reason regardless of listing status" in {
-        val persisted = AAPLSecurity.copy(isActive = false, exclusionReason = Some("user-excluded"))
-        val manual    = MSFTSecurity.copy(isActive = false, exclusionReason = Some("user-excluded"))
-        val excluded  = AAPLSecurity.copy(ticker = Ticker("EXCLUDED"))
-        val delisted  = AAPLSecurity.copy(ticker = Ticker("DELISTED"))
-        val restored  = AAPLSecurity.copy(ticker = Ticker("RESTORED"))
-        val active    = AAPLSecurity.copy(ticker = Ticker("ACTIVE"))
-        val seed      = Map(SecurityRepository.CollectionName -> List(toDoc(persisted)))
-
-        withEmbeddedMongoDatabase(seed) { db =>
-          for
-            repo   <- SecurityRepository.make(db)
-            _      <- repo.save(List(MSFTSecurity, excluded, delisted, restored, active))
-            _      <- repo.setActive(MSFT, false, ts)
-            _      <- repo.setActive(excluded.ticker, false, ts)
-            _      <- repo.setActive(restored.ticker, false, ts)
-            _      <- repo.setActive(restored.ticker, true, ts.plusSeconds(1))
-            _      <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity, restored, active))
-            result <- repo.findExcluded
-            _      <- repo.setActive(AAPL, true, ts.plusSeconds(1))
-            _      <- repo.setActive(MSFT, true, ts.plusSeconds(1))
-            _      <- repo.setActive(excluded.ticker, true, ts.plusSeconds(1))
-            empty  <- repo.findExcluded
-          yield
-            result must contain theSameElementsAs List(
-              persisted,
-              manual,
-              excluded.copy(isActive = false, listingStatus = ListingStatus.Delisted, exclusionReason = Some("user-excluded"))
-            )
-            empty mustBe List.empty[Security]
-        }
-      }
     }
 
     "getAllTickers" should {

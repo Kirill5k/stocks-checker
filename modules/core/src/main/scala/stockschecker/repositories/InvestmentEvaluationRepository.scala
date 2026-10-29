@@ -5,31 +5,40 @@ import cats.syntax.applicativeError.*
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
 import kirill5k.common.cats.syntax.applicative.*
+import mongo4cats.bson.{BsonValue, Document}
+import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.models.collection.UpdateOptions
-import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort, Update}
+import mongo4cats.models.collection.{UnwindOptions, UpdateOptions}
+import mongo4cats.operations.{Accumulator, Aggregate, Filter, Index, Projection, Sort, Update}
 import stockschecker.domain.*
-import stockschecker.repositories.entities.{InvestmentEvaluationEntity, InvestmentEvaluationScreenReference}
+import stockschecker.domain.investment.EvaluationCapture
+import stockschecker.repositories.entities.{
+  EvaluationPriceSeriesEntity,
+  InvestmentEvaluationContextEntity,
+  InvestmentEvaluationEntity,
+  InvestmentEvaluationTaskEntity,
+  InvestmentScreenEntity,
+  PriceHistoryEntity
+}
 
 import java.time.YearMonth
 
 trait InvestmentEvaluationRepository[F[_]]:
   def saveMonthly(evaluation: InvestmentEvaluation): F[Unit]
-  def requestedHistory(screenId: InvestmentScreenId, month: YearMonth): F[Set[Ticker]]
-  def recordHistoryRequest(screenId: InvestmentScreenId, month: YearMonth, ticker: Ticker): F[Unit]
-  def findMonthly(screenId: InvestmentScreenId, month: YearMonth): F[Option[InvestmentEvaluation]]
-  def unsettled: F[List[InvestmentEvaluation]]
-  def finishedScreenIds: F[Set[InvestmentScreenId]]
-  def findFinished(screenId: InvestmentScreenId): F[Option[InvestmentEvaluation]]
+  def recordHistoryRequests(screenId: InvestmentScreenId, month: YearMonth, tickers: List[Ticker]): F[Unit]
+  def findContext(screenId: InvestmentScreenId, month: YearMonth): F[Option[EvaluationCapture.Context]]
+  def captureTasks(month: YearMonth): F[List[EvaluationCapture.Task]]
+  def findPriceSeries(tickers: List[Ticker], range: DateRange): F[Map[Ticker, EvaluationPriceSeries]]
 
 final private class LiveInvestmentEvaluationRepository[F[_]](
-    private val collection: MongoCollection[F, InvestmentEvaluationEntity]
-)(using
-    F: MonadThrow[F]
-) extends InvestmentEvaluationRepository[F] {
-  import InvestmentEvaluationRepository.Field
+    private val collection: MongoCollection[F, InvestmentEvaluationEntity],
+    private val screens: MongoCollection[F, InvestmentScreenEntity],
+    private val prices: MongoCollection[F, PriceHistoryEntity]
+)(using F: MonadThrow[F])
+    extends InvestmentEvaluationRepository[F] {
+  import InvestmentEvaluationRepository.{CollectionName, Field}
 
   override def saveMonthly(evaluation: InvestmentEvaluation): F[Unit] =
     val month    = evaluation.captureMonth
@@ -44,47 +53,159 @@ final private class LiveInvestmentEvaluationRepository[F[_]](
       .set(Field.Settled, evaluation.settled)
       .set(Field.Finished, evaluation.isFinished)
     collection.updateOne(writable, update, UpdateOptions(upsert = true)).void.handleErrorWith {
-      // Another capture can insert first or settle between writes. Update an existing unfinished
-      // document without upsert; a settled winner remains immutable.
+      // A settled winner remains immutable when another capture inserts first or settles between writes.
       case error: com.mongodb.MongoWriteException if error.getError.getCode == 11000 =>
         collection.updateOne(writable, update).void
       case error => F.raiseError(error)
     }
 
-  override def requestedHistory(screenId: InvestmentScreenId, month: YearMonth): F[Set[Ticker]] =
-    collection.find(Filter.idEq(s"${screenId.value}:$month")).first.map(_.fold(Set.empty[Ticker])(_.requestedHistory.toSet))
+  override def recordHistoryRequests(screenId: InvestmentScreenId, month: YearMonth, tickers: List[Ticker]): F[Unit] =
+    F.whenA(tickers.nonEmpty)(
+      collection
+        .updateOne(
+          Filter.idEq(s"${screenId.value}:$month"),
+          Update.addEachToSet(Field.RequestedHistory, tickers.map(_.value))
+        )
+        .void
+    )
 
-  override def recordHistoryRequest(screenId: InvestmentScreenId, month: YearMonth, ticker: Ticker): F[Unit] =
-    collection.updateOne(Filter.idEq(s"${screenId.value}:$month"), Update.addToSet(Field.RequestedHistory, ticker.value)).void
-
-  override def findMonthly(screenId: InvestmentScreenId, month: YearMonth): F[Option[InvestmentEvaluation]] =
-    collection
-      .find(Filter.idEq(s"${screenId.value}:$month"))
+  override def findContext(screenId: InvestmentScreenId, month: YearMonth): F[Option[EvaluationCapture.Context]] =
+    screens
+      .aggregate[InvestmentEvaluationContextEntity](contextAggregation(screenId, month))
       .first
-      .mapOpt(_.evaluation)
+      .mapOpt(_.toDomain)
 
-  override def finishedScreenIds: F[Set[InvestmentScreenId]] =
-    collection
-      .aggregate[InvestmentEvaluationScreenReference](
-        Aggregate.matchBy(Filter.eq(Field.Finished, true)).project(Projection.include(Field.ScreenId))
+  override def captureTasks(month: YearMonth): F[List[EvaluationCapture.Task]] =
+    screens
+      .aggregate[InvestmentEvaluationTaskEntity](taskContextAggregation(month).combinedWith(taskAggregation(month)))
+      .all
+      .mapList(_.toDomain)
+
+  override def findPriceSeries(tickers: List[Ticker], range: DateRange): F[Map[Ticker, EvaluationPriceSeries]] =
+    val price    = PriceHistoryRepository.Field
+    val matching = Filter.in("_id", tickers.distinct.map(ticker => s"${ticker.value}:${PriceAdjustment.SplitsAndDividends.value}")) &&
+      Filter.lte(price.RangeFrom, range.from.toString) && Filter.gte(price.RangeThrough, range.through.toString) &&
+      Filter.gte(price.FetchedAt, PriceHistorySnapshot.completedSessionCutoff(range.through))
+    val trimmed = Document(
+      "$filter" := Document(
+        "input" := "$data.candles",
+        "as"    := "candle",
+        "cond"  := Document(
+          "$and" := List(
+            Document("$gte" := List("$$candle.date", range.from.toString)),
+            Document("$lte" := List("$$candle.date", range.through.toString))
+          )
+        )
       )
-      .all
-      .mapList(_.screenId)
-      .map(_.toSet)
+    )
+    val projection = Projection.include("data").computed("candleCount", Document("$size" := "$data.candles")).excludeId
+    if tickers.isEmpty then F.pure(Map.empty)
+    else
+      prices
+        .aggregate[EvaluationPriceSeriesEntity](
+          Aggregate
+            .matchBy(matching)
+            .project(projection)
+            .set("data.candles" -> trimmed)
+        )
+        .all
+        .map(_.iterator.map(row => row.data.ticker -> row.toDomain(range)).toMap)
 
-  override def findFinished(screenId: InvestmentScreenId): F[Option[InvestmentEvaluation]] =
-    collection
-      .find(Filter.eq(Field.ScreenId, screenId.value) && Filter.eq(Field.Finished, true))
-      .sort(Sort.desc(Field.Month))
-      .first
-      .mapOpt(_.evaluation)
+  private def expression(operator: String, arguments: BsonValue*): Document = Document(operator := arguments.toList)
 
-  override def unsettled: F[List[InvestmentEvaluation]] =
-    collection
-      .find(Filter.eq(Field.Settled, false))
-      .all
-      .mapList(_.evaluation)
+  private def contextAggregation(screenId: InvestmentScreenId, month: YearMonth): Aggregate =
+    val saved    = Projection.include(Field.Evaluation).excludeId
+    val captures = Aggregate
+      .matchBy(Filter.eq(Field.ScreenId, screenId.value))
+      .facet(
+        Aggregate.Facet("monthly", Aggregate.matchBy(Filter.eq(Field.Month, month.toString)).project(saved)),
+        Aggregate.Facet("finished", Aggregate.matchBy(Filter.eq(Field.Finished, true)).sort(Sort.desc(Field.Month)).limit(1).project(saved))
+      )
+    Aggregate
+      .matchBy(Filter.idEq(screenId.value))
+      .replaceWith(Document("screen" := "$$ROOT"))
+      .lookup(CollectionName, captures, "captures")
+      .unwind("$captures")
+      .project(
+        Projection
+          .include("screen")
+          .computed("monthly", "$captures.monthly.evaluation")
+          .computed("finished", "$captures.finished.evaluation")
+          .excludeId
+      )
 
+  private def selectedCaptures(field: String, expected: BsonValue): Document =
+    Document(
+      "$filter" := Document(
+        "input" := "$captures",
+        "as"    := "capture",
+        "cond"  := expression("$eq", s"$$$$capture.$field".toBson, expected)
+      )
+    )
+
+  private def taskContextAggregation(month: YearMonth): Aggregate =
+    // Immediate unwind is coalesced into the lookup, so full historical reports never form one large array.
+    // Only compact request state is regrouped; even a screen's combined reports can exceed Mongo's document limit.
+    Aggregate
+      .replaceWith(Document("screen" := "$$ROOT"))
+      .lookup(CollectionName, "screen._id", Field.ScreenId, "captures")
+      .unwind("$captures", UnwindOptions(preserveNullAndEmptyArrays = true))
+      .project(
+        Projection
+          .include("screen")
+          .computed(
+            "capture",
+            Document(
+              Field.Month            := "$captures.month",
+              Field.Settled          := "$captures.settled",
+              Field.Finished         := "$captures.finished",
+              Field.RequestedHistory := "$captures.requestedHistory"
+            )
+          )
+          .excludeId
+      )
+      .group("$screen._id", Accumulator.first("screen", "$screen").push("captures", "$capture"))
+      .project(
+        Projection
+          .include("screen")
+          .computed("monthly", selectedCaptures(Field.Month, month.toString.toBson))
+          .computed("finished", selectedCaptures(Field.Finished, true.toBson))
+          .computed("unsettled", selectedCaptures(Field.Settled, false.toBson))
+          .excludeId
+      )
+
+  private def taskAggregation(month: YearMonth): Aggregate =
+    val settled = Document(
+      "$filter" := Document(
+        "input" := "$monthly",
+        "as"    := "capture",
+        "cond"  := "$$capture.settled"
+      )
+    )
+    val needsCurrent = Document(
+      "$and" := List(
+        expression("$eq", Document("$size" := "$finished").toBson, 0.toBson),
+        expression("$eq", Document("$size" := settled).toBson, 0.toBson)
+      )
+    )
+    val current = expression(
+      "$cond",
+      needsCurrent.toBson,
+      List(Document("month" := month.toString, "existing" := "$monthly")).toBson,
+      List.empty[Document].toBson
+    )
+    val unfinished = Document(
+      "$map" := Document(
+        "input" := "$unsettled",
+        "as"    := "capture",
+        "in"    := Document("month" := "$$capture.month", "existing" := List("$$capture"))
+      )
+    )
+    Aggregate
+      .replaceWith(Document("screen" := "$screen", "tasks" := expression("$setUnion", current.toBson, unfinished.toBson)))
+      .unwind("$tasks")
+      .replaceWith(Document("screen" := "$screen", "month" := "$tasks.month", "existing" := "$tasks.existing"))
+      .sort(Sort.asc("screen.createdAt").asc("month"))
 }
 
 object InvestmentEvaluationRepository extends MongoJsonCodecs:
@@ -102,7 +223,12 @@ object InvestmentEvaluationRepository extends MongoJsonCodecs:
   def make[F[_]: MonadThrow](db: MongoDatabase[F]): F[InvestmentEvaluationRepository[F]] =
     for
       raw <- db.getCollectionWithCodec[InvestmentEvaluationEntity](CollectionName)
-      collection = raw.withAddedCodec[InvestmentEvaluationScreenReference].withAddedCodec[InvestmentEvaluation]
-      _ <- collection.createIndex(Index.ascending(Field.Settled))
-      _ <- collection.createIndex(Index.ascending(List(Field.Finished, Field.ScreenId)))
-    yield LiveInvestmentEvaluationRepository[F](collection)
+      collection = raw.withAddedCodec[InvestmentEvaluation]
+      screens <- db.getCollectionWithCodec[InvestmentScreenEntity](InvestmentScreenRepository.CollectionName)
+      prices  <- db.getCollectionWithCodec[PriceHistoryEntity](PriceHistoryRepository.CollectionName)
+      _       <- collection.createIndex(Index.ascending(List(Field.ScreenId, Field.Month)))
+    yield LiveInvestmentEvaluationRepository[F](
+      collection,
+      screens.withAddedCodec[InvestmentEvaluationContextEntity].withAddedCodec[InvestmentEvaluationTaskEntity],
+      prices.withAddedCodec[EvaluationPriceSeriesEntity]
+    )

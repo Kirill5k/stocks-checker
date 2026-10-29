@@ -6,6 +6,7 @@ import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.operations.Filter
 import stockschecker.domain.{FinancialMetric, FinancialObservation, FinancialSnapshot, FinancialSnapshotIssue, Provider}
 import stockschecker.fixtures.*
+import stockschecker.repositories.entities.FinancialSnapshotEntity
 
 import java.time.{Instant, LocalDate}
 
@@ -35,16 +36,12 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
           _          <- repo.save(first)
           _          <- repo.save(second)
           _          <- repo.save(other)
-          latest     <- repo.findLatest(AAPL)
-          allLatest  <- repo.findLatestAll
-          collection <- db.getCollectionWithCodec[FinancialSnapshot](FinancialHistoryRepository.CollectionName)
+          collection <- db.getCollectionWithCodec[FinancialSnapshotEntity](FinancialHistoryRepository.CollectionName)
           retained   <- collection.find.all
           raw        <- db.getCollection(FinancialHistoryRepository.CollectionName)
           payloads   <- raw.find(Filter.ne("rawPayload", Option.empty[String])).all
         yield
-          latest mustBe Some(second)
-          allLatest mustBe List(second, other)
-          retained.toSet mustBe Set(second, other)
+          retained.map(_.toDomain).toSet mustBe Set(second, other)
           payloads mustBe empty
       }
 
@@ -58,14 +55,9 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
           _          <- repo.save(newest.copy(metrics = Map.empty))
           _          <- repo.save(first)
           _          <- repo.save(tied)
-          latest     <- repo.findLatest(AAPL)
-          allLatest  <- repo.findLatestAll
-          collection <- db.getCollectionWithCodec[FinancialSnapshot](FinancialHistoryRepository.CollectionName)
+          collection <- db.getCollectionWithCodec[FinancialSnapshotEntity](FinancialHistoryRepository.CollectionName)
           retained   <- collection.find.all
-        yield
-          latest mustBe Some(newest)
-          allLatest mustBe List(newest)
-          retained.toList mustBe List(newest)
+        yield retained.map(_.toDomain).toList mustBe List(newest)
       }
 
     "retain the newest snapshot when refreshes finish concurrently" in
@@ -74,28 +66,28 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
         for
           repo       <- FinancialHistoryRepository.make[IO](db)
           _          <- snapshots.parTraverse_(repo.save)
-          collection <- db.getCollectionWithCodec[FinancialSnapshot](FinancialHistoryRepository.CollectionName)
+          collection <- db.getCollectionWithCodec[FinancialSnapshotEntity](FinancialHistoryRepository.CollectionName)
           retained   <- collection.find.all
-        yield retained.toList mustBe List(snapshots.last)
+        yield retained.map(_.toDomain).toList mustBe List(snapshots.last)
       }
 
-    "compare whole-second, millisecond and nanosecond timestamps chronologically when reading and pruning existing snapshots" in
+    "persist BSON dates at millisecond precision and reject timestamps in the same millisecond" in
       withEmbeddedMongoDatabase { db =>
         val second = Instant.parse("2026-10-29T12:00:00Z")
-        val whole  = first.copy(id = "z-whole", observedAt = second)
-        val millis = first.copy(id = "z-millis", observedAt = second.plusMillis(1))
-        val nanos  = first.copy(id = "a-nanos", observedAt = second.plusMillis(1).plusNanos(1))
+        val whole  = first.copy(id = "whole", observedAt = second)
+        val millis = first.copy(id = "millis", observedAt = second.plusMillis(1))
+        val nanos  = first.copy(id = "nanos", observedAt = second.plusMillis(1).plusNanos(1))
         for
           repo       <- FinancialHistoryRepository.make[IO](db)
-          collection <- db.getCollectionWithCodec[FinancialSnapshot](FinancialHistoryRepository.CollectionName)
-          _          <- collection.insertMany(List(whole, millis, nanos))
-          latest     <- repo.findLatest(AAPL)
-          allLatest  <- repo.findLatestAll
           _          <- repo.save(whole)
+          _          <- repo.save(millis)
+          _          <- repo.save(nanos)
+          collection <- db.getCollectionWithCodec[FinancialSnapshotEntity](FinancialHistoryRepository.CollectionName)
           retained   <- collection.find.all
+          raw        <- db.getCollection(FinancialHistoryRepository.CollectionName)
+          dates      <- raw.count(Filter.idEq(AAPL.value) && Filter.typeIs("observedAt", "date"))
         yield
-          latest mustBe Some(nanos)
-          allLatest mustBe List(nanos)
-          retained.toList mustBe List(nanos)
+          retained.map(_.toDomain).toList mustBe List(millis)
+          dates mustBe 1L
       }
   }

@@ -15,14 +15,19 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
   private val now = Instant.parse("2026-10-19T12:00:00Z")
   given Clock[IO] = Clock.mock(now)
 
-  private def memoryScreens(state: Ref[IO, List[InvestmentScreen]]): InvestmentScreenRepository[IO] =
+  private def memoryScreens(
+      state: Ref[IO, List[InvestmentScreen]],
+      value: InvestmentRanking,
+      entries: List[InvestmentRankingEntry]
+  ): InvestmentScreenRepository[IO] =
     new InvestmentScreenRepository[IO]:
-      def save(screen: InvestmentScreen): IO[Unit]           = state.update(_ :+ screen)
-      def find(id: InvestmentScreenId): IO[InvestmentScreen] =
-        state.get.flatMap(screens => IO.fromOption(screens.find(_.id == id))(AppError.EntityDoesNotExist("Investment screen", id.value)))
-      def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]] = state.get.map(_.find(_.id == id))
-      def list(limit: Int): IO[List[InvestmentScreenSummary]]       = state.get.map(_.reverse.take(limit).map(_.summary))
-      def all: IO[List[InvestmentScreen]]                           = state.get
+      def save(screen: InvestmentScreen): IO[Unit]                                           = state.update(_ :+ screen)
+      def findWithRanking(id: InvestmentScreenId): IO[(InvestmentScreen, InvestmentRanking)] =
+        get(id).flatMap(screen => IO.fromOption(screen)(AppError.EntityDoesNotExist("Investment screen", id.value))).map(_ -> value)
+      def latestRanking: IO[Option[InvestmentRanking]]                              = IO.pure(Some(value))
+      def rankingEntries(id: InvestmentRankingId): IO[List[InvestmentRankingEntry]] = IO.pure(if id == value.id then entries else Nil)
+      def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]]                 = state.get.map(_.find(_.id == id))
+      def list(limit: Int): IO[List[InvestmentScreenSummary]]                       = state.get.map(_.reverse.take(limit).map(_.summary))
 
   private def ranking(entries: List[InvestmentRankingEntry]): InvestmentRanking =
     InvestmentRanking(InvestmentRankingId("published"), now, InvestmentRecipe(), InvestmentRankingSummary.from(entries))
@@ -31,65 +36,40 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
     val byTicker = inputs.map(c => c.stock.security.ticker -> c).toMap
     cards.map(card => InvestmentRankingEntry.from(byTicker(card.ticker), card))
 
-  private def publishedRanking(value: InvestmentRanking, entries: List[InvestmentRankingEntry]): InvestmentRankingService[IO] =
-    val rankings = mock[InvestmentRankingService[IO]]
-    when(rankings.latest).thenReturnIO(value)
-    when(rankings.find(value.id)).thenReturnSome(value)
-    when(rankings.entries(value.id)).thenReturnIO(entries)
-    rankings
-
   private def readSaved(request: InvestmentScreenRequest, entries: List[InvestmentRankingEntry]): IO[InvestmentScreenResult] =
     val value  = ranking(entries)
     val screen = InvestmentScreen.create(InvestmentScreenId("saved"), now, value, request, Nil)
     for
       state   <- Ref.of[IO, List[InvestmentScreen]](List(screen))
-      service <- InvestmentScreenService.make(memoryScreens(state), publishedRanking(value, entries))
+      service <- InvestmentScreenService.make(memoryScreens(state, value, entries))
       found   <- service.get(screen.id)
     yield found
 
   "InvestmentScreenService" should {
-    "expose saved screens to other services without loading rankings" in {
-      val screens  = mock[InvestmentScreenRepository[IO]]
-      val rankings = mock[InvestmentRankingService[IO]]
-      val screen   = InvestmentScreen.create(InvestmentScreenId("saved"), now, ranking(Nil), InvestmentScreenRequest(), Nil)
-      when(screens.find(screen.id)).thenReturnIO(screen)
-      when(screens.all).thenReturnIO(List(screen))
-      (for {
-        service <- InvestmentScreenService.make(screens, rankings)
-        found   <- service.find(screen.id)
-        all     <- service.all
-      } yield (found, all)).asserting { case (found, all) =>
-        found mustBe screen
-        all mustBe List(screen)
-        verifyNoInteractions(rankings)
-        succeed
-      }
-    }
-
-    "propagate a missing-screen error from the repository" in {
-      val screens  = mock[InvestmentScreenRepository[IO]]
-      val rankings = mock[InvestmentRankingService[IO]]
-      val id       = InvestmentScreenId("missing")
-      val error    = AppError.EntityDoesNotExist("Investment screen", id.value)
-      when(screens.find(id)).thenRaiseError(error)
-      InvestmentScreenService.make(screens, rankings).flatMap(_.get(id)).attempt.asserting { result =>
+    "propagate a missing screen or ranking from the joined repository read" in {
+      val screens = mock[InvestmentScreenRepository[IO]]
+      val id      = InvestmentScreenId("missing")
+      val error   = AppError.EntityDoesNotExist("Investment screen", id.value)
+      when(screens.findWithRanking(id)).thenRaiseError(error)
+      InvestmentScreenService.make(screens).flatMap(_.get(id)).attempt.asserting { result =>
         result mustBe Left(error)
-        verifyNoInteractions(rankings)
+        verify(screens).findWithRanking(id)
+        verifyNoMoreInteractions(screens)
         succeed
       }
     }
 
-    "return a missing-screen error when its referenced ranking has disappeared" in {
-      val screens  = mock[InvestmentScreenRepository[IO]]
-      val rankings = mock[InvestmentRankingService[IO]]
-      val id       = InvestmentScreenId("dangling")
-      val value    = ranking(Nil)
-      val screen   = InvestmentScreen.create(id, now, value, InvestmentScreenRequest(), Nil)
-      when(screens.find(id)).thenReturnIO(screen)
-      when(rankings.find(value.id)).thenReturnNone
-      InvestmentScreenService.make(screens, rankings).flatMap(_.get(id)).attempt.asserting { result =>
-        result mustBe Left(AppError.EntityDoesNotExist("Investment screen", id.value))
-        verify(rankings, never).entries(any[InvestmentRankingId])
+    "read a saved screen using its pinned ranking even after that ranking becomes stale" in {
+      val screens = mock[InvestmentScreenRepository[IO]]
+      val value   = ranking(Nil).copy(createdAt = now.minusSeconds(10L * 86400))
+      val saved   = InvestmentScreen.create(InvestmentScreenId("saved"), value.createdAt, value, InvestmentScreenRequest(), Nil)
+      when(screens.findWithRanking(saved.id)).thenReturnIO(saved -> value)
+      when(screens.rankingEntries(value.id)).thenReturnIO(Nil)
+      InvestmentScreenService.make(screens).flatMap(_.get(saved.id)).asserting { result =>
+        result.rankingId mustBe value.id
+        verify(screens).findWithRanking(saved.id)
+        verify(screens).rankingEntries(value.id)
+        verifyNoMoreInteractions(screens)
         succeed
       }
     }
@@ -100,55 +80,115 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       InvestmentScreenRequest(minScore = Some(101)),
       InvestmentScreenRequest(recipeVersion = Some("unknown"))
     ).foreach { request =>
-      s"validate $request before requesting a ranking" in {
-        val screens  = mock[InvestmentScreenRepository[IO]]
-        val rankings = mock[InvestmentRankingService[IO]]
-        InvestmentScreenService.make(screens, rankings).flatMap(_.create(request)).attempt.asserting { result =>
+      s"validate $request before reading rankings" in {
+        val screens = mock[InvestmentScreenRepository[IO]]
+        InvestmentScreenService.make(screens).flatMap(_.create(request)).attempt.asserting { result =>
           result.left.toOption.get mustBe a[AppError.FailedValidation]
-          verifyNoInteractions(rankings, screens)
+          verifyNoInteractions(screens)
           succeed
         }
       }
     }
 
-    "refresh the daily ranking without freezing a cohort when too few companies are eligible" in {
-      val screens  = mock[InvestmentScreenRepository[IO]]
-      val rankings = mock[InvestmentRankingService[IO]]
-      val value    = ranking(Nil)
-      val id       = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
-      when(rankings.refresh(LocalDate.parse("2026-10-19"))).thenReturnIO(value)
+    List(
+      "missing"             -> Option.empty[InvestmentRanking],
+      "from another recipe" -> Some(ranking(Nil).copy(recipe = InvestmentRecipe(version = "previous"))),
+      "stale"               -> Some(ranking(Nil).copy(createdAt = now.minusSeconds(2L * 86400 + 1)))
+    ).foreach { case (condition, value) =>
+      s"reject a new screen when the latest ranking is $condition" in {
+        val screens = mock[InvestmentScreenRepository[IO]]
+        when(screens.latestRanking).thenReturn(IO.pure(value))
+        InvestmentScreenService.make(screens).flatMap(_.create(InvestmentScreenRequest())).attempt.asserting { result =>
+          result.left.toOption.get mustBe a[AppError.FailedValidation]
+          verify(screens).latestRanking
+          verifyNoMoreInteractions(screens)
+          succeed
+        }
+      }
+    }
+
+    "accept a user-created screen exactly at the ranking freshness boundary" in {
+      val screens = mock[InvestmentScreenRepository[IO]]
+      val value   = ranking(Nil).copy(createdAt = now.minusSeconds(2L * 86400))
+      when(screens.latestRanking).thenReturnSome(value)
+      when(screens.rankingEntries(value.id)).thenReturnIO(Nil)
+      when(screens.save(any[InvestmentScreen])).thenReturnUnit
+      InvestmentScreenService.make(screens).flatMap(_.create(InvestmentScreenRequest())).asserting(_.rankingId mustBe value.id)
+    }
+
+    "require today's ranking before creating the monthly screen" in {
+      val screens = mock[InvestmentScreenRepository[IO]]
+      val id      = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
       when(screens.get(id)).thenReturnNone
-      InvestmentScreenService.make(screens, rankings).flatMap(_.generateScheduledScreen).asserting { result =>
-        result mustBe None
-        val ordered = org.mockito.Mockito.inOrder(rankings, screens)
-        ordered.verify(rankings).refresh(LocalDate.parse("2026-10-19"))
-        ordered.verify(screens).get(id)
-        verify(rankings, never).entries(any[InvestmentRankingId])
-        verify(screens, never).save(any[InvestmentScreen])
+      when(screens.latestRanking).thenReturnSome(ranking(Nil).copy(createdAt = Instant.parse("2026-10-18T23:59:59Z")))
+      InvestmentScreenService.make(screens).flatMap(_.createMonthlyScreen).attempt.asserting { result =>
+        result mustBe Left(AppError.FailedValidation("The latest completed ranking is not from today; wait for the scheduled ranking run"))
+        verify(screens).get(id)
+        verify(screens).latestRanking
+        verifyNoMoreInteractions(screens)
         succeed
       }
     }
 
-    "propagate ranking failures before saving a scheduled screen" in {
-      val screens  = mock[InvestmentScreenRepository[IO]]
-      val rankings = mock[InvestmentRankingService[IO]]
-      val error    = new IllegalStateException("Ranking storage is unavailable")
-      when(rankings.refresh(any[LocalDate])).thenReturn(IO.raiseError(error))
-      InvestmentScreenService.make(screens, rankings).flatMap(_.generateScheduledScreen).attempt.asserting { result =>
+    "skip freezing a monthly cohort when too few companies are eligible" in {
+      val screens = mock[InvestmentScreenRepository[IO]]
+      val value   = ranking(Nil)
+      val id      = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
+      when(screens.latestRanking).thenReturnSome(value)
+      when(screens.get(id)).thenReturnNone
+      InvestmentScreenService.make(screens).flatMap(_.createMonthlyScreen).asserting { result =>
+        result mustBe None
+        verify(screens).latestRanking
+        verify(screens).get(id)
+        verifyNoMoreInteractions(screens)
+        succeed
+      }
+    }
+
+    List(
+      "missing"               -> Option.empty[InvestmentRanking],
+      "from another recipe"   -> Some(ranking(Nil).copy(recipe = InvestmentRecipe(version = "previous"))),
+      "stale"                 -> Some(ranking(Nil).copy(createdAt = now.minusSeconds(2L * 86400 + 1))),
+      "from the previous day" -> Some(ranking(Nil).copy(createdAt = Instant.parse("2026-10-18T23:59:59Z")))
+    ).foreach { case (condition, latest) =>
+      s"skip an existing monthly screen without reading a ranking that is $condition" in {
+        val screens = mock[InvestmentScreenRepository[IO]]
+        val value   = ranking(Nil)
+        val id      = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
+        val saved   = InvestmentScreen.create(id, now, value, InvestmentScreenRequest(), Nil)
+        when(screens.latestRanking).thenReturnIO(latest)
+        when(screens.get(id)).thenReturnSome(saved)
+        InvestmentScreenService.make(screens).flatMap(_.createMonthlyScreen).asserting { result =>
+          result mustBe None
+          verify(screens).get(id)
+          verifyNoMoreInteractions(screens)
+          succeed
+        }
+      }
+    }
+
+    "propagate ranking read failures before saving a monthly screen" in {
+      val screens = mock[InvestmentScreenRepository[IO]]
+      val error   = new IllegalStateException("Ranking storage is unavailable")
+      val id      = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
+      when(screens.get(id)).thenReturnNone
+      when(screens.latestRanking).thenRaiseError(error)
+      InvestmentScreenService.make(screens).flatMap(_.createMonthlyScreen).attempt.asserting { result =>
         result mustBe Left(error)
-        verifyNoInteractions(screens)
+        verify(screens).get(id)
+        verify(screens).latestRanking
+        verifyNoMoreInteractions(screens)
         succeed
       }
     }
 
     "reference the complete ranking before applying country or display limits and retain exclusions" in {
-      val inputs   = List(AAPLStock, MSFTStock).map(s => InvestmentCandidate(s, None))
-      val entries  = paired(inputs, InvestmentScorer.rank(inputs, now))
-      val value    = ranking(entries)
-      val rankings = publishedRanking(value, entries)
+      val inputs  = List(AAPLStock, MSFTStock).map(s => InvestmentCandidate(s, None))
+      val entries = paired(inputs, InvestmentScorer.rank(inputs, now))
+      val value   = ranking(entries)
       (for
         state   <- Ref.of[IO, List[InvestmentScreen]](Nil)
-        service <- InvestmentScreenService.make(memoryScreens(state), rankings)
+        service <- InvestmentScreenService.make(memoryScreens(state, value, entries))
         created <- service.create(InvestmentScreenRequest(limit = Some(1), country = Some("GB")))
         saved   <- state.get
       yield (created, saved)).asserting { case (created, saved) =>
@@ -194,15 +234,13 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
           )
         )
       }
-      val value    = ranking(entries)
-      val rankings = publishedRanking(value, entries)
-      when(rankings.refresh(any[LocalDate])).thenReturnIO(value)
+      val value = ranking(entries)
       (for
         state   <- Ref.of[IO, List[InvestmentScreen]](Nil)
-        service <- InvestmentScreenService.make(memoryScreens(state), rankings)
+        service <- InvestmentScreenService.make(memoryScreens(state, value, entries))
         user    <- service.create(InvestmentScreenRequest(limit = Some(1)))
-        first   <- service.generateScheduledScreen
-        second  <- service.generateScheduledScreen
+        first   <- service.createMonthlyScreen
+        second  <- service.createMonthlyScreen
         saved   <- state.get
       yield (user, first, second, saved)).asserting { case (user, first, second, saved) =>
         user.candidates.size mustBe 1
@@ -238,23 +276,6 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         found.candidates.map(_.ticker) mustBe List(AAPL)
         found.nearMisses.map(_.scorecard.ticker) mustBe List(MSFT)
         found.exclusions.map(_.ticker) mustBe List(missing)
-      }
-    }
-
-    "only read metadata when the daily ranking and monthly screen already exist" in {
-      val value    = ranking(Nil).copy(summary = InvestmentRankingSummary(100, 25, Map.empty))
-      val rankings = mock[InvestmentRankingService[IO]]
-      val screens  = mock[InvestmentScreenRepository[IO]]
-      val id       = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
-      val screen   = InvestmentScreen.create(id, now, value, InvestmentScreenRequest(), Nil)
-      when(rankings.refresh(any[LocalDate])).thenReturnIO(value)
-      when(screens.get(id)).thenReturnSome(screen)
-      InvestmentScreenService.make(screens, rankings).flatMap(_.generateScheduledScreen).asserting { result =>
-        result mustBe None
-        verify(rankings, never).latest
-        verify(rankings, never).entries(any[InvestmentRankingId])
-        verify(screens, never).find(any[InvestmentScreenId])
-        succeed
       }
     }
 

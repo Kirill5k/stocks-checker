@@ -29,20 +29,26 @@ trait ProviderBudgetRepository[F[_]] {
   def cooldown(provider: Provider, until: Instant, account: Option[String] = None): F[Unit]
 }
 
-final private class LiveProviderBudgetRepository[F[_]: Async](collection: MongoCollection[F, ProviderBudgetEntity])
-    extends ProviderBudgetRepository[F] {
+final private class LiveProviderBudgetRepository[F[_]: Async](
+    collection: MongoCollection[F, ProviderBudgetEntity]
+) extends ProviderBudgetRepository[F] {
   import ProviderBudgetRepository.{Deferral, Field}
 
   private val emptyBudget = ProviderBudget(LocalDate.ofEpochDay(0L), 0L, Instant.EPOCH, 0L)
 
-  private def budgetId(provider: Provider, account: Option[String]): String = account.fold(provider.print)(id => s"${provider.print}:$id")
+  private def budgetId(provider: Provider, account: Option[String]): String =
+    account.fold(provider.print)(id => s"${provider.print}:$id")
 
   private def read(provider: Provider, account: Option[String]): F[ProviderBudget] =
     collection.find(Filter.idEq(budgetId(provider, account))).first.flatMap {
       case Some(record) => record.budget.pure[F]
       case None         =>
         collection
-          .updateOne(Filter.idEq(budgetId(provider, account)), Update.setOnInsert(Field.Budget, emptyBudget), UpdateOptions(upsert = true))
+          .updateOne(
+            Filter.idEq(budgetId(provider, account)),
+            Update.setOnInsert(Field.Budget, emptyBudget),
+            UpdateOptions(upsert = true)
+          )
           .void >> read(provider, account)
     }
 
@@ -93,9 +99,8 @@ final private class LiveProviderBudgetRepository[F[_]: Async](collection: MongoC
       val after         = before.copy(nextAllowed = nextAllowed, cooldownUntil = Some(cooldownUntil))
       if (before == after) Async[F].unit
       else
-        replace(budgetId(provider, account), before, after).flatMap(updated =>
-          if (updated) Async[F].unit else cooldown(provider, until, account)
-        )
+        replace(budgetId(provider, account), before, after)
+          .flatMap(updated => if (updated) Async[F].unit else cooldown(provider, until, account))
     }
 }
 
@@ -110,6 +115,6 @@ object ProviderBudgetRepository extends MongoJsonCodecs {
 
   def make[F[_]: Async](db: MongoDatabase[F]): F[ProviderBudgetRepository[F]] =
     db.getCollectionWithCodec[ProviderBudgetEntity](CollectionName)
-      .map(collection => new LiveProviderBudgetRepository(collection.withAddedCodec[ProviderBudget]))
+      .map(collection => LiveProviderBudgetRepository(collection.withAddedCodec[ProviderBudget]))
 
 }

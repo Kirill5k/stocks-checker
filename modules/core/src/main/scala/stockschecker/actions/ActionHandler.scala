@@ -1,17 +1,15 @@
 package stockschecker.actions
 
-import cats.MonadThrow
-import cats.syntax.applicativeError.*
+import cats.Monad
 import cats.data.NonEmptyList
-import cats.syntax.flatMap.*
 import cats.syntax.functor.*
-import stockschecker.domain.{DateRange, JobPlan, Ticker}
+import stockschecker.domain.{JobPlan, Ticker}
 import stockschecker.services.{
   CompanyProfileService,
   FinancialMetricsService,
   InvestmentEvaluationService,
+  InvestmentRankingService,
   InvestmentScreenService,
-  PriceHistoryService,
   PriceService,
   SecurityService,
   Services
@@ -31,10 +29,12 @@ final private class LiveActionHandler[F[_]](
     prices: PriceService[F],
     financials: FinancialMetricsService[F],
     screens: InvestmentScreenService[F],
+    rankings: InvestmentRankingService[F],
     evaluations: InvestmentEvaluationService[F]
-)(using F: MonadThrow[F])
+)(using F: Monad[F])
     extends ActionHandler[F]:
-  private def completed(effect: F[Unit]): F[ActionResult]                              = effect.as(ActionResult.Completed)
+  private def completed(effect: F[Unit]): F[ActionResult] =
+    effect.as(ActionResult.Completed)
   private def expand(actions: List[Action], sequential: Boolean = false): ActionResult =
     ActionResult.Expand(JobPlan(actions, sequential))
 
@@ -60,12 +60,18 @@ final private class LiveActionHandler[F[_]](
       update(tickers)(Action.UpdatePriceAnalytics(_))(ticker => prices.findPriceAnalytics(ticker, true).void)
     case Action.UpdateFinancialMetrics(tickers) =>
       update(tickers)(Action.UpdateFinancialMetrics(_))(ticker => financials.find(ticker, true).void)
+    case Action.RefreshInvestmentRanking =>
+      completed(rankings.refresh)
+    case Action.CreateMonthlyScreen       => completed(screens.createMonthlyScreen.void)
+    case Action.CaptureMonthlyEvaluations => completed(evaluations.captureMonthlyEvaluations.void)
     case Action.RefreshInvestmentResearch =>
-      completed(screens.generateScheduledScreen.attempt.flatMap { generated =>
-        evaluations.captureMonthlyEvaluations >> F.fromEither(generated).void
-      })
+      val actions = List(
+        Action.Sequence(NonEmptyList.of(Action.RefreshInvestmentRanking, Action.CreateMonthlyScreen)),
+        Action.CaptureMonthlyEvaluations
+      )
+      F.pure(expand(actions))
     case Action.RefreshEvaluationPrices(ticker, through) =>
-      completed(evaluations.refreshHistory(ticker, DateRange(through.minus(PriceHistoryService.SharedHistoryLookback), through)))
+      completed(prices.refreshHistory(ticker, through))
     case Action.RecordCompanyProfileUpdate(tickers)                  => completed(security.recordCompanyProfileUpdate(tickers))
     case Action.RecordPriceAnalyticsUpdate(tickers)                  => completed(profiles.recordPriceAnalyticsUpdate(tickers))
     case Action.RecordFinancialMetricsUpdate(tickers)                => completed(profiles.recordFinancialMetricsUpdate(tickers))
@@ -73,14 +79,15 @@ final private class LiveActionHandler[F[_]](
     case Action.SetCompanyProfileActive(ticker, active, requestedAt) => completed(profiles.setActive(ticker, active, requestedAt))
 
 object ActionHandler:
-  def make[F[_]: MonadThrow](services: Services[F]): F[ActionHandler[F]] =
-    MonadThrow[F].pure(
+  def make[F[_]: Monad](services: Services[F]): F[ActionHandler[F]] =
+    Monad[F].pure(
       LiveActionHandler(
         services.security,
         services.companyProfile,
         services.price,
         services.financialMetrics,
         services.investmentScreens,
+        services.investmentRankings,
         services.investmentEvaluations
       )
     )

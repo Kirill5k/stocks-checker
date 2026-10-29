@@ -1,6 +1,7 @@
 package stockschecker.domain
 
 import io.circe.Codec
+import kirill5k.common.syntax.time.*
 import stockschecker.common.types.StringType
 import stockschecker.domain.investment.Eligibility
 import sttp.tapir.{Codec as TapirCodec, DecodeResult, Schema}
@@ -61,7 +62,12 @@ final case class InvestmentRanking(
     createdAt: Instant,
     recipe: InvestmentRecipe,
     summary: InvestmentRankingSummary
-)
+):
+  def requireUsable(expectedRecipe: InvestmentRecipe, now: Instant): Either[String, InvestmentRanking] =
+    if recipe.version != expectedRecipe.version then
+      Left("No completed ranking for this recipe is available; wait for the scheduled ranking run")
+    else if createdAt.isBefore(now.minus(InvestmentRecipe.RankingMaxAge)) then Left("The latest completed ranking is stale")
+    else Right(this)
 
 /** Only the frozen values needed to select and explain screens; scoring evidence remains in the scorecard. */
 final case class InvestmentScreenInput(

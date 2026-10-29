@@ -52,7 +52,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
       withEmbeddedMongoDatabase { db =>
         val replacement = original.copy(
           id = "replacement-vintage",
-          fetchedAt = original.fetchedAt.plusNanos(1),
+          fetchedAt = original.fetchedAt.plusMillis(1),
           candles = List(bar.copy(date = bar.date.plusDays(1), close = 200)),
           requestedRange = DateRange(from.plusDays(1), through.minusDays(1))
         )
@@ -103,7 +103,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
 
     "keep the newest snapshot across concurrent, out-of-order and tied-timestamp saves" in
       withEmbeddedMongoDatabase { db =>
-        val snapshots = (0 to 8).toList.map(i => original.copy(id = s"vintage-$i", fetchedAt = original.fetchedAt.plusNanos(i.toLong)))
+        val snapshots = (0 to 8).toList.map(i => original.copy(id = s"vintage-$i", fetchedAt = original.fetchedAt.plusMillis(i.toLong)))
         val newest    = snapshots.last
         for
           repo       <- PriceHistoryRepository.make[IO](db)
@@ -150,7 +150,7 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
                 "provider"       := "TwelveData",
                 "currency"       := "USD",
                 "adjustment"     := label,
-                "fetchedAt"      := original.fetchedAt.toString,
+                "fetchedAt"      := original.fetchedAt,
                 "requestedRange" := Document("from" := from.toString, "through" := through.toString)
               )
             )
@@ -171,7 +171,14 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
                     Filter.eq("data.requestedRange.from", from.toString) && Filter.eq("data.requestedRange.through", through.toString)
                 )
                 .first
-            yield (seeded, saved, existing, covering, latest, raw.isDefined)
+            yield (
+              seeded,
+              saved,
+              existing,
+              covering,
+              latest,
+              raw.exists(_.get("data").flatMap(_.asDocument).flatMap(_.get("fetchedAt")).flatMap(_.asInstant).contains(saved.fetchedAt))
+            )
           }
         yield
           results.foreach { case (seeded, saved, existing, covering, latest, matchesSchema) =>

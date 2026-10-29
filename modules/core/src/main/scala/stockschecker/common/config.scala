@@ -2,6 +2,8 @@ package stockschecker.common
 
 import cats.effect.Async
 import pureconfig.*
+import pureconfig.error.UserValidationFailed
+import stockschecker.domain.InvestmentRecipe
 import kirill5k.common.http4s.*
 
 import scala.concurrent.duration.FiniteDuration
@@ -63,7 +65,18 @@ object config {
       snapshotFreshnessDays: Int,
       quarterlyFreshnessDays: Int,
       annualFreshnessDays: Int
-  ) derives ConfigReader
+  ):
+    def recipe: InvestmentRecipe = InvestmentRecipe(
+      maxSnapshotAgeDays = snapshotFreshnessDays,
+      maxAnnualAgeDays = annualFreshnessDays,
+      maxPriceAgeDays = priceFreshnessDays,
+      maxQuarterlyAgeDays = quarterlyFreshnessDays
+    )
+
+  object InvestmentConfig:
+    given ConfigReader[InvestmentConfig] = ConfigReader.derived[InvestmentConfig].emap { config =>
+      config.recipe.validate.left.map(UserValidationFailed(_)).map(_ => config)
+    }
 
   final case class AppConfig(
       api: ApiConfig,

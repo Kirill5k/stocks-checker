@@ -9,7 +9,7 @@ import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceAnalytics, PriceCandle, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
-import stockschecker.repositories.{LatestPriceRepository, PriceAnalyticsRepository, PriceHistoryRepository}
+import stockschecker.repositories.{PriceAnalyticsRepository, PriceHistoryRepository}
 import stockschecker.fixtures.*
 import java.time.{Instant, LocalDate, ZoneOffset}
 
@@ -19,13 +19,12 @@ class PriceServiceSpec extends IOWordSpec {
 
   private case class Dependencies(
       repo: PriceAnalyticsRepository[IO],
-      latest: LatestPriceRepository[IO],
       client: MarketDataClient[IO],
       dispatcher: ActionDispatcher[IO],
       history: PriceHistoryRepository[IO]
   ) {
     def service: IO[PriceService[IO]] =
-      PriceHistoryService.make(client, history).flatMap(PriceService.make(repo, latest, dispatcher, _))
+      PriceService.make(repo, dispatcher, history, client)
     def cache(adjusted: PriceHistorySnapshot, quoted: PriceHistorySnapshot): Unit = {
       val range = DateRange(adjusted.requestedRange.through.minusYears(13), adjusted.requestedRange.through)
       when(history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, range))
@@ -37,13 +36,11 @@ class PriceServiceSpec extends IOWordSpec {
   private def mocks: Dependencies = {
     val d = Dependencies(
       mock[PriceAnalyticsRepository[IO]],
-      mock[LatestPriceRepository[IO]],
       mock[MarketDataClient[IO]],
       mock[ActionDispatcher[IO]],
       mock[PriceHistoryRepository[IO]]
     )
     when(d.repo.save(anyList[PriceAnalytics])).thenReturnUnit
-    when(d.latest.save(anyList)).thenReturnUnit
     when(d.dispatcher.dispatch(any[Action])).thenReturnUnit
     when(d.history.save(any[PriceHistorySnapshot])).thenReturnUnit
     d
@@ -64,7 +61,148 @@ class PriceServiceSpec extends IOWordSpec {
   }
 
   "PriceService" should {
-    "reuse daily observations and save the unadjusted quote and dispatch the profile update event" in {
+    List(
+      "at the captured instant"          -> (fixedNow, true),
+      "just inside the freshness window" -> (fixedNow.minusSeconds(86400).plusNanos(1), true),
+      "exactly one day old"              -> (fixedNow.minusSeconds(86400), false),
+      "in the future"                    -> (fixedNow.plusNanos(1), false)
+    ).foreach { case (description, (fetchedAt, reusable)) =>
+      s"apply the recent observation boundary when its timestamp is $description" in {
+        val d    = mocks
+        val full = snapshot(fixedNow, PriceAdjustment.SplitsAndDividends)
+        d.cache(full.copy(fetchedAt = fetchedAt), snapshot(fixedNow, PriceAdjustment.Unadjusted))
+        when(d.client.getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)).thenReturnIO(full)
+        d.service.flatMap(_.findPriceAnalytics(AAPL, fetch = true)).asserting { _ =>
+          if reusable then verifyNoInteractions(d.client)
+          else verify(d.client).getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
+          verify(d.history, never).save(any[PriceHistorySnapshot])
+          succeed
+        }
+      }
+    }
+
+    List(
+      "different ticker"     -> snapshot(fixedNow, PriceAdjustment.SplitsAndDividends).copy(ticker = MSFT),
+      "different adjustment" -> snapshot(fixedNow, PriceAdjustment.Splits),
+      "blank currency"       -> snapshot(fixedNow, PriceAdjustment.SplitsAndDividends).copy(currency = " ")
+    ).foreach { case (description, invalid) =>
+      s"refetch a recent cached observation with a $description" in {
+        val d    = mocks
+        val full = snapshot(fixedNow, PriceAdjustment.SplitsAndDividends)
+        d.cache(invalid, snapshot(fixedNow, PriceAdjustment.Unadjusted))
+        when(d.client.getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)).thenReturnIO(full)
+        d.service.flatMap(_.findPriceAnalytics(AAPL, fetch = true)).asserting { _ =>
+          verify(d.client).getDailyPriceHistory(AAPL, full.requestedRange, PriceAdjustment.SplitsAndDividends)
+          verify(d.history, never).save(any[PriceHistorySnapshot])
+          succeed
+        }
+      }
+    }
+
+    "refetch and cache the latest unadjusted observation when it does not cover the quote range" in {
+      val d      = mocks
+      val full   = snapshot(fixedNow, PriceAdjustment.SplitsAndDividends)
+      val today  = full.requestedRange.through
+      val quoted = snapshot(fixedNow, PriceAdjustment.Unadjusted).copy(requestedRange = DateRange(today.minusDays(14), today))
+      d.cache(full, quoted.copy(requestedRange = DateRange(today.minusDays(1), today)))
+      when(d.client.getDailyPriceHistory(AAPL, quoted.requestedRange, PriceAdjustment.Unadjusted)).thenReturnIO(quoted)
+      d.service.flatMap(_.findPriceAnalytics(AAPL, fetch = true)).asserting { _ =>
+        verify(d.history).latest(AAPL, PriceAdjustment.Unadjusted)
+        verify(d.history).save(quoted)
+        verify(d.client).getDailyPriceHistory(AAPL, quoted.requestedRange, PriceAdjustment.Unadjusted)
+        succeed
+      }
+    }
+
+    List(
+      "just inside the freshness window" -> (fixedNow.minusSeconds(86400).plusNanos(1), true),
+      "exactly one day old"              -> (fixedNow.minusSeconds(86400), false),
+      "in the future"                    -> (fixedNow.plusNanos(1), false)
+    ).foreach { case (description, (fetchedAt, reusable)) =>
+      s"apply freshness to explicit historical capture when its timestamp is $description" in {
+        val d       = mocks
+        val today   = LocalDate.ofInstant(fixedNow, ZoneOffset.UTC)
+        val through = today.minusDays(2)
+        val range   = DateRange(through.minusYears(13), through)
+        val shared  = DateRange(range.from, today)
+        val fetched = snapshot(fixedNow, PriceAdjustment.SplitsAndDividends).copy(requestedRange = shared)
+        when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, range))
+          .thenReturnIO(Some(fetched.copy(fetchedAt = fetchedAt)))
+        when(d.client.getDailyPriceHistory(AAPL, shared, PriceAdjustment.SplitsAndDividends)).thenReturnIO(fetched)
+        d.service.flatMap(_.refreshHistory(AAPL, through)).asserting { _ =>
+          if reusable then {
+            verifyNoInteractions(d.client)
+            verify(d.history, never).save(any[PriceHistorySnapshot])
+          } else {
+            verify(d.client).getDailyPriceHistory(AAPL, shared, PriceAdjustment.SplitsAndDividends)
+            verify(d.history).save(fetched)
+          }
+          verifyNoInteractions(d.repo, d.dispatcher)
+          succeed
+        }
+      }
+    }
+
+    "reuse a complete fresh broad vintage across capture dates without provider requests" in {
+      val d       = mocks
+      val today   = LocalDate.ofInstant(fixedNow, ZoneOffset.UTC)
+      val through = today.minusDays(2)
+      val stored  = snapshot(fixedNow, PriceAdjustment.SplitsAndDividends)
+        .copy(requestedRange = DateRange(through.minusYears(13), today))
+      when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, DateRange(through.minusYears(13), through)))
+        .thenReturnIO(Some(stored))
+      val later = through.plusDays(1)
+      when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, DateRange(later.minusYears(13), later)))
+        .thenReturnIO(Some(stored))
+      (for
+        service <- d.service
+        _       <- service.refreshHistory(AAPL, through)
+        _       <- service.refreshHistory(AAPL, later)
+      yield ()).asserting { _ =>
+        verifyNoInteractions(d.client, d.repo, d.dispatcher)
+        verify(d.history, never).save(any[PriceHistorySnapshot])
+        succeed
+      }
+    }
+
+    "refetch historical observations that predate the last requested session's completion" in {
+      val d       = mocks
+      val today   = LocalDate.ofInstant(fixedNow, ZoneOffset.UTC)
+      val through = today.minusDays(1)
+      val range   = DateRange(through.minusYears(13), through)
+      val shared  = DateRange(range.from, today)
+      val stored  = snapshot(fixedNow, PriceAdjustment.SplitsAndDividends).copy(
+        fetchedAt = today.atStartOfDay(ZoneOffset.UTC).toInstant.minusNanos(1),
+        requestedRange = shared
+      )
+      val fetched = stored.copy(fetchedAt = fixedNow)
+      when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(stored))
+      when(d.client.getDailyPriceHistory(AAPL, shared, PriceAdjustment.SplitsAndDividends)).thenReturnIO(fetched)
+      d.service.flatMap(_.refreshHistory(AAPL, through)).asserting { _ =>
+        verify(d.history).save(fetched)
+        verify(d.client).getDailyPriceHistory(AAPL, shared, PriceAdjustment.SplitsAndDividends)
+        succeed
+      }
+    }
+
+    "retain stored history when an explicit refresh fails" in {
+      val d       = mocks
+      val today   = LocalDate.ofInstant(fixedNow, ZoneOffset.UTC)
+      val through = today.minusDays(2)
+      val range   = DateRange(through.minusYears(13), through)
+      val stored  = snapshot(fixedNow.minusSeconds(172800), PriceAdjustment.SplitsAndDividends)
+      val failure = AppError.HttpClient(Provider.TwelveData.print, 404, "unavailable")
+      when(d.history.latestCovering(AAPL, PriceAdjustment.SplitsAndDividends, range)).thenReturnIO(Some(stored))
+      when(d.client.getDailyPriceHistory(any[Ticker], any[DateRange], any[PriceAdjustment])).thenRaiseError(failure)
+      d.service.flatMap(_.refreshHistory(AAPL, through)).attempt.asserting { result =>
+        result mustBe Left(failure)
+        verify(d.history, never).save(any[PriceHistorySnapshot])
+        verifyNoInteractions(d.repo, d.dispatcher)
+        succeed
+      }
+    }
+
+    "reuse daily observations, save analytics and dispatch the profile update event" in {
       val d = mocks
       (for
         now <- IO.pure(fixedNow)
@@ -75,9 +213,8 @@ class PriceServiceSpec extends IOWordSpec {
         analytics.performanceSummary.latestPrice mustBe BigDecimal(100)
         analytics.basis.flatMap(_.priceObservationId) mustBe Some("split-and-dividend")
         analytics.basis.flatMap(_.quotedPriceObservationId) mustBe Some("none")
-        val ordered = org.mockito.Mockito.inOrder(d.repo, d.latest, d.dispatcher)
+        val ordered = org.mockito.Mockito.inOrder(d.repo, d.dispatcher)
         ordered.verify(d.repo).save(List(analytics))
-        ordered.verify(d.latest).save(List(analytics.toLatestPrice))
         ordered.verify(d.dispatcher).dispatch(Action.RecordPriceAnalyticsUpdate(NonEmptyList.one(AAPL)))
         verifyNoInteractions(d.client)
         succeed
@@ -114,7 +251,6 @@ class PriceServiceSpec extends IOWordSpec {
           AppError.DataUnavailable(AAPL, "adjusted and quoted histories have no common trading session")
         )
         verify(d.repo, never).save(anyList[PriceAnalytics])
-        verify(d.latest, never).save(anyList)
         verifyNoInteractions(d.dispatcher)
         verifyNoInteractions(d.client)
         succeed
@@ -133,7 +269,6 @@ class PriceServiceSpec extends IOWordSpec {
           AppError.DataUnavailable(AAPL, "the latest matching trading session is more than seven days old")
         )
         verify(d.repo, never).save(anyList[PriceAnalytics])
-        verify(d.latest, never).save(anyList)
         verifyNoInteractions(d.dispatcher)
         verifyNoInteractions(d.client)
         succeed
