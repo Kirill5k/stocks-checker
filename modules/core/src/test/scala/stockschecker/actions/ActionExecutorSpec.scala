@@ -63,7 +63,7 @@ class ActionExecutorSpec extends IOWordSpec:
         Provider.TwelveData,
         ts.plusSeconds(1),
         ProviderDeferralReason.ConcurrencyLimit,
-        Some("provider context with api_key=secret-value")
+        Some("time_series for AAPL")
       )
       val scheduled = ArgumentCaptor.forClass(classOf[Instant])
       when(jobs.claim(any[Instant], any[FiniteDuration])).thenReturn(IO.pure(Some(job)), IO.pure(None))
@@ -74,7 +74,7 @@ class ActionExecutorSpec extends IOWordSpec:
         def execute(action: Action): IO[ActionResult] = IO.raiseError(error)
       }
       executeAndRecordLogs(jobs, handler).asserting { logs =>
-        verify(jobs).defer(eqTo(job), scheduled.capture(), eqTo(Some(AppError.safeSummary(error))), eqTo(false))
+        verify(jobs).defer(eqTo(job), scheduled.capture(), eqTo(Some(error.getMessage)), eqTo(false))
         scheduled.getValue.isBefore(ts.plusSeconds(240)) mustBe false
         scheduled.getValue.isAfter(ts.plusSeconds(270)) mustBe false
         verify(jobs, never).finish(any[Job], any[JobState], any[Option[String]])
@@ -96,9 +96,9 @@ class ActionExecutorSpec extends IOWordSpec:
         def execute(action: Action): IO[ActionResult] = IO.raiseError(error)
       }
       executeAndRecordLogs(jobs, handler).asserting { logs =>
-        verify(jobs).finish(job, Job.Failed, Some(AppError.safeSummary(error)))
+        verify(jobs).finish(job, Job.Failed, Some(error.getMessage))
         verify(jobs, never).defer(any[Job], any[Instant], any[Option[String]], any[Boolean])
-        logs mustBe List("warn" -> s"Job ${job.id} failed: ${AppError.safeSummary(error)}")
+        logs mustBe List("warn" -> s"Job ${job.id} failed: ${error.getMessage}")
         succeed
       }
     }

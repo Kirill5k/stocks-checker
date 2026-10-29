@@ -71,7 +71,7 @@ private[actions] object JobExecutionPolicy:
             case _                                => "invalid value"
           s"MongoJsonParsingException at $$$path ($reason)"
         case _ => "MongoJsonParsingException (invalid stored data; field path unavailable)"
-    case _ => AppError.safeSummary(error)
+    case _ => error.getMessage
 
   def retryDelay(retries: Int, jitterMillis: Long): FiniteDuration = ((1000L << retries) + jitterMillis).millis
 

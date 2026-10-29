@@ -115,7 +115,7 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
         failure(error, 0) mustBe Failure.Fail
       }
       failure(new com.mongodb.MongoException("connection failed"), 0) mustBe Failure.Retry
-      errorSummary(new java.io.IOException("secret-context")) mustBe "IOException"
+      errorSummary(new java.io.IOException("connection interrupted")) mustBe "connection interrupted"
     }
 
     "assign evaluation backfills lower execution priority than ordinary work" in {
