@@ -184,7 +184,104 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           }
           .asserting { results =>
             results.foreach { case (label, result) =>
-              withClue(label)(result.left.toOption.get mustBe a[AppError.FailedValidation])
+              val error = result.left.toOption.get
+              withClue(label) {
+                error mustBe a[AppError.FailedValidation]
+                error.getMessage must include("provider=TwelveData ticker=AAPL adjustment=split-and-dividend")
+                error.getMessage must include(s"requested=$start..$end")
+                val reason = label match
+                  case "duplicate"         => "duplicate dates"
+                  case "zero" | "negative" => "nonpositive closes"
+                  case "outside window"    => "outside the requested range"
+                  case _                   => "may be truncated"
+                error.getMessage must include(reason)
+              }
+            }
+            succeed
+          }
+      }
+
+      "bound invalid-date diagnostics without retaining candle values" in {
+        val start   = LocalDate.parse("2025-01-01")
+        val end     = start.plusDays(30)
+        val values  = (0 until 7).toList.map(i => start.plusDays(i.toLong) -> BigDecimal(-123456789))
+        val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(dailyResponse(values)))
+        makeClient(config, backend)
+          .flatMap(_.getDailyPriceHistory(Ticker("AAPL"), DateRange(start, end), PriceAdjustment.Unadjusted))
+          .attempt
+          .asserting { result =>
+            val error = result.left.toOption.get
+            error mustBe a[AppError.FailedValidation]
+            error.getMessage must include("invalidCount=7")
+            error.getMessage must include(
+              s"dates=$start,${start.plusDays(1)},${start.plusDays(2)},${start.plusDays(3)},${start.plusDays(4)}"
+            )
+            error.getMessage must not include start.plusDays(5).toString
+            error.getMessage must not include "-123456789"
+          }
+      }
+
+      "classify explicit no-data responses with partial metadata for HTTP 400 and HTTP 200 without retaining their bodies" in {
+        val body =
+          """{"code":400,"status":"error","message":"No data is available on the specified dates. Try setting different start/end dates.","meta":{"symbol":"AAPL","interval":"1day","exchange":""},"private":"private-provider-metadata"}"""
+        List(StatusCode.BadRequest, StatusCode.Ok)
+          .traverse { status =>
+            val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(body, status))
+            makeClient(config, backend)
+              .flatMap(_.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.Unadjusted))
+              .attempt
+          }
+          .asserting { results =>
+            results.foreach { result =>
+              val error = result.left.toOption.get
+              error mustBe a[AppError.DataUnavailable]
+              error.getMessage must include("ticker=AAPL adjustment=none")
+              error.getMessage must include(s"requested=$from..$through")
+              error.getMessage must not include "private-provider-metadata"
+              AppError.safeSummary(error) mustBe error.getMessage
+            }
+            succeed
+          }
+      }
+
+      "keep strict decoding for other malformed HTTP-200 envelopes with partial metadata" in {
+        val cases = List(
+          ("ok", 400, "No data is available on the specified dates."),
+          ("error", 500, "No data is available on the specified dates."),
+          ("error", 400, "Invalid start_date parameter")
+        )
+        cases
+          .traverse { case (status, code, message) =>
+            val body    = s"""{"code":$code,"status":"$status","message":"$message","meta":{"symbol":"AAPL"}}"""
+            val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(body))
+            makeClient(config, backend)
+              .flatMap(_.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.Unadjusted))
+              .attempt
+          }
+          .asserting { results =>
+            results.foreach(_.left.toOption.get mustBe a[AppError.JsonParsingFailure])
+            succeed
+          }
+      }
+
+      "preserve malformed requests and server failures as HTTP errors" in {
+        val cases = List(
+          StatusCode.BadRequest          -> """{"code":400,"status":"error","message":"Invalid start_date parameter"}""",
+          StatusCode.InternalServerError -> """{"code":500,"status":"error","message":"No data is available on the specified dates."}"""
+        )
+        cases
+          .traverse { case (status, body) =>
+            val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(body, status))
+            makeClient(config, backend)
+              .flatMap(_.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.Unadjusted))
+              .attempt
+              .map(status -> _)
+          }
+          .asserting { results =>
+            results.foreach { case (status, result) =>
+              val error = result.left.toOption.get
+              error mustBe a[AppError.HttpClient]
+              error.asInstanceOf[AppError.HttpClient].status mustBe status.code
             }
             succeed
           }

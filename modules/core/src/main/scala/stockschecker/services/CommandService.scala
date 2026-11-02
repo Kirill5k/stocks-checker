@@ -6,7 +6,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.actions.{Action, ActionDispatcher}
-import stockschecker.domain.{Command, CommandId, CreateCommand, JobCommand, Schedule, UpdateCommand}
+import stockschecker.domain.{Command, CommandId, CreateCommand, JobCommand, JobId, Schedule, UpdateCommand}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.CommandRepository
 
@@ -14,7 +14,7 @@ import scala.util.Try
 
 trait CommandService[F[_]]:
   def create(cc: CreateCommand): F[Command]
-  def executeManually(cid: CommandId): F[Unit]
+  def executeManually(cid: CommandId): F[JobId]
   def getAll: F[List[Command]]
   def activate(cid: CommandId, isActive: Boolean): F[Unit]
   def update(uc: UpdateCommand): F[Command]
@@ -48,8 +48,8 @@ final private class LiveCommandService[F[_]](
       initialized <- repository.initializeNextRun(cmd, now)
     yield initialized.getOrElse(cmd)
 
-  override def executeManually(cid: CommandId): F[Unit] =
-    repository.find(cid).flatMap(cmd => actionDispatcher.dispatch(cmd.action))
+  override def executeManually(cid: CommandId): F[JobId] =
+    repository.find(cid).flatMap(cmd => actionDispatcher.dispatchTracked(cmd.action))
 
   override def getAll: F[List[Command]] = repository.all
 

@@ -96,7 +96,7 @@ The application uses `PureConfig` to load settings from `modules/core/src/main/r
 | `ALPHA_VANTAGE_API_KEY` | API key for Alpha Vantage |
 | `FINNHUB_API_KEY` | API key for Finnhub |
 | `TWELVE_DATA_API_KEY` | API key for Twelve Data |
-| `ACTION_EXECUTOR_CONCURRENCY` | Maximum concurrent job workers across all actions (default: 16); provider limits apply separately |
+| `ACTION_EXECUTOR_CONCURRENCY` | Maximum concurrent job workers across all actions (default: 2); provider limits apply separately |
 | `MONGO_USER` | MongoDB username |
 | `MONGO_PASSWORD` | MongoDB password |
 | `MONGO_HOST` | MongoDB host address |
@@ -118,9 +118,9 @@ The application uses a custom action-based task system for background jobs:
 
 *   **Action**: A sealed trait representing different types of background tasks (e.g., `FetchSecurities`, `FetchCompanyProfiles`). Actions are defined in `actions/Action.scala`.
 *   **ActionDispatcher**: The service gateway to durable jobs. Persists dispatched actions in MongoDB, supports deterministic idempotent dispatch, and reports pending job IDs.
-*   **ActionExecutor**: Claims durable jobs with leases and heartbeats and delegates execution to `ActionHandler`. Parent jobs aggregate child states with backoff. Provider deferrals back off from 30 seconds to five minutes, respect provider cooldowns and add jitter; these routine waits do not consume transient retries. Their provider, typed reason (`concurrency-limit`, `request-spacing`, `daily-quota`, or `provider-429`) and optional context are recorded in `job.error`. Persisted cooldown markers distinguish HTTP 429 waits from request spacing across restarts. Transient failures use the bounded `JobExecutionPolicy`; terminal jobs are not restarted. Job errors and logs retain exception messages, except Mongo decoding failures, which are terminal and report a safe field path without stored documents or invalid field values. Runs as an FS2 stream in parallel with the HTTP server.
+*   **ActionExecutor**: Claims durable jobs with leases and heartbeats and delegates execution to `ActionHandler`. Parent jobs aggregate child states with backoff. Provider deferrals back off from 30 seconds to five minutes, respect provider cooldowns and add jitter; these routine waits do not consume transient retries. Their provider, typed reason (`concurrency-limit`, `request-spacing`, `daily-quota`, or `provider-429`) and optional context are recorded in `job.error`. Persisted cooldown markers distinguish HTTP 429 waits from request spacing across restarts. Unavailable/stale data is terminal for the current run and logs at info, as do missing profiles; transport failures use the bounded `JobExecutionPolicy`; terminal jobs are not restarted. Jobs and logs retain exception messages. Runs as an FS2 stream in parallel with the HTTP server.
 
-Investment research has three schedulable actions: `RefreshInvestmentRanking` publishes and prunes rankings using the service's current UTC date, `CreateMonthlyScreen` returns immediately if the monthly screen exists and otherwise creates it from a usable ranking published on the same UTC day, and `CaptureMonthlyEvaluations` captures or resumes portfolio evaluations. `RefreshInvestmentResearch` expands into two independent children: `Sequence(RefreshInvestmentRanking, CreateMonthlyScreen)` and `CaptureMonthlyEvaluations`. The executor waits for ranking completion before screen creation and still runs evaluation capture if the sequence fails; mixed child outcomes make the umbrella job `Partial`. `RefreshEvaluationPrices` routes directly to `PriceService.refreshHistory`.
+Investment research has three schedulable actions: `RefreshInvestmentRanking` publishes a new immutable ranking on every execution and prunes old unreferenced rankings, `CreateMonthlyScreen` returns a logged typed outcome (created, already exists, or insufficient eligible stocks) and creates a missing monthly screen only from a usable ranking published on the same UTC day, and `CaptureMonthlyEvaluations` captures or resumes portfolio evaluations. `RefreshInvestmentResearch` expands into two independent children: `Sequence(RefreshInvestmentRanking, CreateMonthlyScreen)` and `CaptureMonthlyEvaluations`. The executor waits for ranking completion before screen creation and still runs evaluation capture if the sequence fails; mixed child outcomes make the umbrella job `Partial`. `RefreshEvaluationPrices` routes directly to `PriceService.refreshHistory`.
 
 `ActionHandler` routes each leaf action to its owning service and expands composite actions into durable job plans. The executor owns research dependencies and failure aggregation.
 
@@ -132,6 +132,8 @@ Commands provide scheduled execution of actions:
 *   **Schedule**: Supports both periodic (fixed interval) and cron-based scheduling
 *   Commands track execution count, last execution time, and can have a maximum execution limit
 *   The independent command scheduler reserves deterministic run IDs and recovers a missing job from the command's active run. Per-command failures are isolated; no outbox is needed.
+
+Authenticated job diagnostics use `GET /api/jobs` (bounded recent jobs, optionally filtered by command ID, state and action kind) and `GET /api/jobs/status?id=...` (query IDs support hierarchical child IDs). `JobService` reads through `ActionDispatcher`; the HTTP view omits leases and frozen execution plans. Manual command execution retains HTTP 204 and returns its durable job ID in `X-Job-Id` without changing command scheduling state.
 
 ### Layered Architecture
 
@@ -176,7 +178,7 @@ Cross-aggregate reads stay inside the requesting repository:
 | `InvestmentRankingRepository` | Reuses `StockAggregates`, then joins `financial-history` by ticker `_id` for candidates. Pruning reads `investment-screens` to retain referenced rankings and joins old input groups to `investment-rankings` to find orphaned inputs. |
 | `InvestmentScreenRepository` | Joins screen headers to `investment-rankings`, reads the latest ranking header, and reads ordinal-sorted `investment-ranking-inputs` separately so full rankings cannot exceed MongoDB's document limit inside a lookup. |
 | `InvestmentEvaluationRepository` | Joins `investment-screens` to `investment-evaluations` for capture context and work lists. One query reads matching adjusted `price-observations`, checks coverage and fetch timestamps, and trims candles while retaining the original candle count for truncation checks. |
-| `DataQualityRepository` | Aggregates `dataset-availability` and joins excluded `securities` plus the latest `investment-rankings` header for the quality report. |
+| `DataQualityRepository` | Aggregates `dataset-availability`, excluded `securities`, the latest `investment-rankings` header and compact `price-analytics` projections; groups complete `investment-ranking-inputs` inside the latest-ranking lookup to report peer readiness in one aggregation without embedding scorecards. |
 
 The composition root wires repositories into their owners. Job execution, command scheduling and provider-budget coordination remain infrastructure concerns handled by `ActionDispatcher`, `ActionExecutor`, `CommandScheduler` and `ProviderAccess`. `ProviderAccess` owns persisted request budgets. `DatasetObserver` records dataset availability inside `MarketDataClient` through `DataQualityRepository`; `DataQualityService` uses the same repository to aggregate availability, excluded securities and the latest published ranking into its report.
 

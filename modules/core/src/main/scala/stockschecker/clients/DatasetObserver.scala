@@ -27,6 +27,7 @@ final private class LiveDatasetObserver[F[_]](
       case Left(error)                            =>
         val status = error match
           case _: AppError.ProviderConfiguration         => DatasetStatus.ConfigurationError
+          case _: AppError.DataUnavailable               => DatasetStatus.Unavailable
           case e: AppError.HttpClient if e.status == 404 => DatasetStatus.Unavailable
           case _                                         => DatasetStatus.Failed
         record(status, Some(AppError.safeSummary(error))) >> F.raiseError(error)

@@ -14,7 +14,7 @@ Services depend on their own repositories, `MarketDataClient`, `ActionDispatcher
 | `InvestmentRankingRepository` | The stock collections through `StockAggregates`, plus `financial-history` by ticker `_id`. Pruning reads `investment-screens` to protect referenced rankings and joins old input groups to published rankings to identify orphans. |
 | `InvestmentScreenRepository` | `investment-rankings` for headers and `investment-ranking-inputs` for ordinal-sorted entries. Entries remain a separate query to avoid embedding a full ranking in one MongoDB document. |
 | `InvestmentEvaluationRepository` | `investment-screens` joined to saved evaluations for context and capture tasks; each price-series read queries all matching adjusted `price-observations` together, filters coverage and fetch timestamps, trims candles, and retains the original count for truncation checks. |
-| `DataQualityRepository` | `dataset-availability`, excluded `securities` and the latest `investment-rankings` header. |
+| `DataQualityRepository` | `dataset-availability`, excluded `securities`, the latest `investment-rankings` header, compact `price-analytics` projections and grouped complete `investment-ranking-inputs`. |
 
 ## Investment research actions
 
@@ -22,11 +22,20 @@ The following public actions can be scheduled independently:
 
 | Action | Behavior |
 | :--- | :--- |
-| `RefreshInvestmentRanking` | Builds candidates through the ranking repository, publishes a ranking, and prunes expired unreferenced rankings and orphaned inputs. |
+| `RefreshInvestmentRanking` | Builds candidates through the ranking repository, publishes a new immutable ranking on every execution, and prunes expired unreferenced rankings and orphaned inputs. |
 | `CreateMonthlyScreen` | Returns immediately if this month's screen already exists. Otherwise, reads a usable ranking from the same UTC day and creates the screen, unless the eligible universe is too small. |
 | `CaptureMonthlyEvaluations` | Captures the current month and resumes unsettled captures, dispatching missing price-history requests through `ActionDispatcher`. |
 
 `RefreshInvestmentResearch` expands into a sequence of ranking then screen creation, alongside an independent evaluation-capture action. The executor manages dependencies, retries and parent state. Evaluation capture still runs if ranking or screen creation fails, and mixed child outcomes make the umbrella job `Partial`. `ActionHandler` only routes leaf actions and expands composite plans; `RefreshEvaluationPrices` goes directly to `PriceService.refreshHistory`.
+
+Monthly screen creation logs `created`, `already-exists`, or `insufficient-eligible` with the ranking ID and eligible/required counts. A skipped screen is an explicit outcome, not a provider failure. Repeated refreshes can recover within the same UTC day; existing monthly screens retain their original ranking. The financial, price-freshness and peer-group thresholds are unchanged.
+
+`GET /api/data-quality` retains dataset availability and ranking coverage, and adds:
+
+- `rankingReadiness`: the frozen ranking ID/time/recipe, monthly readiness status, eligible and required counts, and complete-candidate counts by normalized industry and sector. Complete candidates include eligible stocks and stocks excluded solely for insufficient peer coverage. A missing ranking returns `null`; readiness is about the ranking, not whether a monthly screen already exists.
+- `priceAnalyticsReadiness`: current persisted analytics with calculation time, latest price date and price eligibility under the configured freshness limit. Successful provider retrieval can coexist with stale or missing analytics. These rows are not a last-job-status report, and their observation time differs from the frozen ranking.
+
+See [investment recovery](INVESTMENT_RECOVERY.md) for job inspection, targeted refill and provider-capacity checks. All diagnostic endpoints require `X-API-Key`.
 
 Evaluation reads do not create captures or dispatch jobs. Captures preserve their requested-history ticker set across saves, record dispatched batches atomically, and do not recreate pruned completed jobs. `InvestmentRanking.requireUsable` provides the shared recipe and freshness checks for screen creation.
 
@@ -58,7 +67,7 @@ Keep `securities`, `company-profiles`, `price-analytics`, `financial-metrics`, `
 
 3. Start the updated application with the research commands still inactive. Provider fetches recreate `price-observations` and `financial-history` with BSON dates and stable IDs. `latest-prices` is no longer used and will not be recreated.
 4. Refill financial history and complete the evaluation recovery check below before running any research action. Run `FetchFinancialMetrics` with `CompanyProfileFilter.IsActive(true)` for the active universe, or `UpdateFinancialMetrics` for explicit tickers, and wait for the refresh jobs to finish. Existing `financial-metrics` documents do not reconstruct financial snapshots. A freshness-based filter can skip tickers whose profile timestamps still look recent, so use the active-universe or explicit-ticker action for this initial refill. Price caches refill on demand: `UpdatePriceAnalytics` refreshes analytics and the small unadjusted cache; evaluation captures request adjusted histories. Existing saved price analytics can remain in place.
-5. With financial history refilled and affected captures recovered, manually run the inactive `RefreshInvestmentResearch` command using `POST /api/commands/{id}/execute`, then check its results. This endpoint can dispatch an inactive command without reactivating its schedule. A ranking already published on the same UTC day for the same recipe is reused; if a ranking was published before the refill, wait until the next UTC day to build a new one. Existing monthly screens retain their original ranking.
+5. With financial history refilled and affected captures recovered, manually run the inactive `RefreshInvestmentResearch` command using `POST /api/commands/{id}/execute`, then check its results. This endpoint can dispatch an inactive command without reactivating its schedule. Every refresh builds a new ranking, including later on the same UTC day. Existing monthly screens retain their original ranking.
 6. Reactivate the commands paused in step 1 using `PUT /api/commands/{id}/active` with `{"isActive":true}`.
 
 The application creates the new `{ screenId: 1, month: 1 }` index on `investment-evaluations` during startup. Dropping `financial-history` already removed its obsolete indexes; its built-in `_id` index now enforces one snapshot per ticker. Old evaluation indexes on `settled` and `(finished, screenId)` may remain without affecting correctness. Removing those indexes is optional space cleanup, not a startup requirement.

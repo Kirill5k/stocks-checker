@@ -25,7 +25,10 @@ class ActionHandlerSpec extends IOWordSpec:
       val rankings = mock[InvestmentRankingService[IO]]
       when(services.investmentScreens).thenReturn(screens)
       when(services.investmentRankings).thenReturn(rankings)
-      when(screens.createMonthlyScreen).thenReturnNone
+      when(screens.createMonthlyScreen)
+        .thenReturnIO(
+          MonthlyScreenOutcome.InsufficientEligible(InvestmentRankingId("published"), 0, InvestmentRecipe.MinimumEligibleStocks)
+        )
       (for
         handler <- ActionHandler.make(services)
         result  <- handler.execute(Action.CreateMonthlyScreen)

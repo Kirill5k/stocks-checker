@@ -46,6 +46,7 @@ import stockschecker.domain.{
   PriceAnalyticsBasis,
   PriceHistorySnapshot,
   PricePerformanceSummary,
+  RankingReadiness,
   Schedule,
   Sector,
   Security,
@@ -385,26 +386,53 @@ private[repositories] object entities extends MongoJsonCodecs {
       count: Int
   ) derives Codec.AsObject
 
+  final case class RankingPeerGroup(
+      industry: String,
+      sector: Sector
+  ) derives Codec.AsObject
+  final case class RankingPeerCountEntity(
+      _id: RankingPeerGroup,
+      count: Int
+  ) derives Codec.AsObject
+
+  final case class RankingReadinessEntity(
+      headers: List[InvestmentRankingEntity],
+      peerCounts: List[RankingPeerCountEntity]
+  ) derives Codec.AsObject
+
   final case class DataQualityReportEntity(
       datasets: List[DatasetAvailabilityEntity],
       exclusions: List[ExcludedSecurity],
       countsByStatus: List[DatasetStatusCount],
-      rankings: List[InvestmentRankingEntity]
+      rankings: List[RankingReadinessEntity],
+      priceAnalyticsReadiness: List[PriceAnalyticsReadinessQuery.Row]
   ) derives Codec.AsObject:
-    def toDomain(at: Instant): DataQualityReport =
-      val ranking  = rankings.headOption
-      val coverage = ranking
+    def toDomain(at: Instant, recipe: InvestmentRecipe): DataQualityReport =
+      val rankingData = rankings.headOption
+      val ranking     = rankingData.flatMap(_.headers.headOption)
+      val coverage    = ranking
         .map { header =>
           header.summary.excludedByReason ++ Map("eligible" -> header.summary.eligibleCount, "universe" -> header.summary.universeCount)
         }
         .getOrElse(Map.empty)
+      val analytics    = priceAnalyticsReadiness.map(_.toDomain(at, recipe)).map(row => row.ticker -> row).toMap
+      val priceTickers = datasets.collect {
+        case row if row.dataset.isDailyPrices => row.ticker
+      }.toSet ++ analytics.keySet
+      val groups     = rankingData.toList.flatMap(_.peerCounts)
+      val byIndustry = groups.groupMapReduce(_._id.industry)(_.count)(_ + _)
+      val bySector   = groups.groupMapReduce(_._id.sector)(_.count)(_ + _)
       DataQualityReport(
         at,
         datasets.map(_.toDomain),
         exclusions,
         countsByStatus.map(count => count._id -> count.count).toMap,
         coverage,
-        ranking.map(_.createdAt)
+        ranking.map(_.createdAt),
+        rankingReadiness = ranking.map(header => RankingReadiness.from(header.toDomain, byIndustry, bySector, at, recipe)),
+        priceAnalyticsReadiness = priceTickers.toList
+          .sortBy(_.value)
+          .map(ticker => analytics.getOrElse(ticker, stockschecker.domain.PriceAnalyticsReadiness.missing(ticker)))
       )
 
   object DataQualityReportEntity:

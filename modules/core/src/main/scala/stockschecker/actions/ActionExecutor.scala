@@ -10,6 +10,7 @@ import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
 import stockschecker.common.config.ActionExecutorConfig
 import stockschecker.domain.{Job, JobCommand, JobId, JobPlan}
+import stockschecker.domain.errors.AppError
 import stockschecker.repositories.JobRepository
 
 import java.util.concurrent.ThreadLocalRandom
@@ -35,7 +36,7 @@ final private class LiveActionExecutor[F[_]](
           .repeatEval(
             clock.now
               .flatMap(jobs.pruneCompleted)
-              .handleErrorWith(error => logger.error(s"Job retention failed: ${JobExecutionPolicy.errorSummary(error)}"))
+              .handleErrorWith(error => logger.error(s"Job retention failed: ${error.getMessage}"))
           )
           .metered(RetentionInterval)
       )
@@ -47,9 +48,7 @@ final private class LiveActionExecutor[F[_]](
         case None      => F.sleep(IdlePollInterval).as(Option.empty[Unit])
         case Some(job) => F.race(process(job), heartbeat(job)).as(Some(()))
       }
-      .handleErrorWith(error =>
-        logger.error(s"Job worker failed: ${JobExecutionPolicy.errorSummary(error)}") >> F.sleep(WorkerRecoveryDelay).as(None)
-      )
+      .handleErrorWith(error => logger.error(s"Job worker failed: ${error.getMessage}") >> F.sleep(WorkerRecoveryDelay).as(None))
   }.unNone
 
   private def heartbeat(job: Job): F[Unit] =
@@ -113,7 +112,7 @@ final private class LiveActionExecutor[F[_]](
     }
 
   private def handleFailure(job: Job, error: Throwable): F[Unit] =
-    val summary = JobExecutionPolicy.errorSummary(error)
+    val summary = error.getMessage
     JobExecutionPolicy.failure(error, job.retries) match {
       case JobExecutionPolicy.Failure.Defer(retryAt) =>
         for
@@ -137,7 +136,12 @@ final private class LiveActionExecutor[F[_]](
           )
         } yield ()
       case JobExecutionPolicy.Failure.Fail =>
-        logger.warn(s"Job ${job.id} failed: $summary") >> jobs.finish(job, Job.Failed, Some(summary))
+        val message = s"Job ${job.id} failed: $summary"
+        val log     = error match
+          case _: AppError.DataUnavailable | _: AppError.CompanyProfileNotFound =>
+            logger.info(message)
+          case _ => logger.warn(message)
+        log >> jobs.finish(job, Job.Failed, Some(summary))
     }
 }
 

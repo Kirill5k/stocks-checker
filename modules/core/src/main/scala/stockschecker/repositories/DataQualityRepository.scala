@@ -7,11 +7,14 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import mongo4cats.circe.MongoJsonCodecs
 import stockschecker.repositories.entities.{DataQualityReportEntity, DatasetAvailabilityEntity}
+import mongo4cats.bson.Document
+import mongo4cats.bson.syntax.*
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.UpdateOptions
 import mongo4cats.operations.{Accumulator, Aggregate, Filter, Index, Projection, Sort, Update}
-import stockschecker.domain.{DataQualityReport, Dataset, Ticker}
+import stockschecker.domain.{DataQualityReport, Dataset, InvestmentRecipe, Ticker}
+import stockschecker.domain.investment.InvestmentReasons
 import java.time.Instant
 
 trait DataQualityRepository[F[_]]:
@@ -23,7 +26,7 @@ trait DataQualityRepository[F[_]]:
       at: Instant,
       failure: Option[String]
   ): F[Unit]
-  def report(at: Instant): F[DataQualityReport]
+  def report(at: Instant, recipe: InvestmentRecipe = InvestmentRecipe()): F[DataQualityReport]
 
 final private class LiveDataQualityRepository[F[_]: Concurrent](
     collection: MongoCollection[F, DatasetAvailabilityEntity]
@@ -54,9 +57,35 @@ final private class LiveDataQualityRepository[F[_]: Concurrent](
       )
       .lookup(
         InvestmentRankingRepository.CollectionName,
-        Aggregate.sort(Sort.desc(ranking.CreatedAt)).limit(1),
+        Aggregate
+          .sort(Sort.desc(ranking.CreatedAt))
+          .limit(1)
+          .facet(
+            Aggregate.Facet(Field.RankingHeaders, Aggregate.limit(1)),
+            Aggregate.Facet(
+              Field.PeerCounts,
+              Aggregate
+                .lookup(InvestmentRankingRepository.InputsCollectionName, ranking.Id, ranking.RankingId, Field.RankingInputs)
+                // Keep these adjacent so Mongo coalesces the lookup and unwind instead of embedding all scorecards.
+                .unwind(s"$$${Field.RankingInputs}")
+                .matchBy(
+                  Filter.eq(s"${Field.RankingInputs}.scorecard.eligible", true) ||
+                    Filter.eq(s"${Field.RankingInputs}.scorecard.exclusions", List(InvestmentReasons.InsufficientPeerCoverage))
+                )
+                .group(
+                  Document(
+                    "industry" := Document(
+                      "$toLower" := Document("$trim" := Document("input" := s"$$${Field.RankingInputs}.input.industry"))
+                    ),
+                    "sector" := s"$$${Field.RankingInputs}.input.sector"
+                  ),
+                  Accumulator.sum(Field.Count, 1)
+                )
+            )
+          ),
         Field.Rankings
       )
+      .lookup(PriceAnalyticsRepository.CollectionName, PriceAnalyticsReadinessQuery.pipeline, Field.PriceAnalyticsReadiness)
 
   override def record(
       ticker: Ticker,
@@ -79,31 +108,35 @@ final private class LiveDataQualityRepository[F[_]: Concurrent](
     collection.updateOne(Filter.idEq(id), dated, UpdateOptions(upsert = true)).void
   }
 
-  override def report(at: Instant): F[DataQualityReport] =
+  override def report(at: Instant, recipe: InvestmentRecipe): F[DataQualityReport] =
     collection
       .aggregate[DataQualityReportEntity](reportAggregation)
       .first
-      .map(_.fold(DataQualityReport(at, Nil, Nil, Map.empty, Map.empty))(_.toDomain(at)))
+      .map(_.fold(DataQualityReport(at, Nil, Nil, Map.empty, Map.empty))(_.toDomain(at, recipe)))
 }
 
 object DataQualityRepository extends MongoJsonCodecs {
   val CollectionName = "dataset-availability"
 
   object Field:
-    val Id             = "_id"
-    val Ticker         = "ticker"
-    val Provider       = "provider"
-    val Dataset        = "dataset"
-    val Status         = "status"
-    val LastAttemptAt  = "lastAttemptAt"
-    val LastSuccessAt  = "lastSuccessAt"
-    val Failure        = "failure"
-    val Datasets       = "datasets"
-    val CountsByStatus = "countsByStatus"
-    val Count          = "count"
-    val Exclusions     = "exclusions"
-    val Reason         = "reason"
-    val Rankings       = "rankings"
+    val Id                      = "_id"
+    val Ticker                  = "ticker"
+    val Provider                = "provider"
+    val Dataset                 = "dataset"
+    val Status                  = "status"
+    val LastAttemptAt           = "lastAttemptAt"
+    val LastSuccessAt           = "lastSuccessAt"
+    val Failure                 = "failure"
+    val Datasets                = "datasets"
+    val CountsByStatus          = "countsByStatus"
+    val Count                   = "count"
+    val Exclusions              = "exclusions"
+    val Reason                  = "reason"
+    val Rankings                = "rankings"
+    val RankingHeaders          = "headers"
+    val RankingInputs           = "inputs"
+    val PeerCounts              = "peerCounts"
+    val PriceAnalyticsReadiness = "priceAnalyticsReadiness"
 
   def make[F[_]: Concurrent](db: MongoDatabase[F]): F[DataQualityRepository[F]] =
     for

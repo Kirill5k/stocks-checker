@@ -106,6 +106,11 @@ final case class InvestmentScreenSummary(
     excludedByReason: Map[String, Int]
 ) derives Codec.AsObject
 
+enum MonthlyScreenOutcome:
+  case Created(rankingId: InvestmentRankingId, summary: InvestmentScreenSummary)
+  case AlreadyExists(rankingId: InvestmentRankingId, summary: InvestmentScreenSummary)
+  case InsufficientEligible(rankingId: InvestmentRankingId, eligibleCount: Int, requiredCount: Int)
+
 final case class InvestmentScreen(
     id: InvestmentScreenId,
     createdAt: Instant,

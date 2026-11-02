@@ -218,15 +218,16 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
     }
 
     "POST /commands/{id}/execute" should {
-      "return 204 on success" in {
+      "return 204 with the durable job id on success" in {
         val svc       = mocks
         val commandId = FetchLatestSecuritiesCommand.id
-        when(svc.executeManually(commandId)).thenReturnIO(())
+        when(svc.executeManually(commandId)).thenReturnIO(JobId("manual-run"))
 
         val res = for
           controller <- CommandController.make(apiConfig, svc)
           req = Request[IO](uri = uri"/commands" / commandId.value / "execute", method = Method.POST).withHeaders(apiKeyHeader)
           res <- controller.routes.orNotFound.run(req)
+          _   <- IO(res.headers.get(CIString("X-Job-Id")).map(_.head.value) mustBe Some("manual-run"))
         yield res
 
         res mustHaveStatus (Status.NoContent, None)

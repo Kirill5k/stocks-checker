@@ -9,6 +9,10 @@ enum Dataset(val value: String):
   case DailyPricesSplits             extends Dataset("daily-prices-splits")
   case DailyPricesSplitsAndDividends extends Dataset("daily-prices-all")
 
+  def isDailyPrices: Boolean = this match
+    case DailyPricesUnadjusted | DailyPricesSplits | DailyPricesSplitsAndDividends => true
+    case CompanyProfile | Financials                                               => false
+
 object Dataset extends EnumType[Dataset](() => Dataset.values, _.value):
   def dailyPrices(adjustment: PriceAdjustment): Dataset = adjustment match
     case PriceAdjustment.Unadjusted         => DailyPricesUnadjusted

@@ -6,11 +6,11 @@ import cats.syntax.flatMap.*
 import cats.syntax.applicative.*
 import kirill5k.common.cats.Clock
 import kirill5k.common.syntax.time.*
+import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort, Update}
-import mongo4cats.circe.MongoJsonCodecs
-import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
+import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, ListingStatus, Ticker}
 import stockschecker.repositories.entities.{CompanyProfileEntity, Entity}
 import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
@@ -82,10 +82,19 @@ final private class LiveCompanyProfileRepository[F[_]](
 
   override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): F[List[Ticker]] =
     filter.toFilter.flatMap { mongoFilter =>
+      val matchingProfiles = Aggregate.matchBy(mongoFilter)
+      val eligibleProfiles =
+        if filter.requiresActiveSecurity then
+          matchingProfiles
+            .lookup(SecurityRepository.CollectionName, Field.Id, SecurityRepository.Field.Id, "security")
+            .matchBy(
+              Filter.eq(s"security.0.${SecurityRepository.Field.IsActive}", true) &&
+                Filter.eq(s"security.0.${SecurityRepository.Field.ListingStatus}", ListingStatus.Listed.print)
+            )
+        else matchingProfiles
       collection
         .aggregate[Entity](
-          Aggregate
-            .matchBy(mongoFilter)
+          eligibleProfiles
             .sort(Sort.desc(Field.MarketCap))
             .limit(limit.getOrElse(Int.MaxValue))
             .project(Projection.include(Field.Id))
@@ -124,6 +133,11 @@ final private class LiveCompanyProfileRepository[F[_]](
       .void
 
   extension (f: CompanyProfileFilter)
+    private def requiresActiveSecurity: Boolean = f match
+      case CompanyProfileFilter.IsActive(true)     => true
+      case CompanyProfileFilter.Composite(filters) => filters.exists(_.requiresActiveSecurity)
+      case _                                       => false
+
     private def toFilter: F[Filter] = f match
       case CompanyProfileFilter.IsActive(active) =>
         Filter.eq(Field.IsActive, active).pure

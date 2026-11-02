@@ -19,6 +19,7 @@ import stockschecker.domain.{
   PriceHistorySnapshot
 }
 import stockschecker.fixtures.*
+import stockschecker.domain.errors.AppError
 import stockschecker.repositories.{DataQualityRepository, ProviderBudgetRepository}
 
 import java.time.{Instant, LocalDate}
@@ -130,6 +131,34 @@ class MarketDataClientSpec extends IOWordSpec {
           yield result).map { result =>
             result mustBe empty
             verify(quality).record(AAPL, Provider.TwelveData, dataset, DatasetStatus.Unavailable, ts, None)
+            verifyNoInteractions(finnhub)
+            succeed
+          }
+        }
+        .asserting(_ => succeed)
+    }
+
+    "distinguish unavailable histories from failed provider requests" in {
+      val cases = List(
+        AppError.DataUnavailable(AAPL, "no provider data in the requested date range") -> DatasetStatus.Unavailable,
+        AppError.HttpClient(Provider.TwelveData.print, 400, "invalid request")         -> DatasetStatus.Failed,
+        AppError.FailedValidation("duplicate dates")                                   -> DatasetStatus.Failed
+      )
+      cases
+        .traverse { case (error, status) =>
+          val finnhub = mock[FinnhubClient[IO]]
+          val twelve  = mock[TwelveDataClient[IO]]
+          val quality = mock[DataQualityRepository[IO]]
+          val failure = Some(AppError.safeSummary(error))
+          when(twelve.getDailyPriceHistory(AAPL, range, PriceAdjustment.Splits)).thenRaiseError(error)
+          when(quality.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplits, status, ts, failure)).thenReturnUnit
+          (for
+            observer <- DatasetObserver.make[IO](quality)
+            client   <- MarketDataClient.make[IO](finnhub, twelve, observer)
+            result   <- client.getDailyPriceHistory(AAPL, range, PriceAdjustment.Splits).attempt
+          yield result).map { result =>
+            result mustBe Left(error)
+            verify(quality).record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplits, status, ts, failure)
             verifyNoInteractions(finnhub)
             succeed
           }

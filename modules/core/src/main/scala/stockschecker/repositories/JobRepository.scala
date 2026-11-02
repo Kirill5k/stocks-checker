@@ -12,7 +12,7 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{FindOneAndUpdateOptions, UpdateOptions}
 import mongo4cats.operations.{Accumulator, Aggregate, Filter, Index, Projection, Sort, Update}
-import stockschecker.domain.{CommandId, Job, JobId, JobPlan, JobState, JobStatusSummary}
+import stockschecker.domain.{CommandId, Job, JobFilter, JobId, JobPlan, JobState, JobStatusSummary}
 import stockschecker.repositories.entities.{JobEntity, JobIdEntity, JobStateCount}
 
 import java.time.Instant
@@ -24,6 +24,7 @@ import scala.jdk.CollectionConverters.*
 trait JobRepository[F[_]] {
   def enqueue(job: Job, priority: Int): F[Unit]
   def find(id: JobId): F[Option[Job]]
+  def list(limit: Int, filter: JobFilter): F[List[Job]]
   def summarize(ids: List[JobId]): F[JobStatusSummary]
   def pendingIds(ids: List[JobId]): F[Set[JobId]]
   def claim(now: Instant, lease: FiniteDuration): F[Option[Job]]
@@ -64,6 +65,14 @@ final private class LiveJobRepository[F[_]](
       .void
 
   override def find(id: JobId): F[Option[Job]] = collection.find(Filter.idEq(id.value)).first.map(_.map(_.job))
+
+  override def list(limit: Int, filter: JobFilter): F[List[Job]] =
+    val query = List(
+      filter.commandId.map(id => Filter.eq(Field.CommandId, id.value)),
+      filter.state.map(state => Filter.eq(Field.State, state.value)),
+      filter.actionKind.map(kind => Filter.eq(Field.ActionKind, kind))
+    ).flatten.foldLeft(Filter.empty)(_ && _)
+    collection.find(query).sort(Sort.desc(Field.CreatedAt, Field.Id)).limit(limit).all.map(_.map(_.job).toList)
 
   override def summarize(ids: List[JobId]): F[JobStatusSummary] =
     if (ids.isEmpty) JobStatusSummary(Map.empty).pure[F]
@@ -192,6 +201,7 @@ object JobRepository extends MongoJsonCodecs {
     val Job            = "job"
     val Priority       = "priority"
     val State          = "job.state"
+    val ActionKind     = "job.action.kind"
     val LeaseToken     = "job.leaseToken"
     val LeaseUntil     = "job.leaseUntil"
     val AvailableAt    = "job.availableAt"
@@ -219,6 +229,7 @@ object JobRepository extends MongoJsonCodecs {
       _          <- collection.createIndex(Index.ascending(List(Field.State, Field.LeaseUntil)))
       _          <- collection.createIndex(Index.ascending(Field.CommandId))
       _          <- collection.createIndex(Index.ascending(List(Field.State, Field.CompletedAt)))
+      _          <- collection.createIndex(Index.descending(List(Field.CreatedAt, Field.Id)))
     } yield new LiveJobRepository(
       collection
         .withAddedCodec[Provider]

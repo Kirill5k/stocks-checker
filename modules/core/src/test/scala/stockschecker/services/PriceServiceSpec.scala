@@ -239,7 +239,7 @@ class PriceServiceSpec extends IOWordSpec {
       }
     }
 
-    "report disjoint sessions as unavailable data eligible for bounded retries" in {
+    "report disjoint sessions as unavailable data with diagnostic dates" in {
       val d = mocks
       (for
         now <- IO.pure(fixedNow)
@@ -248,7 +248,10 @@ class PriceServiceSpec extends IOWordSpec {
         outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
       yield outcome).asserting { outcome =>
         outcome mustBe Left(
-          AppError.DataUnavailable(AAPL, "adjusted and quoted histories have no common trading session")
+          AppError.DataUnavailable(
+            AAPL,
+            "adjusted and quoted histories have no common trading session; through=2026-10-27 adjustedLatest=2026-10-27 quotedLatest=2026-10-26"
+          )
         )
         verify(d.repo, never).save(anyList[PriceAnalytics])
         verifyNoInteractions(d.dispatcher)
@@ -266,7 +269,10 @@ class PriceServiceSpec extends IOWordSpec {
         outcome <- service.findPriceAnalytics(AAPL, fetch = true).attempt
       yield outcome).asserting { outcome =>
         outcome mustBe Left(
-          AppError.DataUnavailable(AAPL, "the latest matching trading session is more than seven days old")
+          AppError.DataUnavailable(
+            AAPL,
+            "the latest matching trading session is more than seven days old; commonLatest=2026-09-12 through=2026-10-27 adjustedLatest=2026-09-12 quotedLatest=2026-09-12"
+          )
         )
         verify(d.repo, never).save(anyList[PriceAnalytics])
         verifyNoInteractions(d.dispatcher)

@@ -7,6 +7,7 @@ import cats.syntax.applicativeError.*
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import io.circe.Codec
+import io.circe.parser.parse
 import kirill5k.common.cats.Clock
 import stockschecker.common.config.TwelveDataConfig
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceCandle, PriceHistorySnapshot, Ticker}
@@ -88,22 +89,39 @@ final private class LiveTwelveDataClient[F[_]](
       )
       data <- response.body match
         case Right(value)                                             => F.pure(value)
-        case Left(ResponseException.UnexpectedStatusCode(body, meta)) => failure(meta.code.code, body, meta.header("Retry-After"))
+        case Left(ResponseException.UnexpectedStatusCode(body, meta)) =>
+          historyFailure(meta.code.code, body, ticker, range, adjustment, meta.header("Retry-After"))
+        // Error envelopes may contain only a partial `meta`; successful histories still require the full metadata codec.
+        case Left(ResponseException.DeserializationException(body, _, _)) if isNoDataEnvelope(body) =>
+          historyFailure(400, body, ticker, range, adjustment)
         case Left(error) => F.raiseError(AppError.JsonParsingFailure("", s"Invalid daily prices: ${redact(error.getMessage)}"))
-      values <- processData(data, ticker)
+      values <- processData(data, ticker, range, adjustment)
       now    <- C.now
       candles = values.toList.sortBy(_.date)
-      _ <- F.raiseWhen(candles.exists(_.close <= 0) || candles.map(_.date).distinct.size != candles.size)(
-        AppError.FailedValidation("Price history contains invalid prices or duplicate dates")
+      context = s"${requestContext(ticker, range, adjustment)} returned=${candles.head.date}..${candles.last.date} count=${candles.size}"
+      nonpositive = candles.filter(_.close <= 0).map(_.date)
+      duplicates  = candles.groupBy(_.date).collect { case (date, entries) if entries.size > 1 => date }.toList.sorted
+      _ <- F.raiseWhen(nonpositive.nonEmpty)(
+        AppError.FailedValidation(
+          s"Price history contains nonpositive closes; $context invalidCount=${nonpositive.size} dates=${sampleDates(nonpositive)}"
+        )
       )
-      _ <- F.raiseWhen(candles.exists(c => !range.contains(c.date)) || candles.size >= 5000)(
-        AppError.FailedValidation("Price history is outside the requested range or may be truncated")
+      _ <- F.raiseWhen(duplicates.nonEmpty)(
+        AppError.FailedValidation(
+          s"Price history contains duplicate dates; $context duplicateCount=${duplicates.size} dates=${sampleDates(duplicates)}"
+        )
+      )
+      _ <- F.raiseWhen(candles.exists(c => !range.contains(c.date)))(
+        AppError.FailedValidation(s"Price history is outside the requested range; $context")
+      )
+      _ <- F.raiseWhen(candles.size >= 5000)(
+        AppError.FailedValidation(s"Price history may be truncated; $context")
       )
       // Calendar gaps can be valid exchange closures or trading halts. Consumers validate
       // the dates actually needed for their return horizons instead of rejecting the whole vintage.
-      meta <- F.fromOption(data.meta, AppError.FailedValidation("Price history has no currency metadata"))
+      meta <- F.fromOption(data.meta, AppError.FailedValidation(s"Price history has no currency metadata; $context"))
       _    <- F.raiseWhen(meta.symbol != ticker.value || meta.interval != "1day" || meta.currency.trim.isEmpty)(
-        AppError.FailedValidation("Price history identity/interval mismatch")
+        AppError.FailedValidation(s"Price history identity/interval mismatch; $context")
       )
     yield PriceHistorySnapshot(
       UUID.randomUUID().toString,
@@ -124,17 +142,53 @@ final private class LiveTwelveDataClient[F[_]](
   private def redact(message: String): String =
     apiKeys.map(_._1).sortBy(key => -key.length).foldLeft(message)((result, key) => result.replace(key, "[redacted]"))
 
-  private def failure[A](status: Int, message: String, retryAfter: Option[String] = None): F[A] =
+  private def failure[A](status: Int, message: String, retryAfter: Option[String]): F[A] =
     ProviderErrors.fromStatus[F](Provider.TwelveData, status, retryAfter, redact(message)).flatMap(F.raiseError)
 
-  private def processData(data: TwelveDataClient.TimeSeriesResponse, ticker: Ticker): F[NonEmptyList[PriceCandle]] =
+  private def requestContext(ticker: Ticker, range: DateRange, adjustment: PriceAdjustment): String =
+    s"provider=${Provider.TwelveData.print} ticker=${ticker.value.take(64)} adjustment=${adjustment.value} requested=${range.from}..${range.through}"
+
+  private def sampleDates(dates: List[LocalDate]): String = dates.take(5).mkString(",")
+
+  private def isNoDataMessage(message: String): Boolean =
+    message.trim.startsWith("No data is available on the specified dates.")
+
+  private def isNoDataEnvelope(body: String): Boolean =
+    parse(body).toOption.exists { json =>
+      val cursor = json.hcursor
+      cursor.get[String]("status").contains("error") && cursor.get[Int]("code").contains(400) &&
+      cursor.get[String]("message").exists(isNoDataMessage)
+    }
+
+  private def historyFailure[A](
+      status: Int,
+      message: String,
+      ticker: Ticker,
+      range: DateRange,
+      adjustment: PriceAdjustment,
+      retryAfter: Option[String] = None
+  ): F[A] =
+    val detail = parse(message).toOption.flatMap(_.hcursor.get[String]("message").toOption).getOrElse(message)
+    if status == 400 && isNoDataMessage(detail) then
+      F.raiseError(
+        AppError.DataUnavailable(ticker, s"no provider data in the requested date range; ${requestContext(ticker, range, adjustment)}")
+      )
+    else failure(status, message, retryAfter)
+
+  private def processData(
+      data: TwelveDataClient.TimeSeriesResponse,
+      ticker: Ticker,
+      range: DateRange,
+      adjustment: PriceAdjustment
+  ): F[NonEmptyList[PriceCandle]] =
     if data.isOk then
       val maybeValues = data.values.flatMap(v => NonEmptyList.fromList(v.map(_.toDomain)))
       F.fromOption(maybeValues, AppError.HttpClient(Provider.TwelveData.print, 500, s"No values returned for ticker $ticker"))
     else if data.isError then
       val errorCode    = data.code.getOrElse(500)
       val errorMessage = data.message.getOrElse("Unknown error from TwelveData API")
-      failure(errorCode, s"API error for getting time series data for $ticker: $errorMessage")
+      if errorCode == 400 && isNoDataMessage(errorMessage) then historyFailure(errorCode, errorMessage, ticker, range, adjustment)
+      else failure(errorCode, s"API error for getting time series data for $ticker: $errorMessage", None)
     else
       F.raiseError(
         AppError.HttpClient(

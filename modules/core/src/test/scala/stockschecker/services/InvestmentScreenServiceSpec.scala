@@ -3,6 +3,8 @@ package stockschecker.services
 import cats.effect.{IO, Ref}
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
+import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.investment.InvestmentScorer
@@ -12,8 +14,9 @@ import stockschecker.fixtures.*
 import java.time.{Instant, LocalDate}
 
 class InvestmentScreenServiceSpec extends IOWordSpec:
-  private val now = Instant.parse("2026-10-19T12:00:00Z")
-  given Clock[IO] = Clock.mock(now)
+  private val now  = Instant.parse("2026-10-19T12:00:00Z")
+  given Clock[IO]  = Clock.mock(now)
+  given Logger[IO] = Slf4jLogger.getLogger[IO]
 
   private def memoryScreens(
       state: Ref[IO, List[InvestmentScreen]],
@@ -137,7 +140,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       when(screens.latestRanking).thenReturnSome(value)
       when(screens.get(id)).thenReturnNone
       InvestmentScreenService.make(screens).flatMap(_.createMonthlyScreen).asserting { result =>
-        result mustBe None
+        result mustBe MonthlyScreenOutcome.InsufficientEligible(value.id, 0, InvestmentRecipe.MinimumEligibleStocks)
         verify(screens).latestRanking
         verify(screens).get(id)
         verifyNoMoreInteractions(screens)
@@ -159,7 +162,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         when(screens.latestRanking).thenReturnIO(latest)
         when(screens.get(id)).thenReturnSome(saved)
         InvestmentScreenService.make(screens).flatMap(_.createMonthlyScreen).asserting { result =>
-          result mustBe None
+          result mustBe MonthlyScreenOutcome.AlreadyExists(saved.rankingId, saved.summary)
           verify(screens).get(id)
           verifyNoMoreInteractions(screens)
           succeed
@@ -250,8 +253,9 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         concentration.maxPositionWeightPercent mustBe BigDecimal(5)
         concentration.positionHerfindahl mustBe BigDecimal("0.05")
         concentration.industryWeightsPercent.values.sum mustBe BigDecimal(100)
-        first.map(_.id) mustBe Some(InvestmentScreenId("monthly:2026-10:quality-fair-value-v1"))
-        second mustBe None
+        val monthly = saved.find(_.id == InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")).get
+        first mustBe MonthlyScreenOutcome.Created(value.id, monthly.summary)
+        second mustBe MonthlyScreenOutcome.AlreadyExists(value.id, monthly.summary)
         saved.size mustBe 2
         saved.forall(_.rankingId == value.id) mustBe true
       }

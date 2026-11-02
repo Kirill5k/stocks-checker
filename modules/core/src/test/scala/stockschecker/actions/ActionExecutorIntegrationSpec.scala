@@ -1,5 +1,7 @@
 package stockschecker.actions
 
+import org.mockito.Mockito.verify
+
 import cats.data.NonEmptyList
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.foldable.*
@@ -84,7 +86,11 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       when(evaluations.captureMonthlyEvaluations).thenReturn(IO.pure(0))
       for {
         runs <- Ref.of[IO, Int](0)
-        _ = when(screens.createMonthlyScreen).thenReturn(runs.update(_ + 1).as(None))
+        _ = when(screens.createMonthlyScreen).thenReturn(
+          runs
+            .update(_ + 1)
+            .as(MonthlyScreenOutcome.InsufficientEligible(InvestmentRankingId("published"), 0, InvestmentRecipe.MinimumEligibleStocks))
+        )
         jobs           <- JobRepository.make[IO](db)
         commands       <- CommandRepository.make[IO](db)
         dispatcher     <- ActionDispatcher.make(jobs)
@@ -201,7 +207,11 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         screenRan       <- Ref.of[IO, Boolean](false)
         _ = when(rankings.refresh)
           .thenReturn(rankingStarted.complete(()).void >> releaseRanking.get)
-        _ = when(screens.createMonthlyScreen).thenReturn(screenRan.set(true).as(None))
+        _ = when(screens.createMonthlyScreen).thenReturn(
+          screenRan
+            .set(true)
+            .as(MonthlyScreenOutcome.InsufficientEligible(InvestmentRankingId("published"), 0, InvestmentRecipe.MinimumEligibleStocks))
+        )
         _ = when(evaluations.captureMonthlyEvaluations).thenReturn(captureFinished.complete(()).as(0))
         jobs     <- JobRepository.make[IO](db)
         now      <- IO.realTimeInstant
@@ -351,57 +361,59 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       }
     }
 
-    "bound unavailable-data retries, retain partial results and release the scheduled occurrence" in withEmbeddedMongoDatabase { db =>
-      val services = mock(classOf[Services[IO]])
-      val profiles = mock(classOf[CompanyProfileService[IO]])
-      when(services.companyProfile).thenReturn(profiles)
-      when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.DataUnavailable(MSFT, "missing session")))
-      for {
-        jobs           <- JobRepository.make[IO](db)
-        commands       <- CommandRepository.make[IO](db)
-        dispatcher     <- ActionDispatcher.make(jobs)
-        commandService <- CommandService.make(commands, dispatcher)
-        _ = when(services.command).thenReturn(commandService)
-        now     <- IO.realTimeInstant
-        command <- commands.create(
-          CreateCommand(Action.UpdateCompanyProfiles(NonEmptyList.of(AAPL, MSFT)), Schedule.Periodic(1.hour), Some(1))
-        )
-        ready      <- commands.initializeNextRun(command, now).map(_.get)
-        occurrence <- commands.reserve(ready, now).map(_.get)
-        parent = Job(
-          occurrence.activeRunId.get,
-          occurrence.action,
-          now,
-          now,
-          Some(JobCommand(occurrence.id, occurrence.version, occurrence.activeRunId.get))
-        )
-        childIds = List(JobId(s"${parent.id.value}/0"), JobId(s"${parent.id.value}/1"))
-        _ <- enqueue(jobs)(parent.copy(children = childIds, state = Job.Waiting, availableAt = now.plusSeconds(1)))
-        _ <- enqueue(jobs)(
-          Job(
-            childIds.head,
-            Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)),
-            now,
-            now,
-            command = parent.command,
-            state = Job.Succeeded
+    "finish unavailable data without retrying, retain partial results and release the scheduled occurrence" in withEmbeddedMongoDatabase {
+      db =>
+        val services = mock(classOf[Services[IO]])
+        val profiles = mock(classOf[CompanyProfileService[IO]])
+        when(services.companyProfile).thenReturn(profiles)
+        when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.DataUnavailable(MSFT, "missing session")))
+        for {
+          jobs           <- JobRepository.make[IO](db)
+          commands       <- CommandRepository.make[IO](db)
+          dispatcher     <- ActionDispatcher.make(jobs)
+          commandService <- CommandService.make(commands, dispatcher)
+          _ = when(services.command).thenReturn(commandService)
+          now     <- IO.realTimeInstant
+          command <- commands.create(
+            CreateCommand(Action.UpdateCompanyProfiles(NonEmptyList.of(AAPL, MSFT)), Schedule.Periodic(1.hour), Some(1))
           )
-        )
-        _ <- enqueue(jobs)(
-          Job(childIds.last, Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, command = parent.command, retries = 2)
-        )
-        executor  <- makeExecutor(jobs, services, ActionExecutorConfig(1))
-        result    <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, parent.id))
-        failed    <- jobs.find(childIds.last).map(_.get)
-        _         <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
-        completed <- commands.find(command.id)
-      } yield {
-        failed.state mustBe Job.Failed
-        failed.retries mustBe 3
-        result.state mustBe Job.Partial
-        completed.activeRunId mustBe None
-        completed.executionCount mustBe 1
-      }
+          ready      <- commands.initializeNextRun(command, now).map(_.get)
+          occurrence <- commands.reserve(ready, now).map(_.get)
+          parent = Job(
+            occurrence.activeRunId.get,
+            occurrence.action,
+            now,
+            now,
+            Some(JobCommand(occurrence.id, occurrence.version, occurrence.activeRunId.get))
+          )
+          childIds = List(JobId(s"${parent.id.value}/0"), JobId(s"${parent.id.value}/1"))
+          _ <- enqueue(jobs)(parent.copy(children = childIds, state = Job.Waiting, availableAt = now.plusSeconds(1)))
+          _ <- enqueue(jobs)(
+            Job(
+              childIds.head,
+              Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)),
+              now,
+              now,
+              command = parent.command,
+              state = Job.Succeeded
+            )
+          )
+          _ <- enqueue(jobs)(
+            Job(childIds.last, Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, command = parent.command)
+          )
+          executor  <- makeExecutor(jobs, services, ActionExecutorConfig(1))
+          result    <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, parent.id))
+          failed    <- jobs.find(childIds.last).map(_.get)
+          _         <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
+          completed <- commands.find(command.id)
+        } yield {
+          failed.state mustBe Job.Failed
+          failed.retries mustBe 0
+          verify(profiles).get(MSFT, true)
+          result.state mustBe Job.Partial
+          completed.activeRunId mustBe None
+          completed.executionCount mustBe 1
+        }
     }
 
     "continue later sequence stages after a partially successful ticker refresh" in withEmbeddedMongoDatabase { db =>

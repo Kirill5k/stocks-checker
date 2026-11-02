@@ -1,13 +1,11 @@
 package stockschecker.actions
 
-import stockschecker.domain.{FinancialMetric, Provider, ProviderDeferralReason}
+import stockschecker.domain.{Provider, ProviderDeferralReason}
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import stockschecker.domain.{Job, JobId, JobStatusSummary}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
-import io.circe.Json
-import mongo4cats.errors.MongoJsonParsingException
 
 import scala.concurrent.duration.*
 
@@ -60,62 +58,21 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
       failure(AppError.ProviderDeferred(Provider.Finnhub, ts, ProviderDeferralReason.Provider429), MaxTransientRetries) mustBe Failure
         .Defer(ts)
       failure(AppError.ProviderConfiguration(Provider.Finnhub, "key"), 0) mustBe Failure.Pause(Provider.Finnhub)
-      failure(AppError.DataUnavailable(AAPL, "missing"), MaxTransientRetries - 1) mustBe Failure.Retry
+      failure(AppError.DataUnavailable(AAPL, "missing"), 0) mustBe Failure.Fail
       failure(AppError.DataUnavailable(AAPL, "missing"), MaxTransientRetries) mustBe Failure.Fail
+      failure(AppError.HttpClient(Provider.TwelveData.print, 400, "invalid request"), 0) mustBe Failure.Fail
       failure(AppError.HttpClient(Provider.Finnhub.print, 401, "unauthorized"), 0) mustBe Failure.Fail
       failure(AppError.HttpClient(Provider.Finnhub.print, 503, "unavailable"), 0) mustBe Failure.Retry
+      failure(AppError.HttpClient(Provider.Finnhub.print, 503, "unavailable"), MaxTransientRetries) mustBe Failure.Fail
       retryDelay(0, MinimumRetryJitterMillis) mustBe 1500.millis
       retryDelay(2, MaximumRetryJitterMillis) mustBe 5500.millis
     }
 
-    "report Mongo decoding field paths without exposing stored documents or invalid values" in {
-      val document = Json.obj("job" -> Json.obj("waitCount" -> Json.Null, "privateValue" -> Json.fromString("secret-document")))
-      val decoding = document.hcursor.downField("job").get[Int]("waitCount").swap.toOption.get
-      val error    = MongoJsonParsingException(decoding.getMessage, Some(document.noSpaces))
-      errorSummary(error) must include("$.job.waitCount")
-      errorSummary(error) must not include "secret-document"
-      errorSummary(error) must not include "privateValue"
-
-      val invalidValue = MongoJsonParsingException(
-        "DecodingFailure at .financialSnapshots[0].snapshot.metrics: Invalid value secret-response",
-        Some("secret-document")
-      )
-      errorSummary(invalidValue) mustBe "MongoJsonParsingException at $.financialSnapshots[0].snapshot.metrics (invalid value)"
-      errorSummary(MongoJsonParsingException("DecodingFailure at .evaluation.dataThrough: Missing required field")) mustBe
-        "MongoJsonParsingException at $.evaluation.dataThrough (missing required field)"
-      errorSummary(MongoJsonParsingException("DecodingFailure at .job.waitCount: Int")) mustBe
-        "MongoJsonParsingException at $.job.waitCount (expected Int)"
-    }
-
-    "retain digit-leading metric field paths from real map decoding failures" in {
-      val document = Json.obj(
-        "financialSnapshots" -> Json.arr(Json.obj("metrics" -> Json.obj("26WeekPriceReturnDaily" -> Json.fromString("private-value"))))
-      )
-      val decoding = document.hcursor
-        .downField("financialSnapshots")
-        .downArray
-        .get[Map[FinancialMetric, BigDecimal]]("metrics")
-        .swap
-        .toOption
-        .get
-      val error = MongoJsonParsingException(decoding.getMessage, Some(document.noSpaces))
-      errorSummary(error) mustBe "MongoJsonParsingException at $.financialSnapshots[0].metrics.26WeekPriceReturnDaily (invalid map key)"
-      errorSummary(error) must not include "private-value"
-      failure(error, 0) mustBe Failure.Fail
-    }
-
-    "omit unrecognized or unsafe Mongo decoding messages and avoid retrying malformed data" in {
-      List(
-        "Cannot map secret-document bson value to json",
-        "DecodingFailure at .field\ninjected: secret-value",
-        s"DecodingFailure at .${"x" * 300}: secret-value"
-      ).foreach { message =>
-        val error = MongoJsonParsingException(message, Some("secret-document"))
-        errorSummary(error) mustBe "MongoJsonParsingException (invalid stored data; field path unavailable)"
-        failure(error, 0) mustBe Failure.Fail
-      }
+    "retain bounded transport retries" in {
       failure(new com.mongodb.MongoException("connection failed"), 0) mustBe Failure.Retry
-      errorSummary(new java.io.IOException("connection interrupted")) mustBe "connection interrupted"
+      failure(new java.io.IOException("connection interrupted"), 0) mustBe Failure.Retry
+      failure(new com.mongodb.MongoException("connection failed"), MaxTransientRetries) mustBe Failure.Fail
+      failure(new java.io.IOException("connection interrupted"), MaxTransientRetries) mustBe Failure.Fail
     }
 
     "assign evaluation backfills lower execution priority than ordinary work" in {

@@ -55,7 +55,7 @@ final private class CommandController[F[_]: Async](
     .serverLogic { _ => cid =>
       service
         .executeManually(cid)
-        .asVoidResponse
+        .mapToResponse(_.value)
     }
 
   val routes: HttpRoutes[F] =
@@ -150,6 +150,7 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
   private val executeManuallyCommandEndpoint = Controller.secureEndpoint.post
     .in(commandIdPath / "execute")
     .out(statusCode(StatusCode.NoContent))
+    .out(header[String]("X-Job-Id"))
     .description("Manually execute a command without affecting its schedule or execution count")
 
   def make[F[_]: Async](config: ApiConfig, service: CommandService[F]): F[Controller[F]] =

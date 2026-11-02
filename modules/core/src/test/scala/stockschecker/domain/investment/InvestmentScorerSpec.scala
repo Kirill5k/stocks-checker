@@ -58,6 +58,19 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
     )
 
   "InvestmentScorer" should {
+    "exclude 57 complete candidates in undersized peer groups without lowering the recipe thresholds" in {
+      val candidates = List(Sector.Technology, Sector.Healthcare, Sector.Industrials).flatMap { sector =>
+        (1 to 19).map(i => candidate(s"${sector.print}$i", industry = sector.print, sector = sector))
+      }
+      val cards = InvestmentScorer.rank(candidates, now, InvestmentRecipe())
+      cards.size mustBe 57
+      cards.foreach { card =>
+        card.eligible mustBe false
+        card.exclusions mustBe List(InvestmentReasons.InsufficientPeerCoverage)
+        card.peerCount mustBe 19
+      }
+    }
+
     "rank stronger financial fundamentals with separately explained pillars" in {
       val cards = InvestmentScorer.rank(List(candidate("LOW"), candidate("HIGH", 2)), now, recipe)
       cards.map(_.ticker.value) mustBe List("HIGH", "LOW")

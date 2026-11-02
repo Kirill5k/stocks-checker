@@ -3,8 +3,8 @@ package stockschecker.repositories
 import cats.data.NonEmptyList
 import cats.effect.IO
 import org.scalatest.wordspec.AsyncWordSpec
-import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Sector, Ticker}
-import stockschecker.fixtures.{ts, AAPL, AAPLCompanyProfile, MSFT, MSFTCompanyProfile}
+import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, ListingStatus, Sector, Ticker}
+import stockschecker.fixtures.{ts, AAPL, AAPLCompanyProfile, AAPLSecurity, MSFT, MSFTCompanyProfile, MSFTSecurity}
 
 import java.time.LocalDate
 import scala.concurrent.Future
@@ -40,7 +40,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
 
     "setActive" should {
       "ignore older and duplicate requests within the same millisecond" in
-        withEmbeddedMongoDatabase { db =>
+        withEmbeddedMongoDatabase(Map(SecurityRepository.CollectionName -> List(toDoc(AAPLSecurity)))) { db =>
           val newer = ts.plusNanos(2)
           for
             repo   <- CompanyProfileRepository.make[IO](db)
@@ -109,6 +109,63 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
     }
 
     "findTickersBy" should {
+      "require an active listed security when selecting active profiles" in {
+        val delisted = Ticker("DELISTED")
+        val missing  = Ticker("MISSING")
+        val seed     = Map(
+          CompanyProfileRepository.CollectionName -> List(
+            toDoc(AAPLCompanyProfile),
+            toDoc(MSFTCompanyProfile),
+            toDoc(AAPLCompanyProfile.copy(ticker = delisted)),
+            toDoc(AAPLCompanyProfile.copy(ticker = missing))
+          ),
+          SecurityRepository.CollectionName -> List(
+            toDoc(AAPLSecurity),
+            toDoc(MSFTSecurity.copy(isActive = false)),
+            toDoc(AAPLSecurity.copy(ticker = delisted, listingStatus = ListingStatus.Delisted))
+          )
+        )
+        withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo <- CompanyProfileRepository.make[IO](db)
+            res  <- repo.findTickersBy(CompanyProfileFilter.IsActive(true), None)
+          yield res mustBe List(AAPL)
+        }
+      }
+
+      "apply nested active-security eligibility before the market-cap limit" in {
+        val smaller = Ticker("SMALLER")
+        val seed    = Map(
+          CompanyProfileRepository.CollectionName -> List(
+            toDoc(AAPLCompanyProfile),
+            toDoc(MSFTCompanyProfile),
+            toDoc(AAPLCompanyProfile.copy(ticker = smaller, marketCap = 1000000000L))
+          ),
+          SecurityRepository.CollectionName -> List(
+            toDoc(AAPLSecurity.copy(isActive = false)),
+            toDoc(MSFTSecurity),
+            toDoc(AAPLSecurity.copy(ticker = smaller))
+          )
+        )
+        val filter = CompanyProfileFilter.Composite(
+          NonEmptyList.of(
+            CompanyProfileFilter.CountryIs("US"),
+            CompanyProfileFilter.Composite(
+              NonEmptyList.of(CompanyProfileFilter.IsActive(true), CompanyProfileFilter.PriceAnalyticsNotUpdatedFor(3.days))
+            )
+          )
+        )
+        withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo    <- CompanyProfileRepository.make[IO](db)
+            limited <- repo.findTickersBy(filter, Some(1))
+            all     <- repo.findTickersBy(filter, None)
+          yield
+            limited mustBe List(MSFT)
+            all mustBe List(MSFT, smaller)
+        }
+      }
+
       "return tickers filtered by MarketCapAbove" in
         withEmbeddedMongoDatabase { db =>
           for

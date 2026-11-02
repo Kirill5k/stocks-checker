@@ -15,6 +15,7 @@ trait Services[F[_]]:
   def companyProfile: CompanyProfileService[F]
   def price: PriceService[F]
   def command: CommandService[F]
+  def jobs: JobService[F]
   def stock: StockService[F]
   def financialMetrics: FinancialMetricsService[F]
   def investmentRankings: InvestmentRankingService[F]
@@ -34,10 +35,11 @@ object Services:
       st          <- StockService.make(repos.stock, ad)
       rankings    <- InvestmentRankingService.make(repos.investmentRankings, recipe)
       s           <- SecurityService.make(repos.security, clients.marketData, ad)
-      quality     <- DataQualityService.make(repos.dataQuality)
+      quality     <- DataQualityService.make(repos.dataQuality, recipe)
       cp          <- CompanyProfileService.make(repos.companyProfile, clients.marketData, ad)
       p           <- PriceService.make(repos.priceAnalytics, ad, repos.priceHistory, clients.marketData)
       c           <- CommandService.make(repos.command, ad)
+      j           <- JobService.make(ad)
       fm          <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, ad, repos.financialHistory)
       investment  <- InvestmentScreenService.make(repos.investmentScreens, recipe)
       evaluations <- InvestmentEvaluationService.make(repos.investmentEvaluations, ad)
@@ -46,6 +48,7 @@ object Services:
       override def companyProfile: CompanyProfileService[F]              = cp
       override def price: PriceService[F]                                = p
       override def command: CommandService[F]                            = c
+      override def jobs: JobService[F]                                   = j
       override def stock: StockService[F]                                = st
       override def financialMetrics: FinancialMetricsService[F]          = fm
       override def investmentRankings: InvestmentRankingService[F]       = rankings

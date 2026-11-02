@@ -27,18 +27,22 @@ object PriceAnalyticsAlignment:
       valid       <- PriceAnalyticsCalculator.validate(bars, monthly = false).left.map(AppError.FailedValidation(_))
       quoteBars   <- NonEmptyList.fromList(quoted.candles).toRight(AppError.PriceAnalyticsNotFound(ticker))
       validQuotes <- PriceAnalyticsCalculator.validate(quoteBars, monthly = false).left.map(AppError.FailedValidation(_))
+      context = s"through=$through adjustedLatest=${valid.head.date} quotedLatest=${validQuotes.head.date}"
       // A deferred quote request may finish in a later session; both series must use the same endpoint.
       quotesByDate = validQuotes.toList.map(c => c.date -> c).toMap
       common <- valid.toList.iterator
         .filterNot(_.date.isAfter(through))
         .flatMap(candle => quotesByDate.get(candle.date).map(quote => candle -> quote))
         .nextOption()
-        .toRight(AppError.DataUnavailable(ticker, "adjusted and quoted histories have no common trading session"))
+        .toRight(AppError.DataUnavailable(ticker, s"adjusted and quoted histories have no common trading session; $context"))
       (endpoint, quote) = common
       _ <- Either.cond(
         ChronoUnit.DAYS.between(endpoint.date, through) <= 7,
         (),
-        AppError.DataUnavailable(ticker, "the latest matching trading session is more than seven days old")
+        AppError.DataUnavailable(
+          ticker,
+          s"the latest matching trading session is more than seven days old; commonLatest=${endpoint.date} $context"
+        )
       )
       aligned   = NonEmptyList(endpoint, valid.toList.filter(_.date.isBefore(endpoint.date)))
       analytics = PriceAnalyticsCalculator.fromDaily(ticker, aligned)

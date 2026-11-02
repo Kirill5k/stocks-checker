@@ -1,11 +1,10 @@
 package stockschecker.services
 
 import cats.effect.Sync
-import cats.syntax.applicative.*
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
-import cats.syntax.option.*
 import kirill5k.common.cats.Clock
+import org.typelevel.log4cats.Logger
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.domain.investment.InvestmentScreenSelection
@@ -17,14 +16,15 @@ trait InvestmentScreenService[F[_]]:
   def create(request: InvestmentScreenRequest): F[InvestmentScreenResult]
   def get(id: InvestmentScreenId): F[InvestmentScreenResult]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
-  def createMonthlyScreen: F[Option[InvestmentScreenSummary]]
+  def createMonthlyScreen: F[MonthlyScreenOutcome]
 
 final private class LiveInvestmentScreenService[F[_]](
     private val screens: InvestmentScreenRepository[F],
     private val recipe: InvestmentRecipe
 )(using
     F: Sync[F],
-    C: Clock[F]
+    C: Clock[F],
+    logger: Logger[F]
 ) extends InvestmentScreenService[F] {
   private def saveScreen(
       id: InvestmentScreenId,
@@ -70,30 +70,49 @@ final private class LiveInvestmentScreenService[F[_]](
       AppError.FailedValidation(s"limit must be between ${InvestmentRecipe.MinimumLimit} and ${InvestmentRecipe.MaximumLimit}")
     ) >> screens.list(limit)
 
-  override def createMonthlyScreen: F[Option[InvestmentScreenSummary]] =
+  override def createMonthlyScreen: F[MonthlyScreenOutcome] =
     for
       now <- C.now
       date      = now.atZone(ZoneOffset.UTC).toLocalDate
       monthlyId = InvestmentScreenId(s"monthly:${YearMonth.from(date)}:${recipe.version}")
       existing <- screens.get(monthlyId)
-      created  <- existing match
-        case Some(_) =>
-          none[InvestmentScreenSummary].pure[F]
+      outcome  <- existing match
+        case Some(screen) =>
+          F.pure[MonthlyScreenOutcome](MonthlyScreenOutcome.AlreadyExists(screen.rankingId, screen.summary))
         case None =>
           for
             ranking <- latestRanking(now)
             _       <- F.raiseWhen(ranking.createdAt.atZone(ZoneOffset.UTC).toLocalDate != date)(
               AppError.FailedValidation("The latest completed ranking is not from today; wait for the scheduled ranking run")
             )
-            created <-
-              if ranking.summary.eligibleCount < InvestmentRecipe.MinimumEligibleStocks then none[InvestmentScreenSummary].pure[F]
-              else saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking).map(r => Some(r.summary))
-          yield created
-    yield created
+            outcome <-
+              if ranking.summary.eligibleCount < InvestmentRecipe.MinimumEligibleStocks then
+                F.pure[MonthlyScreenOutcome](
+                  MonthlyScreenOutcome
+                    .InsufficientEligible(ranking.id, ranking.summary.eligibleCount, InvestmentRecipe.MinimumEligibleStocks)
+                )
+              else
+                saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking)
+                  .map[MonthlyScreenOutcome](r => MonthlyScreenOutcome.Created(ranking.id, r.summary))
+          yield outcome
+      _ <- outcome match
+        case MonthlyScreenOutcome.Created(rankingId, summary) =>
+          logger.info(
+            s"Created monthly screen ${summary.id.value}: ranking=${rankingId.value}, eligible=${summary.eligibleCount}, required=${InvestmentRecipe.MinimumEligibleStocks}, selected=${summary.selectedCount}"
+          )
+        case MonthlyScreenOutcome.AlreadyExists(rankingId, summary) =>
+          logger.info(
+            s"Monthly screen ${summary.id.value} already exists: ranking=${rankingId.value}, eligible=${summary.eligibleCount}, required=${InvestmentRecipe.MinimumEligibleStocks}"
+          )
+        case MonthlyScreenOutcome.InsufficientEligible(rankingId, eligible, required) =>
+          logger.info(
+            s"Monthly screen ${monthlyId.value} skipped: insufficient eligible stocks, ranking=${rankingId.value}, eligible=$eligible, required=$required"
+          )
+    yield outcome
 }
 
 object InvestmentScreenService:
-  def make[F[_]: {Sync, Clock}](
+  def make[F[_]: {Sync, Clock, Logger}](
       screens: InvestmentScreenRepository[F],
       recipe: InvestmentRecipe = InvestmentRecipe()
   ): F[InvestmentScreenService[F]] =

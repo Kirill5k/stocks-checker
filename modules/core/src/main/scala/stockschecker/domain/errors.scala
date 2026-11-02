@@ -9,7 +9,7 @@ object errors {
     /** Safe operational messages: never persist provider response bodies or credentials. */
     def safeSummary(error: Throwable): String = error match
       case e: ProviderDeferred      => s"Deferred: provider=${e.provider.print} reason=${e.reason.print} retryAt=${e.retryAt}"
-      case _: DataUnavailable       => "Recent matching provider price data is unavailable"
+      case e: DataUnavailable       => e.message
       case _: ProviderConfiguration => "Check provider credentials and subscription"
       case e: HttpClient            => s"HTTP ${e.status}"
       case _: JsonParsingFailure    => "Invalid provider response"
@@ -36,7 +36,7 @@ object errors {
 
     final case class ProviderConfiguration(provider: Provider, message: String) extends AppError
 
-    /** Missing market observations use bounded job retries, unlike provider quota deferrals. */
+    /** Missing market observations finish the current job; a later scheduled refresh may try again. */
     final case class DataUnavailable(ticker: Ticker, reason: String) extends AppError:
       override def message: String = s"Data unavailable for $ticker: $reason"
 

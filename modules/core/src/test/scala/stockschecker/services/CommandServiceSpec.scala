@@ -6,7 +6,7 @@ import cats.syntax.traverse.*
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import stockschecker.actions.{Action, ActionDispatcher}
-import stockschecker.domain.{CommandId, CreateCommand, Schedule, UpdateCommand}
+import stockschecker.domain.{CommandId, CreateCommand, JobId, Schedule, UpdateCommand}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.CommandRepository
@@ -50,13 +50,15 @@ class CommandServiceSpec extends IOWordSpec {
     "dispatch manual execution independently of a schedule's execution limit" in {
       val (dispatcher, commands) = mocks
       val command                = FetchLatestSecuritiesCommand.copy(executionCount = 1, maxExecutions = Some(1))
+      val jobId                  = JobId("manual-run")
       when(commands.find(any[CommandId])).thenReturnIO(command)
-      when(dispatcher.dispatch(any[Action])).thenReturnUnit
+      when(dispatcher.dispatchTracked(any[Action])).thenReturnIO(jobId)
       (for {
         service <- CommandService.make(commands, dispatcher)
-        _       <- service.executeManually(command.id)
-      } yield ()).asserting { _ =>
-        verify(dispatcher).dispatch(command.action)
+        result  <- service.executeManually(command.id)
+      } yield result).asserting { result =>
+        result mustBe jobId
+        verify(dispatcher).dispatchTracked(command.action)
         verify(commands).find(command.id)
         verifyNoMoreInteractions(commands)
         succeed
