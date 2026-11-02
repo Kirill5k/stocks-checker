@@ -59,14 +59,95 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
           securities <- db.getCollection(SecurityRepository.CollectionName)
           _          <- rankings.save(ranking, values)
           visible    <- repo.visibleRankingTickers(ranking.id)
+          selected   <- repo.visibleRankingTickers(ranking.id, Some(Set(MSFT, Ticker("MISSING"))))
+          empty      <- repo.visibleRankingTickers(ranking.id, Some(Set.empty))
           _          <- securities.updateOne(Filter.idEq(MSFT.value), Update.set("listingStatus", ListingStatus.Delisted.print))
           current    <- repo.visibleRankingTickers(ranking.id)
+          hidden     <- repo.visibleRankingTickers(ranking.id, Some(Set(MSFT)))
           frozen     <- repo.rankingEntries(ranking.id)
         yield
           visible mustBe Set(AAPL, MSFT)
+          selected mustBe Set(MSFT)
+          empty mustBe Set.empty
           current mustBe Set(AAPL)
+          hidden mustBe Set.empty
           frozen mustBe values
       }
+
+    "read stored cohort entries without loading unrelated exclusions unless explicitly requested" in
+      withActiveStocks(List(AAPL, MSFT)) { db =>
+        val excluded = (1 to 1000).toList.map { n =>
+          entries.head.copy(scorecard =
+            card.copy(ticker = Ticker(s"EXCLUDED$n"), eligible = false, exclusions = List("missing-financial-snapshot"))
+          )
+        }
+        val otherHolding = entries.head.copy(scorecard = card.copy(ticker = MSFT))
+        val values       = excluded.take(500) ++ List(otherHolding) ++ excluded.drop(500) ++ entries
+        val saved        = screen.copy(cohorts =
+          List(
+            InvestmentCohort(CohortName.Investment, List(AAPL)),
+            InvestmentCohort(CohortName.EqualUniverse, List(AAPL, MSFT))
+          )
+        )
+        for
+          repo     <- InvestmentScreenRepository.make[IO](db)
+          rankings <- InvestmentRankingRepository.make[IO](db)
+          _        <- rankings.save(ranking, values)
+          _        <- rankings.save(ranking.copy(id = InvestmentRankingId("another-ranking")), entries)
+          bounded  <- repo.detailEntries(saved, includeExclusions = false)
+          full     <- repo.detailEntries(saved, includeExclusions = true)
+          frozen   <- repo.rankingEntries(ranking.id)
+        yield
+          bounded mustBe List(otherHolding, entries.head)
+          full mustBe values
+          frozen mustBe values
+      }
+
+    "filter financial near misses by scope and current availability before limiting them in ranking order" in {
+      val inactive        = (1 to InvestmentRecipe.NearMissLimit).toList.map(n => Ticker(s"INACTIVE$n"))
+      val profileInactive = Ticker("PROFILE-INACTIVE")
+      val delisted        = Ticker("DELISTED")
+      val foreign         = Ticker("FOREIGN")
+      val otherExchange   = Ticker("OTHER-EXCHANGE")
+      val eligible        = Ticker("ELIGIBLE")
+      val unexplained     = Ticker("UNEXPLAINED")
+      val nearTickers     = (1 to (InvestmentRecipe.NearMissLimit + 2)).toList.reverse.map(n => Ticker(f"NEAR$n%02d"))
+      val tickers = AAPL :: (inactive ++ List(profileInactive, delisted, foreign, otherExchange, eligible, unexplained) ++ nearTickers)
+      def nearMiss(ticker: Ticker): InvestmentRankingEntry =
+        entries.head.copy(
+          input = entries.head.input
+            .copy(exchange = Exchange.NASDAQ, country = Some("US"), exclusionExplanation = Some("one financial rule failed")),
+          scorecard = card.copy(ticker = ticker, eligible = false, score = None, exclusions = List("insufficient-cash-flow-durability"))
+        )
+      val filtered = List(
+        nearMiss(foreign).copy(input = nearMiss(foreign).input.copy(country = Some("GB"))),
+        nearMiss(otherExchange).copy(input = nearMiss(otherExchange).input.copy(exchange = Exchange.NYSE)),
+        nearMiss(eligible).copy(scorecard = card.copy(ticker = eligible)),
+        nearMiss(unexplained).copy(input = nearMiss(unexplained).input.copy(exclusionExplanation = None))
+      ) ++ (inactive ++ List(profileInactive, delisted)).map(nearMiss)
+      val nearby = nearTickers.map(nearMiss)
+      val values = filtered ++ nearby.take(2) ++ entries ++ nearby.drop(2)
+      val saved  = screen.copy(request = InvestmentScreenRequest(exchange = Some(Exchange.NASDAQ), country = Some("US")))
+      withActiveStocks(tickers) { db =>
+        for
+          repo       <- InvestmentScreenRepository.make[IO](db)
+          rankings   <- InvestmentRankingRepository.make[IO](db)
+          securities <- db.getCollection(SecurityRepository.CollectionName)
+          profiles   <- db.getCollection(CompanyProfileRepository.CollectionName)
+          _          <- rankings.save(ranking, values)
+          _          <- securities.updateMany(
+            Filter.in(SecurityRepository.Field.Id, inactive.map(_.value)),
+            Update.set(SecurityRepository.Field.IsActive, false)
+          )
+          _ <- securities.updateOne(
+            Filter.idEq(delisted.value),
+            Update.set(SecurityRepository.Field.ListingStatus, ListingStatus.Delisted.print)
+          )
+          _       <- profiles.updateOne(Filter.idEq(profileInactive.value), Update.set(CompanyProfileRepository.Field.IsActive, false))
+          bounded <- repo.detailEntries(saved, includeExclusions = false)
+        yield bounded mustBe (nearby.take(2) ++ entries ++ nearby.slice(2, InvestmentRecipe.NearMissLimit))
+      }
+    }
 
     "join a screen to its pinned ranking while loading ordered entries separately" in
       withActiveStocks(List(AAPL, MSFT)) { db =>

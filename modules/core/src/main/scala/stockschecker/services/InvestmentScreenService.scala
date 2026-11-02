@@ -14,7 +14,7 @@ import java.time.{Instant, YearMonth, ZoneOffset}
 
 trait InvestmentScreenService[F[_]]:
   def create(request: InvestmentScreenRequest): F[InvestmentScreenResult]
-  def get(id: InvestmentScreenId): F[InvestmentScreenResult]
+  def get(id: InvestmentScreenId, includeExclusions: Boolean = false): F[InvestmentScreenResult]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
   def createMonthlyScreen: F[MonthlyScreenOutcome]
 
@@ -26,14 +26,14 @@ final private class LiveInvestmentScreenService[F[_]](
     C: Clock[F],
     logger: Logger[F]
 ) extends InvestmentScreenService[F] {
-  private def currentEntries(id: InvestmentRankingId, requireScoringPeers: Boolean): F[List[InvestmentRankingEntry]] =
+  private def currentEntries(id: InvestmentRankingId): F[List[InvestmentRankingEntry]] =
     for
       entries <- screens.rankingEntries(id)
-      visible <- screens.visibleRankingTickers(id)
+      visible <- screens.visibleRankingTickers(id, None)
       peers = entries.filter(entry =>
         entry.scorecard.eligible || entry.scorecard.exclusions == List(InvestmentReasons.InsufficientPeerCoverage)
       )
-      _ <- F.raiseWhen(requireScoringPeers && peers.exists(entry => !visible(entry.scorecard.ticker)))(
+      _ <- F.raiseWhen(peers.exists(entry => !visible(entry.scorecard.ticker)))(
         AppError.FailedValidation(
           "The ranking contains scoring peers that are no longer active; refresh the ranking before creating a screen"
         )
@@ -46,7 +46,7 @@ final private class LiveInvestmentScreenService[F[_]](
       ranking: InvestmentRanking
   ): F[InvestmentScreenResult] =
     for
-      entries <- currentEntries(ranking.id, requireScoringPeers = true)
+      entries <- currentEntries(ranking.id)
       now     <- C.now
       selection = InvestmentScreenSelection(entries, request)
       screen    = InvestmentScreen.create(id, now, ranking, request, selection.cohorts)
@@ -62,16 +62,19 @@ final private class LiveInvestmentScreenService[F[_]](
       saved   <- saveScreen(id, request, ranking)
     yield saved
 
-  override def get(id: InvestmentScreenId): F[InvestmentScreenResult] =
+  override def get(id: InvestmentScreenId, includeExclusions: Boolean = false): F[InvestmentScreenResult] =
     for
       context <- screens.findWithRanking(id)
       (screen, ranking) = context
-      entries <- currentEntries(ranking.id, requireScoringPeers = false)
-      visible = entries.iterator.map(_.scorecard.ticker).toSet
-      _ <- F.raiseWhen(screen.cohorts.iterator.flatMap(_.tickers).exists(ticker => !visible(ticker)))(
+      entries <- screens.detailEntries(screen, includeExclusions)
+      holdings = screen.cohorts.iterator.flatMap(_.tickers).toSet
+      tickers  = holdings ++ entries.iterator.map(_.scorecard.ticker)
+      visible <- screens.visibleRankingTickers(ranking.id, Some(tickers))
+      _       <- F.raiseWhen(holdings.exists(ticker => !visible(ticker)))(
         AppError.EntityDoesNotExist("Investment screen", id.value)
       )
-    yield InvestmentScreenSelection(entries, screen.request).result(screen)
+      result = InvestmentScreenSelection(entries.filter(entry => visible(entry.scorecard.ticker)), screen.request).result(screen)
+    yield if includeExclusions then result else result.copy(exclusions = Nil)
 
   private def latestRanking(now: Instant): F[InvestmentRanking] =
     for

@@ -7,7 +7,7 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.investment.InvestmentScorer
+import stockschecker.domain.investment.{InvestmentScorer, InvestmentScreenSelection}
 import stockschecker.repositories.*
 import stockschecker.fixtures.*
 
@@ -30,8 +30,24 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         get(id).flatMap(screen => IO.fromOption(screen)(AppError.EntityDoesNotExist("Investment screen", id.value))).map(_ -> value)
       def latestRanking: IO[Option[InvestmentRanking]]                              = IO.pure(Some(value))
       def rankingEntries(id: InvestmentRankingId): IO[List[InvestmentRankingEntry]] = IO.pure(if id == value.id then entries else Nil)
-      def visibleRankingTickers(id: InvestmentRankingId): IO[Set[Ticker]]           =
-        rankingEntries(id).map(_.map(_.scorecard.ticker).toSet -- hidden)
+      def detailEntries(screen: InvestmentScreen, includeExclusions: Boolean): IO[List[InvestmentRankingEntry]] =
+        rankingEntries(screen.rankingId).map { rows =>
+          val scoped = rows.filter(entry =>
+            screen.request.exchange.forall(_ == entry.input.exchange) &&
+              screen.request.country.forall(country => entry.input.country.contains(country))
+          )
+          if includeExclusions then rows
+          else
+            val holdings   = screen.cohorts.iterator.flatMap(_.tickers).toSet
+            val nearMisses = scoped
+              .filter(entry => !entry.scorecard.eligible && entry.input.exclusionExplanation.isDefined && !hidden(entry.scorecard.ticker))
+              .take(InvestmentRecipe.NearMissLimit)
+              .map(_.scorecard.ticker)
+              .toSet
+            rows.filter(entry => holdings(entry.scorecard.ticker) || nearMisses(entry.scorecard.ticker))
+        }
+      def visibleRankingTickers(id: InvestmentRankingId, tickers: Option[Set[Ticker]]): IO[Set[Ticker]] =
+        rankingEntries(id).map(_.iterator.map(_.scorecard.ticker).filter(ticker => tickers.forall(_.contains(ticker))).toSet -- hidden)
       def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]] = state.get.map(_.find(_.id == id))
       def list(limit: Int): IO[List[InvestmentScreenSummary]]       = state.get.map(_.reverse.take(limit).map(_.summary))
 
@@ -42,13 +58,18 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
     val byTicker = inputs.map(c => c.stock.security.ticker -> c).toMap
     cards.map(card => InvestmentRankingEntry.from(byTicker(card.ticker), card))
 
-  private def readSaved(request: InvestmentScreenRequest, entries: List[InvestmentRankingEntry]): IO[InvestmentScreenResult] =
-    val value  = ranking(entries)
-    val screen = InvestmentScreen.create(InvestmentScreenId("saved"), now, value, request, Nil)
+  private def readSaved(
+      request: InvestmentScreenRequest,
+      entries: List[InvestmentRankingEntry],
+      includeExclusions: Boolean = false
+  ): IO[InvestmentScreenResult] =
+    val value   = ranking(entries)
+    val cohorts = InvestmentScreenSelection(entries, request).cohorts
+    val screen  = InvestmentScreen.create(InvestmentScreenId("saved"), now, value, request, cohorts)
     for
       state   <- Ref.of[IO, List[InvestmentScreen]](List(screen))
       service <- InvestmentScreenService.make(memoryScreens(state, value, entries))
-      found   <- service.get(screen.id)
+      found   <- service.get(screen.id, includeExclusions)
     yield found
 
   "InvestmentScreenService" should {
@@ -66,13 +87,13 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         List(InvestmentCohort(CohortName.Investment, List(AAPL)), InvestmentCohort(CohortName.EqualUniverse, List(AAPL, MSFT)))
       )
       when(screens.findWithRanking(saved.id)).thenReturnIO(saved -> value)
-      when(screens.rankingEntries(value.id)).thenReturnIO(entries)
-      when(screens.visibleRankingTickers(value.id)).thenReturnIO(Set(AAPL))
+      when(screens.detailEntries(saved, false)).thenReturnIO(entries)
+      when(screens.visibleRankingTickers(value.id, Some(Set(AAPL, MSFT)))).thenReturnIO(Set(AAPL))
       InvestmentScreenService.make(screens).flatMap(_.get(saved.id)).attempt.asserting { result =>
         result mustBe Left(AppError.EntityDoesNotExist("Investment screen", saved.id.value))
         verify(screens).findWithRanking(saved.id)
-        verify(screens).rankingEntries(value.id)
-        verify(screens).visibleRankingTickers(value.id)
+        verify(screens).detailEntries(saved, false)
+        verify(screens).visibleRankingTickers(value.id, Some(Set(AAPL, MSFT)))
         verifyNoMoreInteractions(screens)
         succeed
       }
@@ -111,13 +132,106 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       (for
         state    <- Ref.of[IO, List[InvestmentScreen]](List(saved))
         service  <- InvestmentScreenService.make(memoryScreens(state, value, entries, Set(MSFT)))
-        result   <- service.get(saved.id)
+        result   <- service.get(saved.id, includeExclusions = true)
         retained <- state.get
       yield (result, retained)).asserting { case (result, retained) =>
         result.candidates.map(_.ticker) mustBe List(AAPL)
         result.exclusions mustBe Nil
         result.summary mustBe saved.summary
         result.cohorts mustBe saved.cohorts
+        retained mustBe List(saved)
+      }
+    }
+
+    "omit exclusions by default and return them on request without changing the saved screen or candidate evidence" in {
+      val excluded = Ticker("EXCLUDED")
+      val card     = InvestmentScorecard(AAPL, true, Some(90), Map.empty, Map.empty, Nil, Nil, Some("peer"), 20, "v1")
+      val cards    = List(
+        card,
+        card.copy(ticker = MSFT, eligible = false, score = None, exclusions = List("missing-financial-snapshot")),
+        card.copy(ticker = excluded, eligible = false, score = None, exclusions = List("insufficient-cash-flow-durability"))
+      )
+      val entries = cards.map { value =>
+        val entry = InvestmentRankingEntry.from(
+          InvestmentCandidate(AAPLStock.copy(security = AAPLSecurity.copy(ticker = value.ticker)), None),
+          value
+        )
+        if value.ticker == excluded then entry.copy(input = entry.input.copy(exclusionExplanation = Some("Only three positive years")))
+        else entry
+      }
+      val value     = ranking(entries)
+      val request   = InvestmentScreenRequest()
+      val selection = InvestmentScreenSelection(entries, request)
+      val saved     = InvestmentScreen.create(InvestmentScreenId("saved"), now, value, request, selection.cohorts)
+      (for
+        state    <- Ref.of[IO, List[InvestmentScreen]](List(saved))
+        service  <- InvestmentScreenService.make(memoryScreens(state, value, entries))
+        compact  <- service.get(saved.id)
+        full     <- service.get(saved.id, includeExclusions = true)
+        retained <- state.get
+      yield (compact, full, retained)).asserting { case (compact, full, retained) =>
+        compact.exclusions mustBe Nil
+        full.exclusions.map(_.ticker) mustBe List(MSFT, excluded)
+        compact.candidates mustBe List(card)
+        compact.candidates mustBe full.candidates
+        compact.nearMisses.map(_.scorecard.ticker) mustBe List(excluded)
+        compact.nearMisses mustBe full.nearMisses
+        compact.summary mustBe saved.summary
+        compact.cohorts mustBe saved.cohorts
+        compact.rankingId mustBe saved.rankingId
+        full.copy(exclusions = Nil) mustBe compact
+        retained mustBe List(saved)
+      }
+    }
+
+    "retain a saved hundred-stock display limit and threshold near misses outside the investment cohort" in {
+      val cards = (1 to 105).toList.map { n =>
+        InvestmentScorecard(
+          Ticker(f"TEST$n%03d"),
+          true,
+          Some(if n <= 100 then BigDecimal(90) else BigDecimal(60)),
+          Map.empty,
+          Map.empty,
+          Nil,
+          Nil,
+          Some("peer"),
+          105,
+          "v1"
+        )
+      }
+      val entries = cards.map(card =>
+        InvestmentRankingEntry.from(
+          InvestmentCandidate(AAPLStock.copy(security = AAPLSecurity.copy(ticker = card.ticker)), None),
+          card
+        )
+      )
+      readSaved(InvestmentScreenRequest(limit = Some(100), minScore = Some(70)), entries).asserting { result =>
+        result.candidates mustBe cards.take(100)
+        result.nearMisses.map(_.scorecard) mustBe cards.drop(100)
+        result.cohorts.find(_.name == CohortName.Investment).get.tickers mustBe cards.take(20).map(_.ticker)
+        result.cohorts.find(_.name == CohortName.EqualUniverse).get.tickers.toSet mustBe cards.map(_.ticker).toSet
+        result.exclusions mustBe Nil
+      }
+    }
+
+    "hide a saved screen when an equal-universe holding has no frozen ranking input" in {
+      val card    = InvestmentScorecard(AAPL, true, Some(90), Map.empty, Map.empty, Nil, Nil, Some("peer"), 20, "v1")
+      val entries = paired(List(InvestmentCandidate(AAPLStock, None)), List(card))
+      val value   = ranking(entries)
+      val saved   = InvestmentScreen.create(
+        InvestmentScreenId("saved"),
+        now,
+        value,
+        InvestmentScreenRequest(),
+        List(InvestmentCohort(CohortName.Investment, List(AAPL)), InvestmentCohort(CohortName.EqualUniverse, List(AAPL, MSFT)))
+      )
+      (for
+        state    <- Ref.of[IO, List[InvestmentScreen]](List(saved))
+        service  <- InvestmentScreenService.make(memoryScreens(state, value, entries))
+        result   <- service.get(saved.id).attempt
+        retained <- state.get
+      yield (result, retained)).asserting { case (result, retained) =>
+        result mustBe Left(AppError.EntityDoesNotExist("Investment screen", saved.id.value))
         retained mustBe List(saved)
       }
     }
@@ -156,13 +270,13 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val value   = ranking(Nil).copy(createdAt = now.minusSeconds(10L * 86400))
       val saved   = InvestmentScreen.create(InvestmentScreenId("saved"), value.createdAt, value, InvestmentScreenRequest(), Nil)
       when(screens.findWithRanking(saved.id)).thenReturnIO(saved -> value)
-      when(screens.rankingEntries(value.id)).thenReturnIO(Nil)
-      when(screens.visibleRankingTickers(value.id)).thenReturnIO(Set.empty[Ticker])
+      when(screens.detailEntries(saved, false)).thenReturnIO(Nil)
+      when(screens.visibleRankingTickers(value.id, Some(Set.empty[Ticker]))).thenReturnIO(Set.empty[Ticker])
       InvestmentScreenService.make(screens).flatMap(_.get(saved.id)).asserting { result =>
         result.rankingId mustBe value.id
         verify(screens).findWithRanking(saved.id)
-        verify(screens).rankingEntries(value.id)
-        verify(screens).visibleRankingTickers(value.id)
+        verify(screens).detailEntries(saved, false)
+        verify(screens).visibleRankingTickers(value.id, Some(Set.empty[Ticker]))
         verifyNoMoreInteractions(screens)
         succeed
       }
@@ -206,7 +320,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val value   = ranking(Nil).copy(createdAt = now.minusSeconds(2L * 86400))
       when(screens.latestRanking).thenReturnSome(value)
       when(screens.rankingEntries(value.id)).thenReturnIO(Nil)
-      when(screens.visibleRankingTickers(value.id)).thenReturnIO(Set.empty[Ticker])
+      when(screens.visibleRankingTickers(value.id, None)).thenReturnIO(Set.empty[Ticker])
       when(screens.save(any[InvestmentScreen])).thenReturnUnit
       InvestmentScreenService.make(screens).flatMap(_.create(InvestmentScreenRequest())).asserting(_.rankingId mustBe value.id)
     }
@@ -367,7 +481,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val entries = cards.map(c =>
         InvestmentRankingEntry.from(InvestmentCandidate(AAPLStock.copy(security = AAPLSecurity.copy(ticker = c.ticker)), None), c)
       )
-      readSaved(InvestmentScreenRequest(minScore = Some(70), minQuality = Some(70)), entries).asserting { found =>
+      readSaved(InvestmentScreenRequest(minScore = Some(70), minQuality = Some(70)), entries, includeExclusions = true).asserting { found =>
         found.candidates.map(_.ticker) mustBe List(AAPL)
         found.nearMisses.map(_.scorecard.ticker) mustBe List(MSFT)
         found.exclusions.map(_.ticker) mustBe List(missing)
@@ -412,7 +526,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         found.candidates mustBe Nil
         found.nearMisses.head.scorecard.score mustBe None
         found.nearMisses.head.failedRule must include("3/5 positive years")
-        found.exclusions.map(_.ticker) mustBe List(AAPL)
+        found.exclusions mustBe Nil
       }
     }
   }

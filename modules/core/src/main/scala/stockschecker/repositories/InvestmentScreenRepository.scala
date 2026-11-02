@@ -24,7 +24,8 @@ trait InvestmentScreenRepository[F[_]]:
   def findWithRanking(id: InvestmentScreenId): F[(InvestmentScreen, InvestmentRanking)]
   def latestRanking: F[Option[InvestmentRanking]]
   def rankingEntries(id: InvestmentRankingId): F[List[InvestmentRankingEntry]]
-  def visibleRankingTickers(id: InvestmentRankingId): F[Set[Ticker]]
+  def detailEntries(screen: InvestmentScreen, includeExclusions: Boolean): F[List[InvestmentRankingEntry]]
+  def visibleRankingTickers(id: InvestmentRankingId, tickers: Option[Set[Ticker]] = None): F[Set[Ticker]]
   def save(screen: InvestmentScreen): F[Unit]
   def get(id: InvestmentScreenId): F[Option[InvestmentScreen]]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
@@ -67,13 +68,46 @@ final private class LiveInvestmentScreenRepository[F[_]](
       .all
       .mapList(row => InvestmentRankingEntry(row.input, row.scorecard))
 
-  override def visibleRankingTickers(id: InvestmentRankingId): F[Set[Ticker]] =
+  private def inputIds(id: InvestmentRankingId, tickers: Iterable[Ticker]): List[String] =
+    tickers.iterator.map(ticker => s"${id.value}:${ticker.value}").toList
+
+  override def detailEntries(screen: InvestmentScreen, includeExclusions: Boolean): F[List[InvestmentRankingEntry]] =
+    if includeExclusions then rankingEntries(screen.rankingId)
+    else
+      val holdingIds     = inputIds(screen.rankingId, screen.cohorts.flatMap(_.tickers).toSet)
+      val nearMissFilter = List(
+        Some(Filter.eq(InvestmentRankingRepository.Field.RankingId, screen.rankingId.value)),
+        Some(Filter.eq(Field.ScorecardEligible, false)),
+        Some(Filter.isNull(Field.ExclusionExplanation).not),
+        screen.request.exchange.map(exchange => Filter.eq(Field.InputExchange, exchange.print)),
+        screen.request.country.map(country => Filter.eq(Field.InputCountry, country))
+      ).flatten.foldLeft(Filter.empty)(_ && _)
+      for
+        holdings   <- inputs.find(Filter.in(InvestmentRankingRepository.Field.Id, holdingIds)).all
+        nearMisses <- inputs
+          .aggregate[InvestmentRankingInputEntity](
+            Aggregate
+              .matchBy(nearMissFilter)
+              .sort(Sort.asc(InvestmentRankingRepository.Field.Ordinal))
+              .combinedWith(StockVisibility.restrict(Field.ScorecardTicker))
+              .limit(InvestmentRecipe.NearMissLimit)
+          )
+          .all
+      yield (holdings ++ nearMisses).toList
+        .distinctBy(_.scorecard.ticker)
+        .sortBy(_.ordinal)
+        .map(row => InvestmentRankingEntry(row.input, row.scorecard))
+
+  override def visibleRankingTickers(id: InvestmentRankingId, tickers: Option[Set[Ticker]]): F[Set[Ticker]] =
+    val rankingFilter = Filter.eq(InvestmentRankingRepository.Field.RankingId, id.value)
+    val filter        =
+      tickers.fold(rankingFilter)(values => rankingFilter && Filter.in(InvestmentRankingRepository.Field.Id, inputIds(id, values)))
     inputs
       .aggregate[Entity](
         Aggregate
-          .matchBy(Filter.eq(InvestmentRankingRepository.Field.RankingId, id.value))
-          .project(Projection.computed("_id", "$scorecard.ticker"))
-          .combinedWith(StockVisibility.restrict("_id"))
+          .matchBy(filter)
+          .project(Projection.computed(InvestmentRankingRepository.Field.Id, s"$$${Field.ScorecardTicker}"))
+          .combinedWith(StockVisibility.restrict(InvestmentRankingRepository.Field.Id))
       )
       .all
       .map(_.iterator.map(_._id).toSet)
@@ -96,10 +130,15 @@ object InvestmentScreenRepository:
   val CollectionName = "investment-screens"
 
   object Field:
-    val CreatedAt = "createdAt"
-    val RankingId = "rankingId"
-    val Screen    = "screen"
-    val Rankings  = "rankings"
+    val CreatedAt            = "createdAt"
+    val RankingId            = "rankingId"
+    val Screen               = "screen"
+    val Rankings             = "rankings"
+    val ScorecardTicker      = "scorecard.ticker"
+    val ScorecardEligible    = "scorecard.eligible"
+    val InputExchange        = "input.exchange"
+    val InputCountry         = "input.country"
+    val ExclusionExplanation = "input.exclusionExplanation"
 
   def make[F[_]: MonadThrow](db: MongoDatabase[F]): F[InvestmentScreenRepository[F]] =
     for

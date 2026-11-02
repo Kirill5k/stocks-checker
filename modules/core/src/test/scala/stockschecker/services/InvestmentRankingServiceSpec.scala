@@ -81,10 +81,16 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
     def latestRanking: IO[Option[InvestmentRanking]]                              = published.get.map(_.headOption.map(_._1))
     def rankingEntries(id: InvestmentRankingId): IO[List[InvestmentRankingEntry]] =
       published.get.map(_.find(_._1.id == id).fold(List.empty[InvestmentRankingEntry])(_._2))
-    def visibleRankingTickers(id: InvestmentRankingId): IO[Set[Ticker]] = rankingEntries(id).map(_.map(_.scorecard.ticker).toSet)
-    def save(screen: InvestmentScreen): IO[Unit]                        = state.update(_ :+ screen)
-    def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]]       = state.get.map(_.find(_.id == id))
-    def list(limit: Int): IO[List[InvestmentScreenSummary]]             = state.get.map(_.take(limit).map(_.summary))
+    def detailEntries(screen: InvestmentScreen, includeExclusions: Boolean): IO[List[InvestmentRankingEntry]] =
+      rankingEntries(screen.rankingId).map { entries =>
+        val holdings = screen.cohorts.flatMap(_.tickers).toSet
+        entries.filter(entry => includeExclusions || holdings(entry.scorecard.ticker))
+      }
+    def visibleRankingTickers(id: InvestmentRankingId, tickers: Option[Set[Ticker]]): IO[Set[Ticker]] =
+      rankingEntries(id).map(_.iterator.map(_.scorecard.ticker).filter(ticker => tickers.forall(_(ticker))).toSet)
+    def save(screen: InvestmentScreen): IO[Unit]                                           = state.update(_ :+ screen)
+    def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]]                          = state.get.map(_.find(_.id == id))
+    def list(limit: Int): IO[List[InvestmentScreenSummary]]                                = state.get.map(_.take(limit).map(_.summary))
     def findWithRanking(id: InvestmentScreenId): IO[(InvestmentScreen, InvestmentRanking)] =
       for
         screen  <- get(id).map(_.get)

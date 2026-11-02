@@ -55,13 +55,83 @@ class InvestmentScreenControllerSpec extends HttpRoutesWordSpec:
       val id      = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
       val summary = InvestmentScreenSummary(id, Instant.parse("2026-10-19T00:00:00Z"), "v1", 0, 0, 0, Map.empty)
       val screen  = InvestmentScreenResult(summary, InvestmentScreenRequest(), Nil, Nil, Nil, Nil, InvestmentRankingId("ranking-1"))
-      when(service.get(id)).thenReturnIO(screen)
+      when(service.get(id, false)).thenReturnIO(screen)
       val result = for
         controller <- InvestmentScreenController.make(service, mock[InvestmentEvaluationService[IO]], config)
         response   <- controller.routes.orNotFound.run(Request[IO](uri = uri"/investment-screens" / id.value).withHeaders(authHeader))
       yield response
+      result.mustHaveStatus(Status.Ok, Some(screen.asJson.mapObject(_.remove("exclusions")).noSpaces))
+      verify(service).get(id, false)
+    }
+    "include full exclusions only when explicitly requested" in {
+      val service  = mock[InvestmentScreenService[IO]]
+      val id       = InvestmentScreenId("screen-1")
+      val summary  = InvestmentScreenSummary(id, Instant.parse("2026-10-19T00:00:00Z"), "v1", 1, 0, 0, Map("missing-price" -> 1))
+      val excluded = InvestmentScorecard(
+        Ticker("AAPL"),
+        false,
+        None,
+        Map.empty,
+        Map.empty,
+        List("missing-price"),
+        Nil,
+        None,
+        0,
+        "v1"
+      )
+      val screen =
+        InvestmentScreenResult(summary, InvestmentScreenRequest(), Nil, Nil, List(excluded), Nil, InvestmentRankingId("ranking-1"))
+      when(service.get(id, true)).thenReturnIO(screen)
+      val result = for
+        controller <- InvestmentScreenController.make(service, mock[InvestmentEvaluationService[IO]], config)
+        response   <- controller.routes.orNotFound.run(
+          Request[IO](uri = uri"/investment-screens/screen-1?includeExclusions=true").withHeaders(authHeader)
+        )
+      yield response
       result.mustHaveStatus(Status.Ok, Some(screen.asJson.noSpaces))
-      verify(service).get(id)
+      verify(service).get(id, true)
+    }
+    "omit exclusions without changing the saved request or summary counts" in {
+      val service  = mock[InvestmentScreenService[IO]]
+      val id       = InvestmentScreenId("screen-1")
+      val summary  = InvestmentScreenSummary(id, Instant.parse("2026-10-19T00:00:00Z"), "v1", 1, 0, 0, Map("missing-price" -> 1))
+      val excluded = InvestmentScorecard(
+        Ticker("AAPL"),
+        false,
+        None,
+        Map.empty,
+        Map.empty,
+        List("missing-price"),
+        Nil,
+        None,
+        0,
+        "v1"
+      )
+      val screen =
+        InvestmentScreenResult(summary, InvestmentScreenRequest(), Nil, Nil, List(excluded), Nil, InvestmentRankingId("ranking-1"))
+      when(service.get(id, false)).thenReturnIO(screen)
+      val result = for
+        controller <- InvestmentScreenController.make(service, mock[InvestmentEvaluationService[IO]], config)
+        response   <- controller.routes.orNotFound.run(
+          Request[IO](uri = uri"/investment-screens/screen-1?includeExclusions=false&limit=20").withHeaders(authHeader)
+        )
+      yield response
+      result.mustHaveStatus(Status.Ok, Some(screen.asJson.mapObject(_.remove("exclusions")).noSpaces))
+      verify(service).get(id, false)
+    }
+    "reject an invalid exclusions flag at the HTTP boundary" in {
+      val service = mock[InvestmentScreenService[IO]]
+      val result  = for
+        controller <- InvestmentScreenController.make(service, mock[InvestmentEvaluationService[IO]], config)
+        response   <- controller.routes.orNotFound.run(
+          Request[IO](uri = uri"/investment-screens/screen-1?includeExclusions=not-a-boolean").withHeaders(authHeader)
+        )
+      yield response
+      result.mustHaveStatus(
+        Status.UnprocessableContent,
+        Some("""{"message":"Invalid value for: query parameter includeExclusions (must satisfy in(true,false))"}""")
+      )
+      verifyNoInteractions(service)
     }
     "apply a bounded default listing size through the service" in {
       val service = mock[InvestmentScreenService[IO]]
