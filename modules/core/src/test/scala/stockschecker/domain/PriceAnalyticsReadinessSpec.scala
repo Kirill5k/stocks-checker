@@ -7,8 +7,8 @@ import java.time.{Instant, LocalDate}
 
 class PriceAnalyticsReadinessSpec extends AnyWordSpec with Matchers:
   private val ticker = Ticker("AAA")
-  private val now = Instant.parse("2026-11-02T00:30:00Z")
-  private val today = LocalDate.parse("2026-11-02")
+  private val now    = Instant.parse("2026-11-02T00:30:00Z")
+  private val today  = LocalDate.parse("2026-11-02")
   private val recipe = InvestmentRecipe()
 
   private def readiness(date: Option[LocalDate], price: Option[BigDecimal] = Some(BigDecimal(100))): PriceAnalyticsReadiness =

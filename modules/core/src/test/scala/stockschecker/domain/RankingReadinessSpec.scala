@@ -7,8 +7,8 @@ import org.scalatest.wordspec.AnyWordSpec
 import java.time.Instant
 
 class RankingReadinessSpec extends AnyWordSpec with Matchers:
-  private val now = Instant.parse("2026-11-02T12:00:00Z")
-  private val recipe = InvestmentRecipe()
+  private val now     = Instant.parse("2026-11-02T12:00:00Z")
+  private val recipe  = InvestmentRecipe()
   private val ranking = InvestmentRanking(
     InvestmentRankingId("published"),
     now,
@@ -16,7 +16,7 @@ class RankingReadinessSpec extends AnyWordSpec with Matchers:
     InvestmentRankingSummary(9844, 0, Map("insufficient-peer-coverage" -> 57))
   )
   private val industries = Map("software" -> 19, "medical devices" -> 19, "machinery" -> 19)
-  private val sectors = Map(Sector.Technology -> 19, Sector.Healthcare -> 19, Sector.Industrials -> 19)
+  private val sectors    = Map(Sector.Technology -> 19, Sector.Healthcare -> 19, Sector.Industrials -> 19)
 
   "RankingReadiness" should {
     "explain fifty-seven complete candidates that still produced no eligible stocks" in {
@@ -48,13 +48,13 @@ class RankingReadinessSpec extends AnyWordSpec with Matchers:
 
     "report a recipe mismatch before checking freshness and coverage" in {
       val previousRecipe = ranking.copy(createdAt = now.minusSeconds(86400), recipe = recipe.copy(version = "previous"))
-      val readiness = RankingReadiness.from(previousRecipe, industries, sectors, now, recipe)
+      val readiness      = RankingReadiness.from(previousRecipe, industries, sectors, now, recipe)
       readiness.status mustBe RankingReadinessStatus.RecipeMismatch
       readiness.recipeVersion mustBe "previous"
     }
 
     "report the frozen recipe thresholds and count complete candidates by sector" in {
-      val custom = ranking.copy(recipe = recipe.copy(minIndustryPeers = 25, minSectorPeers = 35))
+      val custom    = ranking.copy(recipe = recipe.copy(minIndustryPeers = 25, minSectorPeers = 35))
       val readiness = RankingReadiness.from(custom, Map.empty, sectors, now, recipe)
       readiness.completeCandidateCount mustBe 57
       readiness.minIndustryPeers mustBe 25

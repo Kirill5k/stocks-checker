@@ -21,8 +21,8 @@ private[repositories] object PriceAnalyticsReadinessQuery extends MongoJsonCodec
   object Row:
     // PricePerformanceSummary stores session dates as ISO strings; the outer updatedAt remains a BSON date.
     private given Codec[LocalDate] = Codec.from(Decoder.decodeLocalDate, Encoder.encodeLocalDate)
-    given Codec.AsObject[Row] = Codec.AsObject.derived[Row]
-    given MongoCodecProvider[Row] = deriveCirceCodecProvider[Row]
+    given Codec.AsObject[Row]      = Codec.AsObject.derived[Row]
+    given MongoCodecProvider[Row]  = deriveCirceCodecProvider[Row]
 
   val pipeline: Aggregate =
     val analytics = PriceAnalyticsRepository.Field

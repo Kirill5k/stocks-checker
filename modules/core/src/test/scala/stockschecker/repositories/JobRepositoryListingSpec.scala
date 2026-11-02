@@ -15,17 +15,17 @@ class JobRepositoryListingSpec extends RepositorySpec:
   "JobRepository listing" should {
     "return the newest jobs with deterministic descending ID ties and a bounded result" in withEmbeddedMongoDatabase { db =>
       val action = Action.RefreshInvestmentResearch
-      val rows = List(
+      val rows   = List(
         Job(JobId("old"), action, ts, ts.minusSeconds(1)),
         Job(JobId("a"), action, ts, ts),
         Job(JobId("z"), action, ts, ts),
         Job(JobId("new"), action, ts, ts.plusSeconds(1))
       )
       for
-        jobs <- JobRepository.make[IO](db)
-        _ <- rows.traverse_(enqueue(jobs))
+        jobs    <- JobRepository.make[IO](db)
+        _       <- rows.traverse_(enqueue(jobs))
         limited <- jobs.list(2, JobFilter())
-        all <- jobs.list(20, JobFilter())
+        all     <- jobs.list(20, JobFilter())
       yield
         limited.map(_.id) mustBe List("new", "z").map(JobId(_))
         all.map(_.id) mustBe List("new", "z", "a", "old").map(JobId(_))
@@ -33,9 +33,9 @@ class JobRepositoryListingSpec extends RepositorySpec:
     }
 
     "combine exact command, state and action-kind filters" in withEmbeddedMongoDatabase { db =>
-      val commandId = FetchLatestSecuritiesCommand.id
+      val commandId    = FetchLatestSecuritiesCommand.id
       val otherCommand = CommandId("000000000000000000000001")
-      val matching = Job(
+      val matching     = Job(
         JobId("matching"),
         Action.RefreshInvestmentResearch,
         ts,
@@ -53,13 +53,13 @@ class JobRepositoryListingSpec extends RepositorySpec:
         matching.copy(id = JobId("manual"), command = None)
       )
       for
-        jobs <- JobRepository.make[IO](db)
-        _ <- rows.traverse_(enqueue(jobs))
-        combined <- jobs.list(20, JobFilter(Some(commandId), Some(Job.Failed), Some("refresh-investment-research")))
+        jobs      <- JobRepository.make[IO](db)
+        _         <- rows.traverse_(enqueue(jobs))
+        combined  <- jobs.list(20, JobFilter(Some(commandId), Some(Job.Failed), Some("refresh-investment-research")))
         byCommand <- jobs.list(20, JobFilter(commandId = Some(commandId)))
-        byState <- jobs.list(20, JobFilter(state = Some(Job.Succeeded)))
-        byAction <- jobs.list(20, JobFilter(actionKind = Some("refresh-investment-research")))
-        prefix <- jobs.list(20, JobFilter(actionKind = Some("refresh-investment")))
+        byState   <- jobs.list(20, JobFilter(state = Some(Job.Succeeded)))
+        byAction  <- jobs.list(20, JobFilter(actionKind = Some("refresh-investment-research")))
+        prefix    <- jobs.list(20, JobFilter(actionKind = Some("refresh-investment")))
       yield
         combined mustBe List(matching)
         byCommand.map(_.id).toSet mustBe Set("matching", "other-state", "other-action").map(JobId(_))
@@ -69,7 +69,7 @@ class JobRepositoryListingSpec extends RepositorySpec:
     }
 
     "find slash-containing job IDs exactly and preserve optional status metadata" in withEmbeddedMongoDatabase { db =>
-      val id = JobId("command:2:1793599200000/245")
+      val id  = JobId("command:2:1793599200000/245")
       val row = Job(
         id,
         Action.RefreshInvestmentResearch,
@@ -84,9 +84,9 @@ class JobRepositoryListingSpec extends RepositorySpec:
         pausedProvider = Some(Provider.TwelveData)
       )
       for
-        jobs <- JobRepository.make[IO](db)
-        _ <- enqueue(jobs)(row)
-        exact <- jobs.find(id)
+        jobs   <- JobRepository.make[IO](db)
+        _      <- enqueue(jobs)(row)
+        exact  <- jobs.find(id)
         prefix <- jobs.find(JobId("command:2:1793599200000"))
         listed <- jobs.list(20, JobFilter())
       yield

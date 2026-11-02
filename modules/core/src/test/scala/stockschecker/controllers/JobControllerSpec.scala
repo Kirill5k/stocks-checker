@@ -16,15 +16,15 @@ import stockschecker.services.JobService
 class JobControllerSpec extends HttpRoutesWordSpec:
   private val config = ApiConfig("test-key")
   private val apiKey = Header.Raw(CIString("X-API-Key"), config.key)
-  private val job = JobView.from(Job(JobId("command:2:1793599200000/245"), Action.RefreshInvestmentResearch, ts, ts))
+  private val job    = JobView.from(Job(JobId("command:2:1793599200000/245"), Action.RefreshInvestmentResearch, ts, ts))
 
   "Job endpoints" should {
     List(uri"/jobs", uri"/jobs/status?id=run%2F0").foreach { uri =>
       s"require authentication for $uri" in {
-        val service = mock[JobService[IO]]
+        val service  = mock[JobService[IO]]
         val response = for
           controller <- JobController.make(service, config)
-          result <- controller.routes.orNotFound.run(Request[IO](uri = uri))
+          result     <- controller.routes.orNotFound.run(Request[IO](uri = uri))
         yield result
         response mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
         verifyNoInteractions(service)
@@ -36,7 +36,7 @@ class JobControllerSpec extends HttpRoutesWordSpec:
       when(service.list(20, JobFilter())).thenReturnIO(List(job))
       val response = for
         controller <- JobController.make(service, config)
-        result <- controller.routes.orNotFound.run(Request[IO](uri = uri"/jobs").withHeaders(apiKey))
+        result     <- controller.routes.orNotFound.run(Request[IO](uri = uri"/jobs").withHeaders(apiKey))
       yield result
       response mustHaveStatus (Status.Ok, Some(List(job).asJson.noSpaces))
       verify(service).list(20, JobFilter())
@@ -44,7 +44,7 @@ class JobControllerSpec extends HttpRoutesWordSpec:
 
     "decode the bounded limit and exact command, state and action filters" in {
       val service = mock[JobService[IO]]
-      val filter = JobFilter(Some(FetchLatestSecuritiesCommand.id), Some(Job.Partial), Some("refresh-investment-research"))
+      val filter  = JobFilter(Some(FetchLatestSecuritiesCommand.id), Some(Job.Partial), Some("refresh-investment-research"))
       when(service.list(5, filter)).thenReturnIO(Nil)
       val uri = uri"/jobs"
         .withQueryParam("limit", 5)
@@ -53,7 +53,7 @@ class JobControllerSpec extends HttpRoutesWordSpec:
         .withQueryParam("actionKind", "refresh-investment-research")
       val response = for
         controller <- JobController.make(service, config)
-        result <- controller.routes.orNotFound.run(Request[IO](uri = uri).withHeaders(apiKey))
+        result     <- controller.routes.orNotFound.run(Request[IO](uri = uri).withHeaders(apiKey))
       yield result
       response mustHaveStatus (Status.Ok, Some("[]"))
       verify(service).list(5, filter)
@@ -65,7 +65,7 @@ class JobControllerSpec extends HttpRoutesWordSpec:
         when(service.list(limit, JobFilter())).thenReturnIO(Nil)
         val response = for
           controller <- JobController.make(service, config)
-          result <- controller.routes.orNotFound.run(
+          result     <- controller.routes.orNotFound.run(
             Request[IO](uri = uri"/jobs".withQueryParam("limit", limit)).withHeaders(apiKey)
           )
         yield result
@@ -79,7 +79,7 @@ class JobControllerSpec extends HttpRoutesWordSpec:
       when(service.get(job.id)).thenReturnIO(job)
       val response = for
         controller <- JobController.make(service, config)
-        result <- controller.routes.orNotFound.run(
+        result     <- controller.routes.orNotFound.run(
           Request[IO](uri = uri"/jobs/status".withQueryParam("id", job.id.value)).withHeaders(apiKey)
         )
       yield result
@@ -89,12 +89,12 @@ class JobControllerSpec extends HttpRoutesWordSpec:
 
     "return 404 for a missing or pruned job" in {
       val service = mock[JobService[IO]]
-      val id = JobId("missing/0")
-      val error = AppError.EntityDoesNotExist("Job", id.value)
+      val id      = JobId("missing/0")
+      val error   = AppError.EntityDoesNotExist("Job", id.value)
       when(service.get(id)).thenRaiseError(error)
       val response = for
         controller <- JobController.make(service, config)
-        result <- controller.routes.orNotFound.run(
+        result     <- controller.routes.orNotFound.run(
           Request[IO](uri = uri"/jobs/status".withQueryParam("id", id.value)).withHeaders(apiKey)
         )
       yield result
@@ -113,10 +113,10 @@ class JobControllerSpec extends HttpRoutesWordSpec:
       ("oversized action kind", uri"/jobs".withQueryParam("actionKind", "a" * 101), "actionKind must not exceed 100 characters")
     ).foreach { case (description, uri, message) =>
       s"reject $description before reading jobs" in {
-        val service = mock[JobService[IO]]
+        val service  = mock[JobService[IO]]
         val response = for
           controller <- JobController.make(service, config)
-          result <- controller.routes.orNotFound.run(Request[IO](uri = uri).withHeaders(apiKey))
+          result     <- controller.routes.orNotFound.run(Request[IO](uri = uri).withHeaders(apiKey))
         yield result
         response mustHaveStatus (Status.UnprocessableContent, Some(ErrorResponse(message).asJson.noSpaces))
         verifyNoInteractions(service)

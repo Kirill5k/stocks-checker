@@ -27,12 +27,13 @@ object PriceAnalyticsReadiness:
       at: Instant,
       recipe: InvestmentRecipe
   ): PriceAnalyticsReadiness =
-    val today = at.atZone(ZoneOffset.UTC).toLocalDate
+    val today  = at.atZone(ZoneOffset.UTC).toLocalDate
     val reason =
       if !latestPrice.exists(_ > 0) then Some("invalid-price")
-      else latestPriceDate match
-        case None => Some("missing-price-date")
-        case Some(date) if date.isAfter(today) => Some("future-price")
-        case Some(date) if ChronoUnit.DAYS.between(date, today) > recipe.maxPriceAgeDays => Some("stale-price")
-        case _ => None
+      else
+        latestPriceDate match
+          case None                                                                        => Some("missing-price-date")
+          case Some(date) if date.isAfter(today)                                           => Some("future-price")
+          case Some(date) if ChronoUnit.DAYS.between(date, today) > recipe.maxPriceAgeDays => Some("stale-price")
+          case _                                                                           => None
     PriceAnalyticsReadiness(ticker, reason.isEmpty, calculatedAt, latestPriceDate, latestPrice, reason)

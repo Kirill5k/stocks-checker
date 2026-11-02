@@ -19,18 +19,20 @@ final private class JobController[F[_]: Async](service: JobService[F], apiKeyReq
       service.list(limit.getOrElse(20), JobFilter(commandId, state, actionKind)).asResponse
     }
   }
-  private val get = secured(JobController.getEndpoint).serverLogic(_ => id => service.get(id).asResponse)
+  private val get                    = secured(JobController.getEndpoint).serverLogic(_ => id => service.get(id).asResponse)
   override val routes: HttpRoutes[F] = Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(list, get))
 
 object JobController extends TapirJsonCirce with SchemaDerivation:
-  private given Schema[Action] = Schema.string
-  private given Schema[CommandId] = Schema.string
-  private given Schema[JobState] = Schema.string
+  private given Schema[Action]              = Schema.string
+  private given Schema[CommandId]           = Schema.string
+  private given Schema[JobState]            = Schema.string
   private given Codec.PlainCodec[CommandId] = Codec.string.validate(Controller.validId).map(CommandId(_))(_.value)
-  private given Codec.PlainCodec[JobState] = Codec.string.mapDecode { value =>
-    JobState.values.find(_.value == value).fold[DecodeResult[JobState]](
-      DecodeResult.Error(value, AppError.FailedValidation(s"Unknown job state: $value"))
-    )(DecodeResult.Value(_))
+  private given Codec.PlainCodec[JobState]  = Codec.string.mapDecode { value =>
+    JobState.values
+      .find(_.value == value)
+      .fold[DecodeResult[JobState]](
+        DecodeResult.Error(value, AppError.FailedValidation(s"Unknown job state: $value"))
+      )(DecodeResult.Value(_))
   }(_.value)
 
   private val validLimit = Validator.custom[Option[Int]] { limit =>
