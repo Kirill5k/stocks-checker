@@ -3,9 +3,12 @@ package stockschecker.repositories
 import cats.effect.IO
 import cats.syntax.traverse.*
 import mongo4cats.bson.BsonValue
+import mongo4cats.bson.Document
+import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.operations.Filter
 import stockschecker.domain.*
+import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.InvestmentRepositoryFixtures.*
 
@@ -16,17 +19,47 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
 
   "An InvestmentRankingRepository" should {
     "findCandidates" should {
+      "exclude inactive, delisted, missing-profile and inactive-profile stocks before decoding their financial snapshots" in {
+        val missing         = Ticker("MISSING")
+        val inactiveProfile = Ticker("PROFILE")
+        val delisted        = Ticker("DELISTED")
+        val seedData        = Map(
+          SecurityRepository.CollectionName -> List(
+            toDoc(AAPLSecurity),
+            toDoc(MSFTSecurity.copy(isActive = false)),
+            toDoc(AAPLSecurity.copy(ticker = missing)),
+            toDoc(AAPLSecurity.copy(ticker = inactiveProfile)),
+            toDoc(AAPLSecurity.copy(ticker = delisted, listingStatus = ListingStatus.Delisted))
+          ),
+          CompanyProfileRepository.CollectionName -> List(
+            toDoc(AAPLCompanyProfile),
+            toDoc(MSFTCompanyProfile),
+            toDoc(AAPLCompanyProfile.copy(ticker = inactiveProfile)).add("isActive", false.toBson),
+            toDoc(AAPLCompanyProfile.copy(ticker = delisted))
+          ),
+          FinancialHistoryRepository.CollectionName -> List(MSFT, missing, inactiveProfile, delisted).map(ticker =>
+            Document("_id" := ticker.value, "invalid" := true)
+          )
+        )
+        withEmbeddedMongoDatabase(seedData) { db =>
+          for
+            repo       <- InvestmentRankingRepository.make[IO](db)
+            candidates <- repo.findCandidates
+          yield candidates.map(_.stock.security.ticker) mustBe List(AAPL)
+        }
+      }
+
       "retain joined analytics with missing or null basis in stocks and research candidates" in {
         val msftAnalytics = AAPLPriceAnalytics.copy(ticker = MSFT)
         val aapl          = AAPLStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(basis = None)))
         val msft          = MSFTStock.copy(
-          profile = None,
+          profile = Some(MSFTCompanyProfile),
           priceAnalytics = Some(msftAnalytics.copy(basis = None)),
           financialMetrics = None
         )
         val seedData = Map(
           SecurityRepository.CollectionName       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          CompanyProfileRepository.CollectionName -> List(toDoc(AAPLCompanyProfile)),
+          CompanyProfileRepository.CollectionName -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
           PriceAnalyticsRepository.CollectionName -> List(
             toDoc(AAPLPriceAnalytics).remove("basis"),
             toDoc(msftAnalytics).add("basis", BsonValue.Null)
@@ -69,8 +102,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
             repo    <- InvestmentRankingRepository.make[IO](db)
             result  <- repo.findCandidates
           yield result mustBe List(
-            InvestmentCandidate(AAPLStock, Some(latest)),
-            InvestmentCandidate(MSFTStock.copy(profile = None, priceAnalytics = None, financialMetrics = None), None)
+            InvestmentCandidate(AAPLStock, Some(latest))
           )
         }
       }
@@ -234,4 +266,78 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
           found mustBe None
           latest mustBe None
       }
+    "rankingInputs" should {
+      "page frozen ranking inputs by ordinal with canonical industry and sector filters" in withEmbeddedMongoDatabase { db =>
+        val base     = InvestmentRepositoryFixtures.entries.head
+        val evidence = InvestmentEvidence(Provider.Finnhub, now, "mapping-v1", "payload-hash", Map.empty, Nil, None, None, Some("USD"))
+        val rows     = List(
+          ("FIRST", "  HEALTH CARE  ", Sector.Healthcare),
+          ("OTHER", "Technology", Sector.Technology),
+          ("SECOND", "Health Care", Sector.Healthcare),
+          ("OTHER-SECTOR", "health care", Sector.Industrials)
+        ).map { case (ticker, industry, sector) =>
+          base.copy(
+            input = base.input.copy(industry = Some(industry), sector = Some(sector)),
+            scorecard = base.scorecard
+              .copy(ticker = Ticker(ticker), eligible = false, exclusions = List("missing-metric:eps-growth5y"), evidence = Some(evidence))
+          )
+        }
+        val ranking = InvestmentRanking(InvestmentRankingId("paged-ranking"), now, InvestmentRecipe(), InvestmentRankingSummary.from(rows))
+        val query   = RankingInputsQuery(Some(" HeALth CaRe "), Some(Sector.Healthcare), limit = 1)
+        for
+          rankings  <- InvestmentRankingRepository.make[IO](db)
+          _         <- rankings.save(ranking, rows)
+          _         <- rankings.save(ranking.copy(id = InvestmentRankingId("newer-ranking"), createdAt = now.plusSeconds(1)), rows)
+          first     <- rankings.rankingInputs(ranking.id, query)
+          second    <- rankings.rankingInputs(ranking.id, query.copy(after = first.nextAfter))
+          exhausted <- rankings.rankingInputs(ranking.id, query.copy(after = Some(2)))
+          literal   <- rankings.rankingInputs(ranking.id, query.copy(industry = Some(".*")))
+          all       <- rankings.rankingInputs(ranking.id, RankingInputsQuery(limit = 50))
+          stored    <- InvestmentRepositoryFixtures.storedRankingEntries(db, ranking.id)
+        yield
+          first.rankingId mustBe ranking.id
+          first.asOf mustBe now
+          first.items.map(_.ticker) mustBe List(Ticker("FIRST"))
+          first.nextAfter mustBe Some(0)
+          first.items.head.industry mustBe Some("  HEALTH CARE  ")
+          first.items.head.exclusions mustBe List("missing-metric:eps-growth5y")
+          first.items.head.evidence mustBe Some(evidence)
+          second.items.map(_.ordinal) mustBe List(2)
+          second.items.map(_.ticker) mustBe List(Ticker("SECOND"))
+          second.nextAfter mustBe None
+          exhausted.items mustBe Nil
+          exhausted.nextAfter mustBe None
+          literal.items mustBe Nil
+          all.items.map(_.ordinal) mustBe List(0, 1, 2, 3)
+          stored mustBe rows
+      }
+
+      "distinguish missing ranking metadata from an empty published ranking or unmatched input page" in withEmbeddedMongoDatabase { db =>
+        val ranking = InvestmentRanking(InvestmentRankingId("empty-ranking"), now, InvestmentRecipe(), InvestmentRankingSummary.from(Nil))
+        for
+          rankings <- InvestmentRankingRepository.make[IO](db)
+          _        <- rankings.save(ranking, Nil)
+          missing  <- rankings.rankingInputs(InvestmentRankingId("unknown"), RankingInputsQuery(limit = 50)).attempt
+          empty    <- rankings.rankingInputs(ranking.id, RankingInputsQuery(Some("unmatched"), limit = 50))
+        yield
+          missing mustBe Left(AppError.EntityDoesNotExist("Investment ranking", "unknown"))
+          empty mustBe RankingInputsPage(ranking.id, now, Nil, None)
+      }
+
+      "read a bounded input page without embedding complete scorecards in the ranking header" in withEmbeddedMongoDatabase { db =>
+        val base    = InvestmentRepositoryFixtures.entries.head
+        val entries = (1 to 20).map { index =>
+          base.copy(scorecard = base.scorecard.copy(ticker = Ticker(s"LARGE$index"), weaknesses = List("x" * (1024 * 1024))))
+        }.toList
+        val ranking =
+          InvestmentRanking(InvestmentRankingId("large-inputs"), now, InvestmentRecipe(), InvestmentRankingSummary.from(entries))
+        for
+          rankings <- InvestmentRankingRepository.make[IO](db)
+          _        <- rankings.save(ranking, entries)
+          page     <- rankings.rankingInputs(ranking.id, RankingInputsQuery(limit = 100))
+        yield
+          page.items.size mustBe 20
+          page.nextAfter mustBe None
+      }
+    }
   }

@@ -3,6 +3,7 @@ package stockschecker.services
 import cats.data.NonEmptyList
 import cats.effect.IO
 import stockschecker.actions.{Action, ActionDispatcher}
+import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -13,6 +14,7 @@ import stockschecker.repositories.CompanyProfileRepository
 import stockschecker.fixtures.*
 
 class CompanyProfileServiceSpec extends IOWordSpec {
+  given Clock[IO]  = Clock.mock(ts)
   given Logger[IO] = Slf4jLogger.getLogger[IO]
 
   "A CompanyProfileService" when {
@@ -28,14 +30,15 @@ class CompanyProfileServiceSpec extends IOWordSpec {
 
         res.asserting { cp =>
           verify(repo).find(AAPL)
+          verifyNoInteractions(client, dispatcher)
           cp mustBe AAPLCompanyProfile
         }
       }
 
-      "fetch latest company profile when flag is true" in {
+      "fetch and return the client profile without reading the repository when flag is true" in {
         val (repo, client, dispatcher) = mocks
         when(client.getCompanyProfile(any[Ticker])).thenReturnSome(AAPLCompanyProfile)
-        when(repo.save(anyList[CompanyProfile])).thenReturnUnit
+        when(repo.save(AAPLCompanyProfile)).thenReturnUnit
         when(dispatcher.dispatch(any[Action])).thenReturnUnit
 
         val res = for
@@ -45,9 +48,9 @@ class CompanyProfileServiceSpec extends IOWordSpec {
 
         res.asserting { cp =>
           verify(client).getCompanyProfile(AAPL)
-          verify(repo).save(List(AAPLCompanyProfile))
+          verify(repo).save(AAPLCompanyProfile)
           verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(NonEmptyList.one(AAPL)))
-          verifyNoMoreInteractions(repo) // ensure repo.find wasn't called
+          verify(repo, never).find(AAPL)
           cp mustBe AAPLCompanyProfile
         }
       }
@@ -73,6 +76,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
       "return error when explicitly fetching latest and client returns nothing" in {
         val (repo, client, dispatcher) = mocks
         when(client.getCompanyProfile(any[Ticker])).thenReturnNone
+        when(dispatcher.dispatch(any[Action])).thenReturnUnit
 
         val res = for
           svc <- CompanyProfileService.make(repo, client, dispatcher)
@@ -81,21 +85,96 @@ class CompanyProfileServiceSpec extends IOWordSpec {
 
         res.attempt.asserting { err =>
           verify(client).getCompanyProfile(AAPL)
-          // repo.save should not be called, and repo.find not used
-          verifyNoInteractions(repo)
-          verifyNoInteractions(dispatcher)
+          verify(repo, never).save(any[CompanyProfile])
+          verify(repo, never).find(AAPL)
+          verify(dispatcher).dispatch(Action.SetSecurityActive(AAPL, false, ts))
+          verify(dispatcher, never).dispatch(Action.RecordCompanyProfileUpdate(NonEmptyList.one(AAPL)))
           err mustBe Left(AppError.CompanyProfileNotFound(AAPL))
         }
       }
     }
 
+    "fetch latest" should {
+      "bootstrap a profile without requiring a cached profile" in {
+        val (repo, client, dispatcher) = mocks
+        when(client.getCompanyProfile(AAPL)).thenReturnSome(AAPLCompanyProfile)
+        when(repo.save(AAPLCompanyProfile)).thenReturnUnit
+        when(dispatcher.dispatch(any[Action])).thenReturnUnit
+        CompanyProfileService.make(repo, client, dispatcher).flatMap(_.get(AAPL, true)).asserting { result =>
+          result mustBe AAPLCompanyProfile
+          verify(repo).save(AAPLCompanyProfile)
+          verify(repo, never).find(AAPL)
+          verify(dispatcher).dispatch(Action.RecordCompanyProfileUpdate(NonEmptyList.one(AAPL)))
+          verify(dispatcher, never).dispatch(Action.SetSecurityActive(AAPL, true, ts))
+          succeed
+        }
+      }
+
+      "leave activation unchanged for provider failures" in {
+        val (repo, client, dispatcher) = mocks
+        val error                      = new java.io.IOException("Provider unavailable")
+        when(client.getCompanyProfile(AAPL)).thenRaiseError(error)
+        CompanyProfileService.make(repo, client, dispatcher).flatMap(_.get(AAPL, true)).attempt.asserting { result =>
+          result mustBe Left(error)
+          verifyNoInteractions(repo, dispatcher)
+          succeed
+        }
+      }
+
+    }
+
     "consume profile events" should {
+      "dispatch both cache deletions for an inactive profile event" in {
+        val (repo, client, dispatcher) = mocks
+        when(repo.setActive(AAPL, false, ts)).thenReturnIO(true)
+        when(dispatcher.dispatch(Action.DeletePriceAnalytics(AAPL))).thenReturnUnit
+        when(dispatcher.dispatch(Action.DeleteFinancialMetrics(AAPL))).thenReturnUnit
+        (for
+          svc <- CompanyProfileService.make(repo, client, dispatcher)
+          _   <- svc.setActive(AAPL, false, ts)
+        yield ()).asserting { _ =>
+          verify(repo).setActive(AAPL, false, ts)
+          verify(dispatcher).dispatch(Action.DeletePriceAnalytics(AAPL))
+          verify(dispatcher).dispatch(Action.DeleteFinancialMetrics(AAPL))
+          verifyNoInteractions(client)
+          succeed
+        }
+      }
+
+      "leave analytics alone when the profile rejects a stale deactivation" in {
+        val (repo, client, dispatcher) = mocks
+        when(repo.setActive(AAPL, false, ts)).thenReturnIO(false)
+        CompanyProfileService.make(repo, client, dispatcher).flatMap(_.setActive(AAPL, false, ts)).asserting { _ =>
+          verifyNoInteractions(client, dispatcher)
+          succeed
+        }
+      }
+
+      "retry cache deletion when an accepted deactivation is replayed after dispatch failure" in {
+        val (repo, client, dispatcher) = mocks
+        val failure                    = new com.mongodb.MongoException("dispatch unavailable")
+        when(repo.setActive(AAPL, false, ts)).thenReturnIO(true)
+        when(dispatcher.dispatch(Action.DeletePriceAnalytics(AAPL))).thenReturnUnit
+        when(dispatcher.dispatch(Action.DeleteFinancialMetrics(AAPL))).thenReturn(IO.raiseError(failure), IO.unit)
+        (for
+          service <- CompanyProfileService.make(repo, client, dispatcher)
+          first   <- service.setActive(AAPL, false, ts).attempt
+          _       <- service.setActive(AAPL, false, ts)
+        yield first).asserting { first =>
+          first mustBe Left(failure)
+          verify(dispatcher, times(2)).dispatch(Action.DeletePriceAnalytics(AAPL))
+          verify(dispatcher, times(2)).dispatch(Action.DeleteFinancialMetrics(AAPL))
+          verifyNoInteractions(client)
+          succeed
+        }
+      }
+
       "update profile timestamps and activation through the owned repository" in {
         val (repo, client, dispatcher) = mocks
         val tickers                    = NonEmptyList.of(AAPL, MSFT)
         when(repo.updatePriceAnalyticsLastUpdated(anyList[Ticker])).thenReturnUnit
         when(repo.updateFinancialMetricsLastUpdated(anyList[Ticker])).thenReturnUnit
-        when(repo.setActive(AAPL, true, ts)).thenReturnUnit
+        when(repo.setActive(AAPL, true, ts)).thenReturnIO(true)
 
         (for
           svc <- CompanyProfileService.make(repo, client, dispatcher)

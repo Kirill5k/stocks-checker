@@ -1,7 +1,7 @@
 package stockschecker.repositories
 
 import stockschecker.domain.ListingStatus
-import cats.Monad
+import cats.MonadThrow
 import cats.effect.Concurrent
 import cats.syntax.functor.*
 import cats.syntax.flatMap.*
@@ -15,6 +15,7 @@ import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Update}
 import stockschecker.domain.{Exchange, Security, SecurityFilter, SecurityKind, Ticker}
+import stockschecker.domain.errors.AppError
 import stockschecker.repositories.entities.{Entity, SecurityEntity}
 
 import java.time.Instant
@@ -22,18 +23,20 @@ import java.time.Instant
 trait SecurityRepository[F[_]]:
   def save(security: Security): F[Unit]
   def save(securities: List[Security]): F[Unit]
-  def find(ticker: Ticker): F[Option[Security]]
+  def findVisible(ticker: Ticker): F[Option[Security]]
   def findByExchange(exchange: Exchange): F[List[Security]]
   def getAllTickers: F[List[Ticker]]
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
   def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit]
-  def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit]
+
+  /** Whether the event was applied or replayed; stale requests and absent securities return false. */
+  def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Boolean]
   def reconcile(exchange: Exchange, securities: List[Security]): F[Unit]
 
 final private class LiveSecurityRepository[F[_]](
     private val collection: MongoCollection[F, SecurityEntity]
 )(using
-    F: Monad[F],
+    F: MonadThrow[F],
     clock: Clock[F]
 ) extends SecurityRepository[F] {
 
@@ -65,24 +68,43 @@ final private class LiveSecurityRepository[F[_]](
       collection.bulkWrite(List(security.toUpdateCommand(now))).void
     }
 
-  override def find(ticker: Ticker): F[Option[Security]] =
-    collection.find(Filter.idEq(ticker.value)).first.map(_.map(_.toDomain))
+  override def findVisible(ticker: Ticker): F[Option[Security]] =
+    collection
+      .aggregate[SecurityEntity](
+        Aggregate
+          .matchBy(Filter.idEq(ticker.value) && StockVisibility.activeSecurity)
+          .combinedWith(StockVisibility.withActiveProfile(Field.Id))
+      )
+      .first
+      .mapOpt(_.toDomain)
 
   override def findByExchange(exchange: Exchange): F[List[Security]] =
     collection
-      .find(Filter.eq(Field.Exchange, exchange))
+      .aggregate[SecurityEntity](
+        Aggregate
+          .matchBy(Filter.eq(Field.Exchange, exchange) && StockVisibility.activeSecurity)
+          .combinedWith(StockVisibility.withActiveProfile(Field.Id))
+      )
       .all
       .mapList(_.toDomain)
 
   override def getAllTickers: F[List[Ticker]] =
-    collection.distinct[Ticker](Field.Ticker).all.map(_.toList)
+    collection
+      .aggregate[Entity](
+        Aggregate
+          .matchBy(StockVisibility.activeSecurity)
+          .combinedWith(StockVisibility.withActiveProfile(Field.Id))
+          .project(Projection.include(Field.Id))
+      )
+      .all
+      .mapList(_._id)
 
   override def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]] =
     filter.toFilter.flatMap { mongoFilter =>
       collection
         .aggregate[Entity](
           Aggregate
-            .matchBy(mongoFilter)
+            .matchBy(StockVisibility.activeSecurity && mongoFilter)
             .limit(limit.getOrElse(Int.MaxValue))
             .project(Projection.include(Field.Id))
         )
@@ -100,27 +122,34 @@ final private class LiveSecurityRepository[F[_]](
         .void
     }
 
-  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit] =
-    val newerRequest = Filter.idEq(ticker.value) &&
-      (Filter.isNull(Field.ActiveChangedAt) || Filter.lt(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt)))
-    val update = Update
-      .set(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))
-      .set(Field.ExclusionReason, Option.when(!active)("user-excluded"))
-      .currentDate(Field.UpdatedAt)
-    if active then
-      collection
-        .updateOne(
-          newerRequest && Filter.ne(Field.ListingStatus, ListingStatus.Delisted.print),
-          update.set(Field.IsActive, true)
-        )
-        .void >>
-        collection
-          .updateOne(
-            newerRequest && Filter.eq(Field.ListingStatus, ListingStatus.Delisted.print),
-            update.set(Field.IsActive, false)
-          )
-          .void
-    else collection.updateOne(newerRequest, update.set(Field.IsActive, false)).void
+  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Boolean] =
+    val currentRequest = Filter.idEq(ticker.value) &&
+      (Filter.isNull(Field.ActiveChangedAt) || Filter.lte(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt)))
+    val filter = if active then currentRequest && Filter.eq(Field.ListingStatus, ListingStatus.Listed.print) else currentRequest
+    collection
+      .updateOne(
+        filter,
+        Update
+          .set(Field.IsActive, active)
+          .set(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))
+          .set(Field.ExclusionReason, Option.when(!active)("user-excluded"))
+          .currentDate(Field.UpdatedAt)
+      )
+      .flatMap { result =>
+        if result.getMatchedCount > 0 then true.pure[F]
+        else if active then
+          collection
+            .aggregate[Entity](
+              Aggregate
+                .matchBy(currentRequest && Filter.eq(Field.ListingStatus, ListingStatus.Delisted.print))
+                .project(Projection.include(Field.Id))
+            )
+            .first
+            .flatMap { delisted =>
+              F.raiseWhen(delisted.nonEmpty)(AppError.FailedValidation(s"Cannot activate delisted security $ticker")).as(false)
+            }
+        else false.pure[F]
+      }
 
   override def reconcile(exchange: Exchange, securities: List[Security]): F[Unit] =
     F.whenA(securities.nonEmpty) {

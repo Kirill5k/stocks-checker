@@ -11,6 +11,7 @@ import stockschecker.domain.{FinancialMetrics, Ticker}
 import stockschecker.repositories.{FinancialHistoryRepository, FinancialMetricsRepository}
 
 trait FinancialMetricsService[F[_]]:
+  def delete(ticker: Ticker): F[Unit]
   def find(ticker: Ticker, fetch: Boolean): F[FinancialMetrics]
 
 final private class LiveFinancialMetricsService[F[_]](
@@ -21,6 +22,8 @@ final private class LiveFinancialMetricsService[F[_]](
 )(using
     F: Sync[F]
 ) extends FinancialMetricsService[F] {
+
+  override def delete(ticker: Ticker): F[Unit] = metricsRepository.delete(ticker)
 
   override def find(ticker: Ticker, fetch: Boolean): F[FinancialMetrics] =
     val result =

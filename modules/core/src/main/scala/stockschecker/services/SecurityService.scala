@@ -8,7 +8,7 @@ import fs2.Stream
 import org.typelevel.log4cats.Logger
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{Exchange, ListingStatus, Security, SecurityFilter, Ticker}
+import stockschecker.domain.{Exchange, Security, SecurityFilter, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.SecurityRepository
 
@@ -33,7 +33,7 @@ final private class LiveSecurityService[F[_]](
 ) extends SecurityService[F] {
 
   override def find(ticker: Ticker): F[Security] =
-    repository.find(ticker).flatMap(s => F.fromOption(s, AppError.SecurityNotFound(ticker)))
+    repository.findVisible(ticker).flatMap(s => F.fromOption(s, AppError.SecurityNotFound(ticker)))
 
   override def findByExchange(exchange: Exchange): F[List[Security]] =
     repository.findByExchange(exchange)
@@ -60,12 +60,9 @@ final private class LiveSecurityService[F[_]](
     repository.findTickersBy(filter, limit)
 
   override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit] =
-    for
-      security <- find(ticker)
-      _        <- repository.setActive(ticker, active, requestedAt)
-      action = Action.SetCompanyProfileActive(ticker, active && security.listingStatus != ListingStatus.Delisted, requestedAt)
-      _ <- dispatcher.dispatch(action)
-    yield ()
+    repository.setActive(ticker, active, requestedAt).flatMap { accepted =>
+      F.whenA(accepted)(dispatcher.dispatch(Action.SetCompanyProfileActive(ticker, active, requestedAt)))
+    }
 
   override def recordCompanyProfileUpdate(tickers: NonEmptyList[Ticker]): F[Unit] =
     repository.updateCompanyProfileLastUpdated(tickers.toList)

@@ -27,6 +27,7 @@ import stockschecker.repositories.entities.PriceAnalyticsEntity
 import java.time.Instant
 
 trait PriceAnalyticsRepository[F[_]]:
+  def delete(ticker: Ticker): F[Unit]
   def save(analytics: PriceAnalytics): F[Unit]
   def save(analyticsList: List[PriceAnalytics]): F[Unit]
   def find(ticker: Ticker): F[Option[PriceAnalytics]]
@@ -41,6 +42,8 @@ final private class LivePriceAnalyticsRepository[F[_]](
 ) extends PriceAnalyticsRepository[F] {
 
   import PriceAnalyticsRepository.Field
+
+  override def delete(ticker: Ticker): F[Unit] = collection.deleteOne(Filter.idEq(ticker.value)).void
 
   extension (analytics: PriceAnalytics)
     private def toUpdate(now: Instant): Update =

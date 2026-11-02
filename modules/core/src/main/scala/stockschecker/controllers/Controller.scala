@@ -19,7 +19,7 @@ import sttp.tapir.server.http4s.Http4sServerOptions
 import sttp.tapir.server.interceptor.DecodeFailureContext
 import sttp.tapir.server.interceptor.exception.{ExceptionContext, ExceptionHandler}
 import sttp.tapir.server.model.ValuedEndpointOutput
-import sttp.tapir.server.interceptor.decodefailure.DecodeFailureHandler
+import sttp.tapir.server.interceptor.decodefailure.{DecodeFailureHandler, DefaultDecodeFailureHandler}
 
 final case class ErrorResponse(message: String) derives Codec.AsObject
 
@@ -86,7 +86,10 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
         ctx.failure match
           case DecodeResult.Error(_, e)     => errorEndpointOut(e)
           case DecodeResult.InvalidValue(e) =>
-            val msgs = e.collect { case ValidationError(_, _, _, Some(msg)) => msg }
+            val source = DefaultDecodeFailureHandler.FailureMessages.failureSourceMessage(ctx.failingInput)
+            val msgs   = e.map { case ValidationError(validator, _, _, message) =>
+              message.getOrElse(validator.show.fold(source)(constraint => s"$source (must satisfy $constraint)"))
+            }
             errorEndpointOut(AppError.FailedValidation(msgs.mkString(", ")))
           case _ => None
       })

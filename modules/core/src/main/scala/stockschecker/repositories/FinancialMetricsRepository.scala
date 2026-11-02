@@ -16,6 +16,7 @@ import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import java.time.Instant
 
 trait FinancialMetricsRepository[F[_]]:
+  def delete(ticker: Ticker): F[Unit]
   def save(fm: List[FinancialMetrics]): F[Unit]
   def find(ticker: Ticker): F[Option[FinancialMetrics]]
 
@@ -27,6 +28,8 @@ final private class LiveFinancialMetricsRepository[F[_]](
 ) extends FinancialMetricsRepository[F] {
 
   import FinancialMetricsRepository.Field
+
+  override def delete(ticker: Ticker): F[Unit] = collection.deleteOne(Filter.idEq(ticker.value)).void
 
   extension (fm: FinancialMetrics)
     private def toUpdate(now: Instant): Update =

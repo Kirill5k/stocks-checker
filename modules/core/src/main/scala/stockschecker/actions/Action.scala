@@ -30,11 +30,13 @@ enum Action:
   case RecordFinancialMetricsUpdate(tickers: NonEmptyList[Ticker])
   case SetSecurityActive(ticker: Ticker, active: Boolean, requestedAt: Instant)
   case SetCompanyProfileActive(ticker: Ticker, active: Boolean, requestedAt: Instant)
+  case DeletePriceAnalytics(ticker: Ticker)
+  case DeleteFinancialMetrics(ticker: Ticker)
 
   def isSchedulable: Boolean = this match
     case Sequence(actions) => actions.forall(_.isSchedulable)
     case _: RecordCompanyProfileUpdate | _: RecordPriceAnalyticsUpdate | _: RecordFinancialMetricsUpdate | _: SetSecurityActive |
-        _: SetCompanyProfileActive | _: RefreshEvaluationPrices =>
+        _: SetCompanyProfileActive | _: DeletePriceAnalytics | _: DeleteFinancialMetrics | _: RefreshEvaluationPrices =>
       false
     case _ => true
 

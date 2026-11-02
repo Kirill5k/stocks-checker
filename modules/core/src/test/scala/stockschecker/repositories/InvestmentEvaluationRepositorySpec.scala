@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.parallel.*
 import cats.syntax.foldable.*
 import mongo4cats.circe.MongoJsonCodecs
-import mongo4cats.operations.Filter
+import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.*
 import stockschecker.domain.investment.{EvaluationCapture, InvestmentEvaluator}
 import stockschecker.fixtures.*
@@ -50,8 +50,36 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
     )
 
   "An InvestmentEvaluationRepository" should {
+    "hide evaluations and suspend capture tasks for an unavailable holding in any cohort without deleting captures" in
+      withActiveStocks(List(AAPL, MSFT)) { db =>
+        val affected = current.copy(cohorts = current.cohorts :+ InvestmentCohort(CohortName.EqualUniverse, List(AAPL, MSFT)))
+        val saved    = report(affected)
+        for
+          screens    <- InvestmentScreenRepository.make[IO](db)
+          repo       <- InvestmentEvaluationRepository.make[IO](db)
+          securities <- db.getCollection(SecurityRepository.CollectionName)
+          _          <- screens.save(affected)
+          _          <- repo.saveMonthly(saved)
+          _          <- repo.recordHistoryRequests(affected.id, month, List(AAPL))
+          before     <- repo.findContext(affected.id, month)
+          _          <- securities.updateOne(Filter.idEq(MSFT.value), Update.set("isActive", false))
+          hidden     <- repo.findContext(affected.id, month)
+          tasks      <- repo.captureTasks(month)
+          retained   <- screens.get(affected.id)
+          _          <- securities.updateOne(Filter.idEq(MSFT.value), Update.set("isActive", true))
+          restored   <- repo.findContext(affected.id, month)
+          resumed    <- repo.captureTasks(month)
+        yield
+          before.flatMap(_.monthly) mustBe Some(saved)
+          hidden mustBe None
+          tasks mustBe Nil
+          retained mustBe Some(affected)
+          restored mustBe before
+          resumed.head.existing.map(_.requestedHistory) mustBe Some(Set(AAPL))
+      }
+
     "read a screen with absent captures and distinguish an absent screen" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         for
           screens <- InvestmentScreenRepository.make[IO](db)
           repo    <- InvestmentEvaluationRepository.make[IO](db)
@@ -68,7 +96,7 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
       }
 
     "join the requested monthly report and the latest finished report for only that screen" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val old       = current.copy(createdAt = Instant.parse("2020-01-01T00:00:00Z"))
         val first     = report(old, YearMonth.of(2025, 2)).copy(settled = true)
         val latest    = report(old, YearMonth.of(2025, 3)).copy(settled = true)
@@ -90,7 +118,7 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
       }
 
     "select each current or unfinished month once and resume old captures even after a finished capture" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val prior           = month.minusMonths(1)
         val fresh           = current.copy(id = InvestmentScreenId("fresh"))
         val settled         = current.copy(id = InvestmentScreenId("settled"))
@@ -126,7 +154,7 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
       }
 
     "plan captures without embedding historical reports beyond Mongo's document limit" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val old         = current.copy(createdAt = Instant.parse("2026-01-01T00:00:00Z"))
         val months      = List(YearMonth.of(2026, 2), YearMonth.of(2026, 3), YearMonth.of(2026, 4))
         val methodology = "x" * (6 * 1024 * 1024)
@@ -144,7 +172,7 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
       }
 
     "retain batched history requests across concurrent additions and capture saves" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val pending = report()
         for
           screens    <- InvestmentScreenRepository.make[IO](db)
@@ -170,7 +198,7 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
       }
 
     "accept concurrent initial captures and keep a settled winner immutable" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val pending  = report()
         val complete = pending.copy(settled = true, methodology = "settled outcome")
         for
@@ -190,7 +218,7 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
       }
 
     "read adjusted snapshots in one batch only when their ranges cover completed sessions" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val from         = LocalDate.parse("2026-08-01")
         val through      = LocalDate.parse("2026-09-30")
         val range        = DateRange(from, through)
@@ -217,7 +245,7 @@ class InvestmentEvaluationRepositorySpec extends RepositorySpec with MongoJsonCo
       }
 
     "trim candles inclusively while auditing the original provider response size" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val from        = LocalDate.parse("2026-01-01")
         val through     = from.plusDays(3)
         val range       = DateRange(from, through)

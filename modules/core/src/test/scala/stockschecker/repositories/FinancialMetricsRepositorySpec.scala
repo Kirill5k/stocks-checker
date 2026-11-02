@@ -9,6 +9,21 @@ class FinancialMetricsRepositorySpec extends RepositorySpec {
   override def port: Int = 12153
 
   "A FinancialMetricsRepository" when {
+    "delete" should {
+      "remove only the requested metrics and remain idempotent" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo     <- FinancialMetricsRepository.make[IO](db)
+            _        <- repo.save(List(AAPLFinancialMetrics, MSFTFinancialMetrics))
+            _        <- repo.delete(AAPL)
+            _        <- repo.delete(AAPL)
+            removed  <- repo.find(AAPL)
+            retained <- repo.find(MSFT)
+          yield
+            removed mustBe None
+            retained mustBe Some(MSFTFinancialMetrics)
+        }
+    }
     "save" should {
       "save financial metrics in the repository" in
         withEmbeddedMongoDatabase { db =>

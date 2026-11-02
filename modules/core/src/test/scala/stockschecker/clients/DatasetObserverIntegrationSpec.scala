@@ -72,8 +72,8 @@ class DatasetObserverIntegrationSpec extends RepositorySpec {
           _           <- IO.sleep(5.millis)
           _           <- apple.attempt
           failed      <- quality.report(snapshot.fetchedAt).map(_.datasets)
-          excluded    <- securities.find(AAPL)
-          included    <- securities.find(MSFT)
+          excluded    <- readSecurity(db, AAPL)
+          included    <- readSecurity(db, MSFT)
         yield
           first.left.toOption.collect { case e: AppError.HttpClient => e.status } mustBe Some(404)
           unavailable.find(_.ticker == AAPL).map(_.status) mustBe Some(DatasetStatus.Unavailable)

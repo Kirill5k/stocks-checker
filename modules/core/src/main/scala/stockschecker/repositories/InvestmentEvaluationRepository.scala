@@ -123,6 +123,7 @@ final private class LiveInvestmentEvaluationRepository[F[_]](
       )
     Aggregate
       .matchBy(Filter.idEq(screenId.value))
+      .combinedWith(InvestmentScreenVisibility.restrict)
       .replaceWith(Document("screen" := "$$ROOT"))
       .lookup(CollectionName, captures, "captures")
       .unwind("$captures")
@@ -146,7 +147,7 @@ final private class LiveInvestmentEvaluationRepository[F[_]](
   private def taskContextAggregation(month: YearMonth): Aggregate =
     // Immediate unwind is coalesced into the lookup, so full historical reports never form one large array.
     // Only compact request state is regrouped; even a screen's combined reports can exceed Mongo's document limit.
-    Aggregate
+    InvestmentScreenVisibility.restrict
       .replaceWith(Document("screen" := "$$ROOT"))
       .lookup(CollectionName, "screen._id", Field.ScreenId, "captures")
       .unwind("$captures", UnwindOptions(preserveNullAndEmptyArrays = true))

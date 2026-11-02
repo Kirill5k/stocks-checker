@@ -79,7 +79,11 @@ class StockControllerIntegrationSpec extends RepositorySpec {
         scores = high.scores.copy(consistencyScore = 40),
         metrics = high.metrics.copy(consistencyScore = Some(BigDecimal("0.99")))
       )
-      val seed = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)), "price-analytics" -> List(toDoc(high), toDoc(low)))
+      val seed = Map(
+        "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+        "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
+        "price-analytics"  -> List(toDoc(high), toDoc(low))
+      )
       withEmbeddedMongoDatabase(seed) { db =>
         for
           repo       <- StockRepository.make[IO](db)

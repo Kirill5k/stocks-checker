@@ -19,6 +19,30 @@ import stockschecker.fixtures.*
 
 class ActionHandlerSpec extends IOWordSpec:
   "An action handler" should {
+    "route analytics deletion to its owning service" in {
+      val services = mock[Services[IO]]
+      val prices   = mock[PriceService[IO]]
+      when(services.price).thenReturn(prices)
+      when(prices.delete(AAPL)).thenReturnUnit
+      ActionHandler.make(services).flatMap(_.execute(Action.DeletePriceAnalytics(AAPL))).asserting { result =>
+        result mustBe ActionResult.Completed
+        verify(prices).delete(AAPL)
+        succeed
+      }
+    }
+
+    "route financial metrics deletion to its owning service" in {
+      val services   = mock[Services[IO]]
+      val financials = mock[FinancialMetricsService[IO]]
+      when(services.financialMetrics).thenReturn(financials)
+      when(financials.delete(AAPL)).thenReturnUnit
+      ActionHandler.make(services).flatMap(_.execute(Action.DeleteFinancialMetrics(AAPL))).asserting { result =>
+        result mustBe ActionResult.Completed
+        verify(financials).delete(AAPL)
+        succeed
+      }
+    }
+
     "route monthly screen creation to the screen service" in {
       val services = mock[Services[IO]]
       val screens  = mock[InvestmentScreenService[IO]]

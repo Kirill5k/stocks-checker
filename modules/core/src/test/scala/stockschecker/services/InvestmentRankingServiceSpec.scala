@@ -6,6 +6,7 @@ import kirill5k.common.cats.test.IOWordSpec
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.domain.*
+import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.*
 
@@ -65,6 +66,8 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
       candidates: Ref[IO, List[InvestmentCandidate]],
       published: Ref[IO, Published]
   ): InvestmentRankingRepository[IO] = new InvestmentRankingRepository[IO]:
+    override def rankingInputs(id: InvestmentRankingId, query: RankingInputsQuery): IO[RankingInputsPage] =
+      IO.raiseError(AppError.EntityDoesNotExist("Investment ranking", id.value))
     def findCandidates: IO[List[InvestmentCandidate]]                                     = candidates.get
     def latest: IO[Option[InvestmentRanking]]                                             = published.get.map(_.headOption.map(_._1))
     def save(ranking: InvestmentRanking, entries: List[InvestmentRankingEntry]): IO[Unit] =
@@ -78,9 +81,10 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
     def latestRanking: IO[Option[InvestmentRanking]]                              = published.get.map(_.headOption.map(_._1))
     def rankingEntries(id: InvestmentRankingId): IO[List[InvestmentRankingEntry]] =
       published.get.map(_.find(_._1.id == id).fold(List.empty[InvestmentRankingEntry])(_._2))
-    def save(screen: InvestmentScreen): IO[Unit]                                           = state.update(_ :+ screen)
-    def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]]                          = state.get.map(_.find(_.id == id))
-    def list(limit: Int): IO[List[InvestmentScreenSummary]]                                = state.get.map(_.take(limit).map(_.summary))
+    def visibleRankingTickers(id: InvestmentRankingId): IO[Set[Ticker]] = rankingEntries(id).map(_.map(_.scorecard.ticker).toSet)
+    def save(screen: InvestmentScreen): IO[Unit]                        = state.update(_ :+ screen)
+    def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]]       = state.get.map(_.find(_.id == id))
+    def list(limit: Int): IO[List[InvestmentScreenSummary]]             = state.get.map(_.take(limit).map(_.summary))
     def findWithRanking(id: InvestmentScreenId): IO[(InvestmentScreen, InvestmentRanking)] =
       for
         screen  <- get(id).map(_.get)

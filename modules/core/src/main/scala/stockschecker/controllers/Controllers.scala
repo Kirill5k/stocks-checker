@@ -19,6 +19,7 @@ trait Controllers[F[_]]:
   def jobs: Controller[F]
   def health: Controller[F]
   def stock: Controller[F]
+  def investmentRankings: Controller[F]
   def investmentScreens: Controller[F]
   def dataQuality: Controller[F]
 
@@ -30,6 +31,7 @@ trait Controllers[F[_]]:
         command.routes <+>
         jobs.routes <+>
         stock.routes <+>
+        investmentRankings.routes <+>
         investmentScreens.routes <+>
         dataQuality.routes),
       "" -> health.routes
@@ -45,15 +47,17 @@ object Controllers:
       c          <- CommandController.make[F](apiConfig, services.command)
       j          <- JobController.make(services.jobs, apiConfig)
       st         <- StockController.make(services.stock, apiConfig)
+      rankings   <- InvestmentRankingController.make(services.investmentRankings, apiConfig)
       investment <- InvestmentScreenController.make(services.investmentScreens, services.investmentEvaluations, apiConfig)
       quality    <- DataQualityController.make(services.dataQuality, apiConfig)
     yield new Controllers[F]:
-      override val security: Controller[F]          = s
-      override val price: Controller[F]             = p
-      override val companyProfile: Controller[F]    = cp
-      override val health: Controller[F]            = h
-      override val command: Controller[F]           = c
-      override val jobs: Controller[F]              = j
-      override val stock: Controller[F]             = st
-      override val investmentScreens: Controller[F] = investment
-      override val dataQuality: Controller[F]       = quality
+      override val security: Controller[F]           = s
+      override val price: Controller[F]              = p
+      override val companyProfile: Controller[F]     = cp
+      override val health: Controller[F]             = h
+      override val command: Controller[F]            = c
+      override val jobs: Controller[F]               = j
+      override val stock: Controller[F]              = st
+      override val investmentRankings: Controller[F] = rankings
+      override val investmentScreens: Controller[F]  = investment
+      override val dataQuality: Controller[F]        = quality

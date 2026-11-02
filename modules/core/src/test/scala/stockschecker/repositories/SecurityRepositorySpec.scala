@@ -3,11 +3,20 @@ package stockschecker.repositories
 import stockschecker.domain.ListingStatus
 import cats.data.NonEmptyList
 import cats.effect.IO
-import org.scalatest.wordspec.AsyncWordSpec
+import cats.syntax.traverse.*
+import fs2.Stream
+import kirill5k.common.cats.Clock
+import mongo4cats.operations.Filter
+import org.mockito.Mockito.{mock, times, verify, verifyNoInteractions, when}
+import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+import stockschecker.actions.{Action, ActionDispatcher}
+import stockschecker.clients.MarketDataClient
 import stockschecker.domain.{Exchange, SecurityFilter, SecurityKind, Ticker}
+import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
+import stockschecker.services.{CompanyProfileService, SecurityService}
 
-import scala.concurrent.Future
 import scala.concurrent.duration.*
 
 class SecurityRepositorySpec extends RepositorySpec {
@@ -21,8 +30,8 @@ class SecurityRepositorySpec extends RepositorySpec {
           for
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
-            all  <- repo.findByExchange(Exchange.NASDAQ)
-          yield all mustBe List(AAPLSecurity)
+            all  <- readSecurity(db, AAPL)
+          yield all mustBe Some(AAPLSecurity)
         }
 
       "store multiple securities in database" in
@@ -31,24 +40,70 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo <- SecurityRepository.make(db)
             securities = List(AAPLSecurity, MSFTSecurity)
             _   <- repo.save(securities)
-            all <- repo.findByExchange(Exchange.NASDAQ)
-          yield all mustBe securities
+            all <- List(AAPL, MSFT).traverse(readSecurity(db, _))
+          yield all.flatten mustBe securities
         }
     }
 
     "setActive" should {
-      "ignore older and duplicate requests after accepting a newer activation" in
+      "resume profile deactivation and cache deletion after dispatch fails following the security write" in
+        withActiveStocks(
+          Map(
+            SecurityRepository.CollectionName         -> List(toDoc(AAPLSecurity)),
+            PriceAnalyticsRepository.CollectionName   -> List(toDoc(AAPLPriceAnalytics)),
+            FinancialMetricsRepository.CollectionName -> List(toDoc(AAPLFinancialMetrics))
+          )
+        ) { db =>
+          given Clock[IO]  = Clock.make[IO]
+          given Logger[IO] = Slf4jLogger.getLogger[IO]
+          val dispatcher   = mock(classOf[ActionDispatcher[IO]])
+          val client       = mock(classOf[MarketDataClient[IO]])
+          val failure      = new com.mongodb.MongoException("profile dispatch unavailable")
+          for
+            securities     <- SecurityRepository.make[IO](db)
+            profiles       <- CompanyProfileRepository.make[IO](db)
+            prices         <- PriceAnalyticsRepository.make[IO](db)
+            metrics        <- FinancialMetricsRepository.make[IO](db)
+            profileService <- CompanyProfileService.make(profiles, client, dispatcher)
+            service        <- SecurityService.make(securities, client, dispatcher)
+            rawProfiles    <- db.getCollection(CompanyProfileRepository.CollectionName)
+            _ = when(dispatcher.dispatch(Action.SetCompanyProfileActive(AAPL, false, ts)))
+              .thenReturn(IO.raiseError(failure), profileService.setActive(AAPL, false, ts))
+            _ = when(dispatcher.dispatch(Action.DeletePriceAnalytics(AAPL))).thenReturn(prices.delete(AAPL))
+            _ = when(dispatcher.dispatch(Action.DeleteFinancialMetrics(AAPL))).thenReturn(metrics.delete(AAPL))
+            first       <- service.setActive(AAPL, false, ts).attempt
+            excluded    <- readSecurity(db, AAPL)
+            beforeRetry <- rawProfiles.find(Filter.idEq(AAPL.value)).first
+            _           <- service.setActive(AAPL, false, ts)
+            afterRetry  <- rawProfiles.find(Filter.idEq(AAPL.value)).first
+            price       <- prices.find(AAPL)
+            financials  <- metrics.find(AAPL)
+          yield
+            first mustBe Left(failure)
+            excluded.map(_.isActive) mustBe Some(false)
+            beforeRetry.flatMap(_.getBoolean("isActive")) mustBe Some(true)
+            afterRetry.flatMap(_.getBoolean("isActive")) mustBe Some(false)
+            price mustBe None
+            financials mustBe None
+            verify(dispatcher, times(2)).dispatch(Action.SetCompanyProfileActive(AAPL, false, ts))
+            verifyNoInteractions(client)
+            succeed
+        }
+
+      "ignore older requests and accept retries of the current activation" in
         withEmbeddedMongoDatabase { db =>
           val newer = ts.plusNanos(2)
           for
-            repo   <- SecurityRepository.make(db)
-            _      <- repo.save(AAPLSecurity)
-            _      <- repo.setActive(AAPL, false, ts)
-            _      <- repo.setActive(AAPL, true, newer)
-            _      <- repo.setActive(AAPL, false, ts.plusNanos(1))
-            _      <- repo.setActive(AAPL, false, newer)
-            result <- repo.find(AAPL)
+            repo      <- SecurityRepository.make(db)
+            _         <- repo.save(AAPLSecurity)
+            _         <- repo.setActive(AAPL, false, ts)
+            _         <- repo.setActive(AAPL, true, newer)
+            older     <- repo.setActive(AAPL, false, ts.plusNanos(1))
+            duplicate <- repo.setActive(AAPL, true, newer)
+            result    <- readSecurity(db, AAPL)
           yield
+            older mustBe false
+            duplicate mustBe true
             result.map(_.isActive) mustBe Some(true)
             result.flatMap(_.exclusionReason) mustBe None
         }
@@ -56,19 +111,69 @@ class SecurityRepositorySpec extends RepositorySpec {
       "ignore an older activation after a newer deactivation, even after a provider refresh" in
         withEmbeddedMongoDatabase { db =>
           for
-            repo   <- SecurityRepository.make(db)
-            _      <- repo.save(AAPLSecurity)
-            _      <- repo.setActive(AAPL, false, ts.plusNanos(2))
-            _      <- repo.save(AAPLSecurity)
-            _      <- repo.setActive(AAPL, true, ts.plusNanos(1))
-            result <- repo.find(AAPL)
+            repo     <- SecurityRepository.make(db)
+            _        <- repo.save(AAPLSecurity)
+            _        <- repo.setActive(AAPL, false, ts.plusNanos(2))
+            _        <- repo.save(AAPLSecurity)
+            rejected <- repo.setActive(AAPL, true, ts.plusNanos(1))
+            result   <- readSecurity(db, AAPL)
           yield
+            rejected mustBe false
             result.map(_.isActive) mustBe Some(false)
             result.flatMap(_.exclusionReason) mustBe Some("user-excluded")
+        }
+
+      "ignore a missing security without inserting one" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo    <- SecurityRepository.make(db)
+            result  <- repo.setActive(AAPL, false, ts)
+            missing <- readSecurity(db, AAPL)
+          yield
+            result mustBe false
+            missing mustBe None
         }
     }
 
     "reconcile" should {
+      "retain profile and cached data during a listing gap and restore visibility when the ticker returns" in
+        withActiveStocks(
+          Map(
+            SecurityRepository.CollectionName         -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
+            PriceAnalyticsRepository.CollectionName   -> List(toDoc(AAPLPriceAnalytics)),
+            FinancialMetricsRepository.CollectionName -> List(toDoc(AAPLFinancialMetrics))
+          )
+        ) { db =>
+          given Logger[IO] = Slf4jLogger.getLogger[IO]
+          val client       = mock(classOf[MarketDataClient[IO]])
+          val dispatcher   = mock(classOf[ActionDispatcher[IO]])
+          when(client.getTradedSecurities(Exchange.NASDAQ)).thenReturn(
+            Stream.emit(MSFTSecurity).covary[IO],
+            Stream.emits(List(AAPLSecurity, MSFTSecurity)).covary[IO]
+          )
+          for
+            securities <- SecurityRepository.make[IO](db)
+            prices     <- PriceAnalyticsRepository.make[IO](db)
+            metrics    <- FinancialMetricsRepository.make[IO](db)
+            service    <- SecurityService.make(securities, client, dispatcher)
+            before     <- readProfile(db, AAPL)
+            _          <- service.fetchLatest(NonEmptyList.one(Exchange.NASDAQ))
+            hidden     <- securities.findVisible(AAPL)
+            retained   <- readProfile(db, AAPL)
+            price      <- prices.find(AAPL)
+            financials <- metrics.find(AAPL)
+            _          <- service.fetchLatest(NonEmptyList.one(Exchange.NASDAQ))
+            restored   <- securities.findVisible(AAPL)
+          yield
+            hidden mustBe None
+            retained mustBe before
+            price mustBe Some(AAPLPriceAnalytics)
+            financials mustBe Some(AAPLFinancialMetrics)
+            restored mustBe Some(AAPLSecurity)
+            verifyNoInteractions(dispatcher)
+            succeed
+        }
+
       "delist missing tickers only in the reconciled exchange" in
         withEmbeddedMongoDatabase { db =>
           val otherExchange = AAPLSecurity.copy(ticker = Ticker("IBM"), exchange = Exchange.NYSE)
@@ -76,9 +181,9 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo      <- SecurityRepository.make(db)
             _         <- repo.save(List(AAPLSecurity, MSFTSecurity, otherExchange))
             _         <- repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))
-            missing   <- repo.find(AAPL)
-            listed    <- repo.find(MSFT)
-            untouched <- repo.find(otherExchange.ticker)
+            missing   <- readSecurity(db, AAPL)
+            listed    <- readSecurity(db, MSFT)
+            untouched <- readSecurity(db, otherExchange.ticker)
           yield
             missing.map(_.listingStatus) mustBe Some(ListingStatus.Delisted)
             missing.map(_.isActive) mustBe Some(false)
@@ -93,9 +198,9 @@ class SecurityRepositorySpec extends RepositorySpec {
             _        <- repo.save(List(AAPLSecurity, MSFTSecurity))
             _        <- repo.setActive(AAPL, false, ts)
             _        <- repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))
-            missing  <- repo.find(AAPL)
+            missing  <- readSecurity(db, AAPL)
             _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
-            relisted <- repo.find(AAPL)
+            relisted <- readSecurity(db, AAPL)
           yield
             missing.map(_.listingStatus) mustBe Some(ListingStatus.Delisted)
             missing.flatMap(_.exclusionReason) mustBe Some("user-excluded")
@@ -111,8 +216,8 @@ class SecurityRepositorySpec extends RepositorySpec {
             _        <- repo.save(List(AAPLSecurity, MSFTSecurity))
             _        <- repo.setActive(AAPL, false, ts)
             _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
-            excluded <- repo.find(AAPL)
-            listed   <- repo.find(MSFT)
+            excluded <- readSecurity(db, AAPL)
+            listed   <- readSecurity(db, MSFT)
           yield
             excluded.map(_.isActive) mustBe Some(false)
             excluded.flatMap(_.exclusionReason) mustBe Some("user-excluded")
@@ -120,25 +225,30 @@ class SecurityRepositorySpec extends RepositorySpec {
             listed.map(_.isActive) mustBe Some(true)
         }
 
-      "keep delisted securities inactive after restore until a successful listing reconciliation" in
+      "reject delisted activation and preserve the exclusion until explicitly activated after relisting" in
         withEmbeddedMongoDatabase { db =>
           for
-            repo     <- SecurityRepository.make(db)
-            _        <- repo.save(List(AAPLSecurity, MSFTSecurity))
-            _        <- repo.setActive(AAPL, false, ts)
-            _        <- repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))
-            delisted <- repo.find(AAPL)
-            _        <- repo.setActive(AAPL, true, ts.plusSeconds(1))
-            restored <- repo.find(AAPL)
-            _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
-            relisted <- repo.find(AAPL)
+            repo      <- SecurityRepository.make(db)
+            _         <- repo.save(List(AAPLSecurity, MSFTSecurity))
+            _         <- repo.setActive(AAPL, false, ts)
+            _         <- repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))
+            delisted  <- readSecurity(db, AAPL)
+            rejected  <- repo.setActive(AAPL, true, ts.plusSeconds(1)).attempt
+            restored  <- readSecurity(db, AAPL)
+            _         <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
+            relisted  <- readSecurity(db, AAPL)
+            _         <- repo.setActive(AAPL, true, ts.plusSeconds(2))
+            activated <- readSecurity(db, AAPL)
           yield
+            rejected.left.toOption.get mustBe a[AppError.FailedValidation]
             delisted.map(_.listingStatus) mustBe Some(ListingStatus.Delisted)
             restored.map(_.isActive) mustBe Some(false)
             restored.map(_.listingStatus) mustBe Some(ListingStatus.Delisted)
-            restored.flatMap(_.exclusionReason) mustBe None
-            relisted.map(_.isActive) mustBe Some(true)
+            restored.flatMap(_.exclusionReason) mustBe Some("user-excluded")
+            relisted.map(_.isActive) mustBe Some(false)
             relisted.map(_.listingStatus) mustBe Some(ListingStatus.Listed)
+            activated.map(_.isActive) mustBe Some(true)
+            activated.flatMap(_.exclusionReason) mustBe None
         }
 
       "leave existing listing state unchanged for an empty reconciliation" in
@@ -147,18 +257,18 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo   <- SecurityRepository.make(db)
             _      <- repo.save(AAPLSecurity)
             _      <- repo.reconcile(Exchange.NASDAQ, Nil)
-            result <- repo.find(AAPL)
+            result <- readSecurity(db, AAPL)
           yield result mustBe Some(AAPLSecurity)
         }
     }
 
-    "findByTicker" should {
+    "findVisible" should {
       "find security by ticker" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL)) { db =>
           for
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
-            s    <- repo.find(AAPL)
+            s    <- repo.findVisible(AAPL)
           yield s mustBe Some(AAPLSecurity)
         }
 
@@ -166,14 +276,14 @@ class SecurityRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase { db =>
           for
             repo <- SecurityRepository.make(db)
-            s    <- repo.find(AAPL)
+            s    <- repo.findVisible(AAPL)
           yield s mustBe None
         }
     }
 
     "findByExchange" should {
       "find securities by exchange" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
@@ -185,7 +295,7 @@ class SecurityRepositorySpec extends RepositorySpec {
 
     "getAllTickers" should {
       "return tickers of all securities stored in db" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
@@ -196,6 +306,36 @@ class SecurityRepositorySpec extends RepositorySpec {
     }
 
     "findTickersBy" should {
+      "exclude inactive and delisted securities before limiting without requiring an active filter" in
+        withEmbeddedMongoDatabase { db =>
+          val delisted = AAPLSecurity.copy(ticker = Ticker("DELISTED"))
+          for
+            repo     <- SecurityRepository.make(db)
+            _        <- repo.save(List(AAPLSecurity, delisted, MSFTSecurity))
+            _        <- repo.setActive(AAPL, false, ts)
+            _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
+            result   <- repo.findTickersBy(SecurityFilter.ExchangeIs(Exchange.NASDAQ), Some(1))
+            inactive <- repo.findTickersBy(SecurityFilter.IsActive(false), None)
+          yield
+            result mustBe List(MSFT)
+            inactive mustBe Nil
+        }
+
+      "keep excluded profiles out of subsequent daily refreshes after listing and successful-update events" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo     <- SecurityRepository.make(db)
+            _        <- repo.save(List(AAPLSecurity, MSFTSecurity))
+            _        <- repo.setActive(AAPL, false, ts)
+            _        <- repo.updateCompanyProfileLastUpdated(List(AAPL))
+            _        <- repo.reconcile(Exchange.NASDAQ, List(AAPLSecurity, MSFTSecurity))
+            excluded <- readSecurity(db, AAPL)
+            due      <- repo.findTickersBy(SecurityFilter.CompanyProfileNotUpdatedFor(3.days), None)
+          yield
+            excluded.map(_.isActive) mustBe Some(false)
+            excluded.flatMap(_.exclusionReason) mustBe Some("user-excluded")
+            due mustBe List(MSFT)
+        }
       "return tickers filtered by ExchangeIs" in
         withEmbeddedMongoDatabase { db =>
           val nyseSec = AAPLSecurity.copy(ticker = Ticker("IBM"), exchange = Exchange.NYSE)
@@ -296,7 +436,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo    <- SecurityRepository.make(db)
             _       <- repo.save(AAPLSecurity)
             _       <- repo.updateCompanyProfileLastUpdated(List(AAPL))
-            updated <- repo.find(AAPL)
+            updated <- readSecurity(db, AAPL)
           yield updated.flatMap(_.companyProfileLastUpdatedAt) mustBe defined
         }
 
@@ -305,7 +445,7 @@ class SecurityRepositorySpec extends RepositorySpec {
           for
             repo <- SecurityRepository.make(db)
             _    <- repo.updateCompanyProfileLastUpdated(List(AAPL))
-            res  <- repo.find(AAPL)
+            res  <- readSecurity(db, AAPL)
           yield res mustBe None
         }
 
@@ -316,8 +456,8 @@ class SecurityRepositorySpec extends RepositorySpec {
             _           <- repo.save(AAPLSecurity)
             _           <- repo.save(MSFTSecurity)
             _           <- repo.updateCompanyProfileLastUpdated(List(AAPL, MSFT))
-            updatedAAPL <- repo.find(AAPL)
-            updatedMSFT <- repo.find(MSFT)
+            updatedAAPL <- readSecurity(db, AAPL)
+            updatedMSFT <- readSecurity(db, MSFT)
           yield {
             updatedAAPL.flatMap(_.companyProfileLastUpdatedAt) mustBe defined
             updatedMSFT.flatMap(_.companyProfileLastUpdatedAt) mustBe defined
@@ -330,7 +470,7 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo <- SecurityRepository.make(db)
             _    <- repo.save(AAPLSecurity)
             _    <- repo.updateCompanyProfileLastUpdated(List.empty)
-            res  <- repo.find(AAPL)
+            res  <- readSecurity(db, AAPL)
           yield res mustBe Some(AAPLSecurity)
         }
 
@@ -341,8 +481,8 @@ class SecurityRepositorySpec extends RepositorySpec {
             repo         <- SecurityRepository.make(db)
             _            <- repo.save(AAPLSecurity)
             _            <- repo.updateCompanyProfileLastUpdated(List(AAPL, nonExistent))
-            updatedAAPL  <- repo.find(AAPL)
-            updatedOther <- repo.find(nonExistent)
+            updatedAAPL  <- readSecurity(db, AAPL)
+            updatedOther <- readSecurity(db, nonExistent)
           yield {
             updatedAAPL.flatMap(_.companyProfileLastUpdatedAt) mustBe defined
             updatedOther mustBe None

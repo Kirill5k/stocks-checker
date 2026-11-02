@@ -21,7 +21,8 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
   private def memoryScreens(
       state: Ref[IO, List[InvestmentScreen]],
       value: InvestmentRanking,
-      entries: List[InvestmentRankingEntry]
+      entries: List[InvestmentRankingEntry],
+      hidden: Set[Ticker] = Set.empty
   ): InvestmentScreenRepository[IO] =
     new InvestmentScreenRepository[IO]:
       def save(screen: InvestmentScreen): IO[Unit]                                           = state.update(_ :+ screen)
@@ -29,8 +30,10 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
         get(id).flatMap(screen => IO.fromOption(screen)(AppError.EntityDoesNotExist("Investment screen", id.value))).map(_ -> value)
       def latestRanking: IO[Option[InvestmentRanking]]                              = IO.pure(Some(value))
       def rankingEntries(id: InvestmentRankingId): IO[List[InvestmentRankingEntry]] = IO.pure(if id == value.id then entries else Nil)
-      def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]]                 = state.get.map(_.find(_.id == id))
-      def list(limit: Int): IO[List[InvestmentScreenSummary]]                       = state.get.map(_.reverse.take(limit).map(_.summary))
+      def visibleRankingTickers(id: InvestmentRankingId): IO[Set[Ticker]]           =
+        rankingEntries(id).map(_.map(_.scorecard.ticker).toSet -- hidden)
+      def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]] = state.get.map(_.find(_.id == id))
+      def list(limit: Int): IO[List[InvestmentScreenSummary]]       = state.get.map(_.reverse.take(limit).map(_.summary))
 
   private def ranking(entries: List[InvestmentRankingEntry]): InvestmentRanking =
     InvestmentRanking(InvestmentRankingId("published"), now, InvestmentRecipe(), InvestmentRankingSummary.from(entries))
@@ -49,6 +52,92 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
     yield found
 
   "InvestmentScreenService" should {
+    "hide a saved screen when a holding becomes inactive between the context and scorecard visibility reads" in {
+      val screens = mock[InvestmentScreenRepository[IO]]
+      val card    = InvestmentScorecard(AAPL, true, Some(90), Map.empty, Map.empty, Nil, Nil, Some("peer"), 20, "v1")
+      val cards   = List(card, card.copy(ticker = MSFT))
+      val entries = paired(List(InvestmentCandidate(AAPLStock, None), InvestmentCandidate(MSFTStock, None)), cards)
+      val value   = ranking(entries)
+      val saved   = InvestmentScreen.create(
+        InvestmentScreenId("saved"),
+        now,
+        value,
+        InvestmentScreenRequest(),
+        List(InvestmentCohort(CohortName.Investment, List(AAPL)), InvestmentCohort(CohortName.EqualUniverse, List(AAPL, MSFT)))
+      )
+      when(screens.findWithRanking(saved.id)).thenReturnIO(saved -> value)
+      when(screens.rankingEntries(value.id)).thenReturnIO(entries)
+      when(screens.visibleRankingTickers(value.id)).thenReturnIO(Set(AAPL))
+      InvestmentScreenService.make(screens).flatMap(_.get(saved.id)).attempt.asserting { result =>
+        result mustBe Left(AppError.EntityDoesNotExist("Investment screen", saved.id.value))
+        verify(screens).findWithRanking(saved.id)
+        verify(screens).rankingEntries(value.id)
+        verify(screens).visibleRankingTickers(value.id)
+        verifyNoMoreInteractions(screens)
+        succeed
+      }
+    }
+
+    List(Nil, List("insufficient-peer-coverage")).foreach { exclusions =>
+      s"reject new screens after a scoring peer with exclusions $exclusions becomes inactive" in {
+        val card    = InvestmentScorecard(MSFT, exclusions.isEmpty, Some(80), Map.empty, Map.empty, exclusions, Nil, Some("peer"), 20, "v1")
+        val entries = paired(List(InvestmentCandidate(MSFTStock, None)), List(card))
+        val value   = ranking(entries)
+        (for
+          state   <- Ref.of[IO, List[InvestmentScreen]](Nil)
+          service <- InvestmentScreenService.make(memoryScreens(state, value, entries, Set(MSFT)))
+          result  <- service.create(InvestmentScreenRequest(country = Some("GB"))).attempt
+          saved   <- state.get
+        yield (result, saved)).asserting { case (result, saved) =>
+          result.left.toOption.get mustBe a[AppError.FailedValidation]
+          result.left.toOption.get.getMessage must include("refresh the ranking")
+          saved mustBe Nil
+        }
+      }
+    }
+
+    "filter inactive supplementary rows while preserving the saved screen and its frozen summary" in {
+      val card    = InvestmentScorecard(AAPL, true, Some(90), Map.empty, Map.empty, Nil, Nil, Some("peer"), 20, "v1")
+      val cards   = List(card, card.copy(ticker = MSFT, eligible = false, exclusions = List("missing-financial-snapshot")))
+      val entries = paired(List(InvestmentCandidate(AAPLStock, None), InvestmentCandidate(MSFTStock, None)), cards)
+      val value   = ranking(entries)
+      val saved   = InvestmentScreen.create(
+        InvestmentScreenId("saved"),
+        now,
+        value,
+        InvestmentScreenRequest(),
+        List(InvestmentCohort(CohortName.Investment, List(AAPL)))
+      )
+      (for
+        state    <- Ref.of[IO, List[InvestmentScreen]](List(saved))
+        service  <- InvestmentScreenService.make(memoryScreens(state, value, entries, Set(MSFT)))
+        result   <- service.get(saved.id)
+        retained <- state.get
+      yield (result, retained)).asserting { case (result, retained) =>
+        result.candidates.map(_.ticker) mustBe List(AAPL)
+        result.exclusions mustBe Nil
+        result.summary mustBe saved.summary
+        result.cohorts mustBe saved.cohorts
+        retained mustBe List(saved)
+      }
+    }
+
+    "preserve a hidden monthly screen's identity instead of recreating it" in {
+      val value = ranking(Nil)
+      val id    = InvestmentScreenId("monthly:2026-10:quality-fair-value-v1")
+      val saved =
+        InvestmentScreen.create(id, now, value, InvestmentScreenRequest(), List(InvestmentCohort(CohortName.Investment, List(AAPL))))
+      (for
+        state    <- Ref.of[IO, List[InvestmentScreen]](List(saved))
+        service  <- InvestmentScreenService.make(memoryScreens(state, value, Nil, Set(AAPL)))
+        result   <- service.createMonthlyScreen
+        retained <- state.get
+      yield (result, retained)).asserting { case (result, retained) =>
+        result mustBe MonthlyScreenOutcome.AlreadyExists(value.id, saved.summary)
+        retained mustBe List(saved)
+      }
+    }
+
     "propagate a missing screen or ranking from the joined repository read" in {
       val screens = mock[InvestmentScreenRepository[IO]]
       val id      = InvestmentScreenId("missing")
@@ -68,10 +157,12 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val saved   = InvestmentScreen.create(InvestmentScreenId("saved"), value.createdAt, value, InvestmentScreenRequest(), Nil)
       when(screens.findWithRanking(saved.id)).thenReturnIO(saved -> value)
       when(screens.rankingEntries(value.id)).thenReturnIO(Nil)
+      when(screens.visibleRankingTickers(value.id)).thenReturnIO(Set.empty[Ticker])
       InvestmentScreenService.make(screens).flatMap(_.get(saved.id)).asserting { result =>
         result.rankingId mustBe value.id
         verify(screens).findWithRanking(saved.id)
         verify(screens).rankingEntries(value.id)
+        verify(screens).visibleRankingTickers(value.id)
         verifyNoMoreInteractions(screens)
         succeed
       }
@@ -115,6 +206,7 @@ class InvestmentScreenServiceSpec extends IOWordSpec:
       val value   = ranking(Nil).copy(createdAt = now.minusSeconds(2L * 86400))
       when(screens.latestRanking).thenReturnSome(value)
       when(screens.rankingEntries(value.id)).thenReturnIO(Nil)
+      when(screens.visibleRankingTickers(value.id)).thenReturnIO(Set.empty[Ticker])
       when(screens.save(any[InvestmentScreen])).thenReturnUnit
       InvestmentScreenService.make(screens).flatMap(_.create(InvestmentScreenRequest())).asserting(_.rankingId mustBe value.id)
     }

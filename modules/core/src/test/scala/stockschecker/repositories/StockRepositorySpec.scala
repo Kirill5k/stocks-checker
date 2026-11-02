@@ -1,10 +1,11 @@
 package stockschecker.repositories
 
 import cats.effect.IO
+import cats.syntax.traverse.*
 import mongo4cats.bson.{BsonValue, Document}
 import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
-import stockschecker.domain.{Exchange, SecurityKind, StockFilters, StockSortField, Ticker, TimePeriod}
+import stockschecker.domain.{Exchange, ListingStatus, SecurityKind, StockFilters, StockSortField, Ticker, TimePeriod}
 import stockschecker.fixtures.{
   AAPL,
   AAPLCompanyProfile,
@@ -74,13 +75,13 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
         val msftAnalytics = AAPLPriceAnalytics.copy(ticker = MSFT)
         val aapl          = AAPLStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(basis = None)))
         val msft          = MSFTStock.copy(
-          profile = None,
+          profile = Some(MSFTCompanyProfile),
           priceAnalytics = Some(msftAnalytics.copy(basis = None)),
           financialMetrics = None
         )
         val seedData = Map(
           SecurityRepository.CollectionName       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          CompanyProfileRepository.CollectionName -> List(toDoc(AAPLCompanyProfile)),
+          CompanyProfileRepository.CollectionName -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
           PriceAnalyticsRepository.CollectionName -> List(
             toDoc(AAPLPriceAnalytics).remove("basis"),
             toDoc(msftAnalytics).add("basis", BsonValue.Null)
@@ -113,13 +114,13 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
         }
       }
 
-      "return stock with only security data when profile and performance don't exist" in {
+      "hide a stock when no cached company profile exists" in {
         val seedData = Map("securities" -> List(toDoc(MSFTSecurity)))
         withEmbeddedMongoDatabase(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.find(MSFT)
-          yield res mustBe Some(MSFTStock.copy(profile = None, priceAnalytics = None, financialMetrics = None))
+          yield res mustBe None
         }
       }
 
@@ -136,7 +137,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
         }
       }
 
-      "return stock with financial metrics when only financial metrics exist" in {
+      "hide financial metrics when the company profile is missing" in {
         val seedData = Map(
           "securities"        -> List(toDoc(AAPLSecurity)),
           "financial-metrics" -> List(toDoc(AAPLFinancialMetrics))
@@ -145,7 +146,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.find(AAPL)
-          yield res mustBe Some(AAPLStock.copy(profile = None, priceAnalytics = None))
+          yield res mustBe None
         }
       }
 
@@ -159,6 +160,39 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
     }
 
     "findAll" should {
+      "enforce current stock visibility before limits and prevent inactive filters from bypassing it" in {
+        val inactive        = Ticker("INACTIVE")
+        val delisted        = Ticker("DELISTED")
+        val inactiveProfile = Ticker("PROFILE")
+        val missingProfile  = Ticker("MISSING")
+        val hiddenTickers   = List(inactive, delisted, inactiveProfile, missingProfile)
+        val seed            = Map(
+          SecurityRepository.CollectionName -> List(
+            toDoc(AAPLSecurity),
+            toDoc(AAPLSecurity.copy(ticker = inactive, isActive = false)),
+            toDoc(AAPLSecurity.copy(ticker = delisted, listingStatus = ListingStatus.Delisted)),
+            toDoc(AAPLSecurity.copy(ticker = inactiveProfile)),
+            toDoc(AAPLSecurity.copy(ticker = missingProfile))
+          ),
+          CompanyProfileRepository.CollectionName -> (
+            List(toDoc(AAPLCompanyProfile.copy(marketCap = 1))) ++
+              List(inactive, delisted).map(ticker => toDoc(AAPLCompanyProfile.copy(ticker = ticker))) ++
+              List(toDoc(AAPLCompanyProfile.copy(ticker = inactiveProfile)).add("isActive", false.toBson))
+          )
+        )
+        withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo           <- StockRepository.make[IO](db)
+            limited        <- repo.findAll(StockFilters(), Some(1))
+            inactiveFilter <- repo.findAll(StockFilters(isActive = Some(false)), None)
+            hidden         <- hiddenTickers.traverse(repo.find)
+          yield
+            limited.map(_.security.ticker) mustBe List(AAPL)
+            inactiveFilter mustBe Nil
+            hidden mustBe List.fill(hiddenTickers.size)(None)
+        }
+      }
+
       "honor an explicit score sort without a limit" in {
         val lower    = AAPLPriceAnalytics.copy(scores = AAPLPriceAnalytics.scores.copy(overallScore = 40))
         val higher   = lower.copy(ticker = MSFT, scores = lower.scores.copy(overallScore = 90))
@@ -166,7 +200,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           SecurityRepository.CollectionName       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           PriceAnalyticsRepository.CollectionName -> List(toDoc(lower), toDoc(higher))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             repo   <- StockRepository.make[IO](db)
             stocks <- repo.findAll(StockFilters(sortBy = Some(StockSortField.OverallScore)), None)
@@ -179,7 +213,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           SecurityRepository.CollectionName       -> List(toDoc(MSFTSecurity), toDoc(AAPLSecurity)),
           CompanyProfileRepository.CollectionName -> List(toDoc(MSFTCompanyProfile), toDoc(AAPLCompanyProfile))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             repo   <- StockRepository.make[IO](db)
             stocks <- repo.findAll(StockFilters(), None)
@@ -194,7 +228,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "price-analytics"   -> List(toDoc(AAPLPriceAnalytics)),
           "financial-metrics" -> List(toDoc(AAPLFinancialMetrics), toDoc(MSFTFinancialMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(), None)
@@ -207,7 +241,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(), Some(1))
@@ -225,7 +259,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
 
       "return all stocks when limit is greater than available stocks" in {
         val seedData = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)))
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(), Some(10))
@@ -236,7 +270,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
       "filter by exchange" in {
         val nyseStock = MSFTSecurity.copy(ticker = Ticker("NYSE1"), exchange = Exchange.NYSE)
         val seedData  = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock)))
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(exchange = Some(Exchange.NASDAQ)), None)
@@ -249,7 +283,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
       "filter by kind" in {
         val etfStock = MSFTSecurity.copy(ticker = Ticker("SPY"), kind = SecurityKind.ETF)
         val seedData = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(etfStock)))
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(kind = Some(SecurityKind.Stock)), None)
@@ -262,7 +296,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
       "filter by isActive" in {
         val inactiveSecurity = MSFTSecurity.copy(ticker = Ticker("INACTIVE"), isActive = false)
         val seedData         = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(inactiveSecurity)))
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(isActive = Some(true)), None)
@@ -278,7 +312,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("HSBA")))),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile), toDoc(ukProfile))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(country = Some("US")), None)
@@ -294,7 +328,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("SMALL")))),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile), toDoc(smallCapProfile))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minMarketCap = Some(3000000000000L)), None)
@@ -309,7 +343,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(maxMarketCap = Some(3200000000000L)), None)
@@ -324,7 +358,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minMarketCap = Some(3000000000000L), maxMarketCap = Some(3200000000000L)), None)
@@ -343,7 +377,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"      -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("LOW")))),
           "price-analytics" -> List(toDoc(AAPLPriceAnalytics), toDoc(lowPriceSummary))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minPrice = Some(BigDecimal("200.00"))), None)
@@ -358,7 +392,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"      -> List(toDoc(AAPLSecurity)),
           "price-analytics" -> List(toDoc(AAPLPriceAnalytics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(maxPrice = Some(BigDecimal("300.00"))), None)
@@ -377,7 +411,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"      -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("HIGH")))),
           "price-analytics" -> List(toDoc(AAPLPriceAnalytics), toDoc(highPriceSummary))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minPrice = Some(BigDecimal("200.00")), maxPrice = Some(BigDecimal("300.00"))), None)
@@ -395,7 +429,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock), toDoc(etfStock), toDoc(inactiveSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(
@@ -435,7 +469,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "price-analytics" -> List(toDoc(goodPerformer), toDoc(badPerformer))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minChange = Some(BigDecimal("20.00")), period = Some(TimePeriod.OneYear)), None)
@@ -462,7 +496,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "price-analytics" -> List(toDoc(moderatePerformer), toDoc(strongPerformer))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(maxChange = Some(BigDecimal("10.00")), period = Some(TimePeriod.ThreeMonth)), None)
@@ -494,7 +528,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "price-analytics" -> List(toDoc(lowPerformer), toDoc(midPerformer), toDoc(highPerformer))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(
@@ -523,7 +557,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("PERF")))),
           "price-analytics" -> List(toDoc(performer))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minChange = Some(BigDecimal("20.00"))), None)
@@ -549,7 +583,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(highPEMetrics), toDoc(lowPEMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(maxPE = Some(BigDecimal(30.00))), None)
@@ -576,7 +610,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(highROEMetrics), toDoc(lowROEMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minROE = Some(BigDecimal(100.00))), None)
@@ -603,7 +637,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(highDebtMetrics), toDoc(lowDebtMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(maxDebtToEquity = Some(BigDecimal(1.00))), None)
@@ -641,7 +675,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(goodMetrics), toDoc(badPEMetrics), toDoc(badROEMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(
@@ -679,7 +713,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(lowPEMetrics), toDoc(highPEMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minPE = Some(BigDecimal(15.00))), None)
@@ -711,7 +745,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(lowPEMetrics), toDoc(midPEMetrics), toDoc(highPEMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(
@@ -741,7 +775,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(lowMarginMetrics), toDoc(highMarginMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minProfitMargin = Some(BigDecimal(10.00))), None)
@@ -768,7 +802,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(lowMarginMetrics), toDoc(highMarginMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(maxProfitMargin = Some(BigDecimal(30.00))), None)
@@ -795,7 +829,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(lowFCFMetrics), toDoc(highFCFMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minFreeCashFlow = Some(BigDecimal(0))), None)
@@ -822,7 +856,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(lowGrowthMetrics), toDoc(highGrowthMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minRevenueGrowth5Y = Some(BigDecimal(8.00))), None)
@@ -849,7 +883,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(lowGrowthMetrics), toDoc(highGrowthMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minEpsGrowth5Y = Some(BigDecimal(10.00))), None)
@@ -897,7 +931,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           ),
           "financial-metrics" -> List(toDoc(goodStock), toDoc(badPEStock), toDoc(lowGrowthStock))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(
@@ -933,7 +967,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(exchange = Some(Exchange.NYSE)), None)
@@ -946,7 +980,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
           "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(exchange = Some(Exchange.NASDAQ)), Some(1))
@@ -967,7 +1001,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities" -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HSCORE"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LSCORE")))),
           "price-analytics" -> List(toDoc(highScoreAnalytics), toDoc(lowScoreAnalytics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minOverallScore = Some(BigDecimal("50.00"))), None)
@@ -991,7 +1025,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HCAGR"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LCAGR")))),
           "price-analytics" -> List(toDoc(highCagrAnalytics), toDoc(lowCagrAnalytics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minCagrScore = Some(BigDecimal("50.00"))), None)
@@ -1015,7 +1049,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HVOL"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LVOL")))),
           "price-analytics" -> List(toDoc(highVolScoreAnalytics), toDoc(lowVolScoreAnalytics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minVolatilityScore = Some(BigDecimal("40.00"))), None)
@@ -1039,7 +1073,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("LDRAW"))), toDoc(MSFTSecurity.copy(ticker = Ticker("HDRAW")))),
           "price-analytics" -> List(toDoc(lowDrawdownAnalytics), toDoc(highDrawdownAnalytics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(maxDrawdown = Some(BigDecimal("20.00"))), None)
@@ -1065,7 +1099,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HCONS"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LCONS")))),
           "price-analytics" -> List(toDoc(highConsistencyAnalytics), toDoc(lowConsistencyAnalytics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minConsistencyScore = Some(BigDecimal(70))), None)
@@ -1089,7 +1123,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities"        -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HDIV"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LDIV")))),
           "financial-metrics" -> List(toDoc(highDivMetrics), toDoc(lowDivMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(minDividendYield = Some(BigDecimal("2.00"))), None)
@@ -1113,7 +1147,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
           "securities" -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HDIV2"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LDIV2")))),
           "financial-metrics" -> List(toDoc(highDivMetrics), toDoc(lowDivMetrics))
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(StockFilters(maxDividendYield = Some(BigDecimal("2.00"))), None)
@@ -1208,7 +1242,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
             toDoc(badPEMetrics)
           )
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withActiveStocks(seedData) { db =>
           for
             stockRepo <- StockRepository.make[IO](db)
             res       <- stockRepo.findAll(

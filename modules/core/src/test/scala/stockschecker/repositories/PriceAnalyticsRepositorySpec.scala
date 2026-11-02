@@ -43,6 +43,21 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
   val MSFTPriceAnalytics: PriceAnalytics = PriceAnalyticsCalculator.from(MSFT, MSFTPriceCandles)
 
   "A PriceAnalyticsRepository" when {
+    "delete" should {
+      "remove only the requested analytics and remain idempotent" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo     <- PriceAnalyticsRepository.make[IO](db)
+            _        <- repo.save(List(AAPLPriceAnalytics, MSFTPriceAnalytics))
+            _        <- repo.delete(AAPL)
+            _        <- repo.delete(AAPL)
+            removed  <- repo.find(AAPL)
+            retained <- repo.find(MSFT)
+          yield
+            removed mustBe None
+            retained mustBe Some(MSFTPriceAnalytics)
+        }
+    }
     "save" should {
       "save price analytics in the repository" in
         withEmbeddedMongoDatabase { db =>

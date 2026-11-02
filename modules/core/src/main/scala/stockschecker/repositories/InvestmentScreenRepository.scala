@@ -9,10 +9,11 @@ import mongo4cats.bson.Document
 import mongo4cats.bson.syntax.*
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.operations.{Aggregate, Filter, Index, Sort}
+import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort}
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.entities.{
+  Entity,
   InvestmentRankingEntity,
   InvestmentRankingInputEntity,
   InvestmentScreenEntity,
@@ -23,6 +24,7 @@ trait InvestmentScreenRepository[F[_]]:
   def findWithRanking(id: InvestmentScreenId): F[(InvestmentScreen, InvestmentRanking)]
   def latestRanking: F[Option[InvestmentRanking]]
   def rankingEntries(id: InvestmentRankingId): F[List[InvestmentRankingEntry]]
+  def visibleRankingTickers(id: InvestmentRankingId): F[Set[Ticker]]
   def save(screen: InvestmentScreen): F[Unit]
   def get(id: InvestmentScreenId): F[Option[InvestmentScreen]]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
@@ -65,6 +67,17 @@ final private class LiveInvestmentScreenRepository[F[_]](
       .all
       .mapList(row => InvestmentRankingEntry(row.input, row.scorecard))
 
+  override def visibleRankingTickers(id: InvestmentRankingId): F[Set[Ticker]] =
+    inputs
+      .aggregate[Entity](
+        Aggregate
+          .matchBy(Filter.eq(InvestmentRankingRepository.Field.RankingId, id.value))
+          .project(Projection.computed("_id", "$scorecard.ticker"))
+          .combinedWith(StockVisibility.restrict("_id"))
+      )
+      .all
+      .map(_.iterator.map(_._id).toSet)
+
   override def save(screen: InvestmentScreen): F[Unit] =
     collection.insertOne(InvestmentScreenEntity.from(screen)).void
 
@@ -72,7 +85,10 @@ final private class LiveInvestmentScreenRepository[F[_]](
     collection.find(Filter.idEq(id.value)).first.mapOpt(_.toDomain)
 
   override def list(limit: Int): F[List[InvestmentScreenSummary]] =
-    collection.find.sort(Sort.desc(Field.CreatedAt)).limit(limit).all.mapList(_.summary)
+    collection
+      .aggregate[InvestmentScreenEntity](InvestmentScreenVisibility.restrict.sort(Sort.desc(Field.CreatedAt)).limit(limit))
+      .all
+      .mapList(_.summary)
 
 }
 
@@ -93,4 +109,4 @@ object InvestmentScreenRepository:
       inputs   <- db.getCollectionWithCodec[InvestmentRankingInputEntity](InvestmentRankingRepository.InputsCollectionName)
       _        <- collection.createIndex(Index.descending(Field.CreatedAt))
       _        <- collection.createIndex(Index.ascending(Field.RankingId))
-    yield LiveInvestmentScreenRepository[F](collection, rankings, inputs)
+    yield LiveInvestmentScreenRepository[F](collection, rankings, inputs.withAddedCodec[Entity])

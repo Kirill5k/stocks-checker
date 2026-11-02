@@ -32,6 +32,8 @@ class ActionSpec extends AnyWordSpec with Matchers {
     Action.CaptureMonthlyEvaluations,
     Action.RefreshEvaluationPrices(Ticker("AAPL"), LocalDate.parse("2026-01-01")),
     Action.RecordCompanyProfileUpdate(NonEmptyList.of(Ticker("AAPL"), Ticker("MSFT"))),
+    Action.DeletePriceAnalytics(Ticker("AAPL")),
+    Action.DeleteFinancialMetrics(Ticker("AAPL")),
     Action.RecordPriceAnalyticsUpdate(NonEmptyList.one(Ticker("AAPL"))),
     Action.RecordFinancialMetricsUpdate(NonEmptyList.one(Ticker("AAPL"))),
     Action.SetSecurityActive(Ticker("AAPL"), true, requestedAt),

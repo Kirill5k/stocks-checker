@@ -7,7 +7,7 @@ import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.investment.InvestmentScreenSelection
+import stockschecker.domain.investment.{InvestmentReasons, InvestmentScreenSelection}
 import stockschecker.repositories.InvestmentScreenRepository
 
 import java.time.{Instant, YearMonth, ZoneOffset}
@@ -26,13 +26,27 @@ final private class LiveInvestmentScreenService[F[_]](
     C: Clock[F],
     logger: Logger[F]
 ) extends InvestmentScreenService[F] {
+  private def currentEntries(id: InvestmentRankingId, requireScoringPeers: Boolean): F[List[InvestmentRankingEntry]] =
+    for
+      entries <- screens.rankingEntries(id)
+      visible <- screens.visibleRankingTickers(id)
+      peers = entries.filter(entry =>
+        entry.scorecard.eligible || entry.scorecard.exclusions == List(InvestmentReasons.InsufficientPeerCoverage)
+      )
+      _ <- F.raiseWhen(requireScoringPeers && peers.exists(entry => !visible(entry.scorecard.ticker)))(
+        AppError.FailedValidation(
+          "The ranking contains scoring peers that are no longer active; refresh the ranking before creating a screen"
+        )
+      )
+    yield entries.filter(entry => visible(entry.scorecard.ticker))
+
   private def saveScreen(
       id: InvestmentScreenId,
       request: InvestmentScreenRequest,
       ranking: InvestmentRanking
   ): F[InvestmentScreenResult] =
     for
-      entries <- screens.rankingEntries(ranking.id)
+      entries <- currentEntries(ranking.id, requireScoringPeers = true)
       now     <- C.now
       selection = InvestmentScreenSelection(entries, request)
       screen    = InvestmentScreen.create(id, now, ranking, request, selection.cohorts)
@@ -52,7 +66,11 @@ final private class LiveInvestmentScreenService[F[_]](
     for
       context <- screens.findWithRanking(id)
       (screen, ranking) = context
-      entries <- screens.rankingEntries(ranking.id)
+      entries <- currentEntries(ranking.id, requireScoringPeers = false)
+      visible = entries.iterator.map(_.scorecard.ticker).toSet
+      _ <- F.raiseWhen(screen.cohorts.iterator.flatMap(_.tickers).exists(ticker => !visible(ticker)))(
+        AppError.EntityDoesNotExist("Investment screen", id.value)
+      )
     yield InvestmentScreenSelection(entries, screen.request).result(screen)
 
   private def latestRanking(now: Instant): F[InvestmentRanking] =

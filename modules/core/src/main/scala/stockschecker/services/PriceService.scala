@@ -16,6 +16,7 @@ import stockschecker.repositories.{PriceAnalyticsRepository, PriceHistoryReposit
 import java.time.{Duration, Instant, LocalDate, Period, ZoneOffset}
 
 trait PriceService[F[_]]:
+  def delete(ticker: Ticker): F[Unit]
   def getAllPriceAnalytics(limit: Option[Int]): F[List[PriceAnalytics]]
   def findPriceAnalyticsBy(filter: PriceAnalyticsFilter, limit: Option[Int]): F[List[PriceAnalytics]]
   def findPriceAnalytics(ticker: Ticker, fetch: Boolean): F[PriceAnalytics]
@@ -28,6 +29,8 @@ final private class LivePriceService[F[_]](
     private val client: MarketDataClient[F]
 )(using F: Sync[F], C: Clock[F])
     extends PriceService[F] {
+
+  override def delete(ticker: Ticker): F[Unit] = repository.delete(ticker)
 
   override def findPriceAnalytics(ticker: Ticker, fetch: Boolean): F[PriceAnalytics] =
     if (fetch) fetchPriceAnalytics(ticker).flatTap(analytics => save(NonEmptyList.one(analytics)))

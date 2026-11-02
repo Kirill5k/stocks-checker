@@ -10,10 +10,12 @@ Services depend on their own repositories, `MarketDataClient`, `ActionDispatcher
 
 | Requesting repository | Collections read across aggregates |
 | :--- | :--- |
+| `SecurityRepository` | `company-profiles` for visible security reads; profile-fetch selection remains available for active, listed securities without a cached profile. |
+| `CompanyProfileRepository` | `securities` to enforce active/listed status before sorting and limiting. |
 | `StockRepository` | `securities`, `company-profiles`, `price-analytics` and `financial-metrics`, joined by the shared `StockAggregates` pipeline. Activation checks read only the security ID. |
 | `InvestmentRankingRepository` | The stock collections through `StockAggregates`, plus `financial-history` by ticker `_id`. Pruning reads `investment-screens` to protect referenced rankings and joins old input groups to published rankings to identify orphans. |
-| `InvestmentScreenRepository` | `investment-rankings` for headers and `investment-ranking-inputs` for ordinal-sorted entries. Entries remain a separate query to avoid embedding a full ranking in one MongoDB document. |
-| `InvestmentEvaluationRepository` | `investment-screens` joined to saved evaluations for context and capture tasks; each price-series read queries all matching adjusted `price-observations` together, filters coverage and fetch timestamps, trims candles, and retains the original count for truncation checks. |
+| `InvestmentScreenRepository` | `investment-rankings` for headers and `investment-ranking-inputs` for ordinal-sorted entries. Entries remain a separate query to avoid embedding a full ranking in one MongoDB document. Screen lists and input visibility join `securities` and `company-profiles`. |
+| `InvestmentEvaluationRepository` | `investment-screens` joined to saved evaluations and to `securities`/`company-profiles` for cohort visibility and capture tasks; each price-series read queries all matching adjusted `price-observations` together, filters coverage and fetch timestamps, trims candles, and retains the original count for truncation checks. |
 | `DataQualityRepository` | `dataset-availability`, excluded `securities`, the latest `investment-rankings` header, compact `price-analytics` projections and grouped complete `investment-ranking-inputs`. |
 
 ## Investment research actions
@@ -29,6 +31,10 @@ The following public actions can be scheduled independently:
 `RefreshInvestmentResearch` expands into a sequence of ranking then screen creation, alongside an independent evaluation-capture action. The executor manages dependencies, retries and parent state. Evaluation capture still runs if ranking or screen creation fails, and mixed child outcomes make the umbrella job `Partial`. `ActionHandler` only routes leaf actions and expands composite plans; `RefreshEvaluationPrices` goes directly to `PriceService.refreshHistory`.
 
 Monthly screen creation logs `created`, `already-exists`, or `insufficient-eligible` with the ranking ID and eligible/required counts. A skipped screen is an explicit outcome, not a provider failure. Repeated refreshes can recover within the same UTC day; existing monthly screens retain their original ranking. The financial, price-freshness and peer-group thresholds are unchanged.
+
+Stock and cached-profile reads hide inactive, delisted or unprofiled stocks; accepted profile deactivation removes cached price analytics and financial metrics through internal actions and clears their refresh timestamps. Listing reconciliation retains profiles and cached data, allowing relisting to restore visibility. Historical observations and snapshots are retained. Confirmed empty profile responses deactivate the security and exclude it from future scheduled queries; there is no automatic recheck or reactivation. Screens/evaluations containing an unavailable holding are hidden as a whole and retain their immutable stored history. See [the recovery procedure](INVESTMENT_RECOVERY.md) for deployment-dependent diagnosis and recovery steps.
+
+`GET /api/investment-rankings/{rankingId}/inputs` provides read-only frozen input diagnostics, with optional `industry`, `sector`, `after` (ordinal), and `limit` (1–100, default 50) parameters. Responses identify the ranking and provide `nextAfter` when another page exists.
 
 `GET /api/data-quality` retains dataset availability and ranking coverage, and adds:
 

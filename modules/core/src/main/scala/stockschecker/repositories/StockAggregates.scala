@@ -25,10 +25,10 @@ private[repositories] object StockAggregates extends MongoJsonCodecs:
       case None                                 => s"${Field.Profile}.${CompanyProfileRepository.Field.MarketCap}"
 
     val joined = Aggregate
-      .matchBy(securityFilter)
+      .matchBy(securityFilter && StockVisibility.activeSecurity)
       .replaceWith(Document(Field.Security := "$$ROOT"))
       .lookup(CompanyProfileRepository.CollectionName, s"${Field.Security}.${Field.Id}", Field.Id, Field.Profile)
-      .matchBy(filters.toProfileFilter)
+      .matchBy(filters.toProfileFilter && StockVisibility.activeProfile(s"${Field.Profile}.0"))
       .lookup(PriceAnalyticsRepository.CollectionName, s"${Field.Security}.${Field.Id}", Field.Id, Field.PriceAnalytics)
       .matchBy(filters.toPriceAnalyticsFilter)
       .lookup(FinancialMetricsRepository.CollectionName, s"${Field.Security}.${Field.Id}", Field.Id, Field.FinancialMetrics)

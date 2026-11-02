@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.traverse.*
 import mongo4cats.bson.Document
 import mongo4cats.bson.syntax.*
-import mongo4cats.operations.Filter
+import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
@@ -14,8 +14,62 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
   override val port = 12220
 
   "An InvestmentScreenRepository" should {
+    "hide a complete screen before limiting when any cohort holding becomes unavailable and restore it without rewriting history" in
+      withActiveStocks(List(AAPL, MSFT)) { db =>
+        val affected = screen.copy(
+          id = InvestmentScreenId("affected"),
+          createdAt = now.plusSeconds(1),
+          cohorts = screen.cohorts :+ InvestmentCohort(CohortName.EqualUniverse, List(AAPL, MSFT)),
+          summary = screen.summary.copy(id = InvestmentScreenId("affected"), createdAt = now.plusSeconds(1))
+        )
+        for
+          repo          <- InvestmentScreenRepository.make[IO](db)
+          rankings      <- InvestmentRankingRepository.make[IO](db)
+          securities    <- db.getCollection(SecurityRepository.CollectionName)
+          profiles      <- db.getCollection(CompanyProfileRepository.CollectionName)
+          _             <- rankings.save(ranking, entries)
+          _             <- List(screen, affected).traverse(repo.save)
+          before        <- repo.list(1)
+          _             <- securities.updateOne(Filter.idEq(MSFT.value), Update.set("isActive", false))
+          hidden        <- repo.list(1)
+          unchanged     <- repo.findWithRanking(affected.id)
+          retained      <- repo.get(affected.id)
+          _             <- securities.updateOne(Filter.idEq(MSFT.value), Update.set("isActive", true))
+          _             <- profiles.updateOne(Filter.idEq(MSFT.value), Update.set("isActive", false))
+          profileHidden <- repo.list(1)
+          _             <- profiles.updateOne(Filter.idEq(MSFT.value), Update.set("isActive", true))
+          restored      <- repo.findWithRanking(affected.id)
+          restoredList  <- repo.list(1)
+        yield
+          before.map(_.id) mustBe List(affected.id)
+          hidden.map(_.id) mustBe List(screen.id)
+          unchanged mustBe (affected -> ranking)
+          retained mustBe Some(affected)
+          profileHidden.map(_.id) mustBe List(screen.id)
+          restored mustBe (affected -> ranking)
+          restoredList.map(_.id) mustBe List(affected.id)
+      }
+
+    "return current visible ranking tickers without changing frozen entries" in
+      withActiveStocks(List(AAPL, MSFT)) { db =>
+        val values = entries :+ entries.head.copy(scorecard = card.copy(ticker = MSFT))
+        for
+          repo       <- InvestmentScreenRepository.make[IO](db)
+          rankings   <- InvestmentRankingRepository.make[IO](db)
+          securities <- db.getCollection(SecurityRepository.CollectionName)
+          _          <- rankings.save(ranking, values)
+          visible    <- repo.visibleRankingTickers(ranking.id)
+          _          <- securities.updateOne(Filter.idEq(MSFT.value), Update.set("listingStatus", ListingStatus.Delisted.print))
+          current    <- repo.visibleRankingTickers(ranking.id)
+          frozen     <- repo.rankingEntries(ranking.id)
+        yield
+          visible mustBe Set(AAPL, MSFT)
+          current mustBe Set(AAPL)
+          frozen mustBe values
+      }
+
     "join a screen to its pinned ranking while loading ordered entries separately" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val values    = List(entries.head.copy(scorecard = card.copy(ticker = MSFT)), entries.head)
         val published = ranking.copy(summary = InvestmentRankingSummary.from(values))
         val newer     = ranking.copy(id = InvestmentRankingId("newer"), createdAt = now.plusSeconds(1))
@@ -37,7 +91,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
       }
 
     "reject joined reads when the screen or its pinned ranking is missing" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val missingId = InvestmentScreenId("missing")
         for
           repo     <- InvestmentScreenRepository.make[IO](db)
@@ -52,7 +106,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
       }
 
     "round trip screen metadata and reject overwriting a published screen" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val expected = screen
         for
           repo      <- InvestmentScreenRepository.make[IO](db)
@@ -76,7 +130,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
           stored must not be empty
       }
     "read existing UUID and monthly screen IDs stored as BSON strings" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val ids = List("e7ce580d-1cdf-4219-9d34-1a25437f05b1", "monthly:2026-10:quality-fair-value-v1").map(InvestmentScreenId(_))
         for
           repo <- InvestmentScreenRepository.make[IO](db)
@@ -106,7 +160,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
           listed.map(_.id).toSet mustBe ids.toSet
       }
     "return no metadata when the screen header does not exist" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val id = InvestmentScreenId("unfinished")
         for
           repo   <- InvestmentScreenRepository.make[IO](db)
@@ -117,7 +171,7 @@ class InvestmentScreenRepositorySpec extends RepositorySpec:
           listed mustBe Nil
       }
     "read screen metadata independently of ranking storage" in
-      withEmbeddedMongoDatabase { db =>
+      withActiveStocks(List(AAPL, MSFT)) { db =>
         val expected = screen
         for
           repo  <- InvestmentScreenRepository.make[IO](db)

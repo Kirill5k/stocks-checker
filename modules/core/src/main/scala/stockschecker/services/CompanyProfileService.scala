@@ -3,7 +3,8 @@ package stockschecker.services
 import cats.data.NonEmptyList
 import cats.effect.Sync
 import cats.syntax.flatMap.*
-import cats.syntax.foldable.*
+import cats.syntax.functor.*
+import kirill5k.common.cats.Clock
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
 import stockschecker.domain.errors.AppError
@@ -25,31 +26,37 @@ final private class LiveCompanyProfileService[F[_]](
     private val client: MarketDataClient[F],
     private val dispatcher: ActionDispatcher[F]
 )(using
-    F: Sync[F]
+    F: Sync[F],
+    C: Clock[F]
 ) extends CompanyProfileService[F] {
 
-  override def get(ticker: Ticker, fetch: Boolean = false): F[CompanyProfile] = {
-    val cpOpt =
-      if (fetch) fetchCompanyProfile(ticker).flatTap(_.traverse_(cp => save(NonEmptyList.one(cp))))
-      else repository.find(ticker)
+  override def get(ticker: Ticker, fetch: Boolean = false): F[CompanyProfile] =
+    if fetch then fetchCompanyProfile(ticker)
+    else repository.find(ticker).flatMap(F.fromOption(_, AppError.CompanyProfileNotFound(ticker)))
 
-    cpOpt.flatMap(cp => F.fromOption(cp, AppError.CompanyProfileNotFound(ticker)))
-  }
+  private def fetchCompanyProfile(ticker: Ticker): F[CompanyProfile] =
+    for
+      requestedAt <- C.now
+      profile     <- client.getCompanyProfile(ticker)
+      _           <- profile match
+        case Some(cp) => repository.save(cp) >> dispatcher.dispatch(Action.RecordCompanyProfileUpdate(NonEmptyList.one(ticker)))
+        case None     => dispatcher.dispatch(Action.SetSecurityActive(ticker, false, requestedAt))
+      result <- F.fromOption(profile, AppError.CompanyProfileNotFound(ticker))
+    yield result
 
   override def getAll(limit: Option[Int]): F[List[CompanyProfile]] =
     repository.findAll(limit)
 
-  private def fetchCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] =
-    client.getCompanyProfile(ticker)
-
   override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
 
-  private def save(cps: NonEmptyList[CompanyProfile]): F[Unit] =
-    repository.save(cps.toList) >> dispatcher.dispatch(Action.RecordCompanyProfileUpdate(cps.map(_.ticker)))
-
   override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit] =
-    repository.setActive(ticker, active, requestedAt)
+    repository.setActive(ticker, active, requestedAt).flatMap { accepted =>
+      F.whenA(accepted && !active)(deleteInactiveAnalytics(ticker))
+    }
+
+  private def deleteInactiveAnalytics(ticker: Ticker): F[Unit] =
+    dispatcher.dispatch(Action.DeletePriceAnalytics(ticker)) >> dispatcher.dispatch(Action.DeleteFinancialMetrics(ticker))
 
   override def recordPriceAnalyticsUpdate(tickers: NonEmptyList[Ticker]): F[Unit] =
     repository.updatePriceAnalyticsLastUpdated(tickers.toList)
@@ -59,7 +66,7 @@ final private class LiveCompanyProfileService[F[_]](
 }
 
 object CompanyProfileService:
-  def make[F[_]: Sync](
+  def make[F[_]: {Sync, Clock}](
       repo: CompanyProfileRepository[F],
       client: MarketDataClient[F],
       dispatcher: ActionDispatcher[F]

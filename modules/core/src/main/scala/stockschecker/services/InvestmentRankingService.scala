@@ -12,6 +12,7 @@ import stockschecker.repositories.InvestmentRankingRepository
 
 trait InvestmentRankingService[F[_]]:
   def refresh: F[Unit]
+  def rankingInputs(id: InvestmentRankingId, query: RankingInputsQuery): F[RankingInputsPage]
 
 final private class LiveInvestmentRankingService[F[_]](
     rankings: InvestmentRankingRepository[F],
@@ -21,6 +22,9 @@ final private class LiveInvestmentRankingService[F[_]](
     C: Clock[F],
     logger: Logger[F]
 ) extends InvestmentRankingService[F]:
+  override def rankingInputs(id: InvestmentRankingId, query: RankingInputsQuery): F[RankingInputsPage] =
+    rankings.rankingInputs(id, query)
+
   override def refresh: F[Unit] =
     for
       candidates <- rankings.findCandidates

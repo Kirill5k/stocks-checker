@@ -8,7 +8,8 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{Exchange, ListingStatus, Security}
+import stockschecker.domain.{Exchange, Security, SecurityFilter}
+import stockschecker.domain.errors.AppError
 import stockschecker.repositories.SecurityRepository
 import stockschecker.fixtures.*
 
@@ -17,6 +18,21 @@ class SecurityServiceSpec extends IOWordSpec {
 
   "A SecurityService" when {
     "fetchLatestSecurities" should {
+      "reconcile a nonempty listing without dispatching profile changes or cache deletion" in {
+        val (repo, client, dispatcher) = mocks
+        when(client.getTradedSecurities(Exchange.NASDAQ)).thenStream(MSFTSecurity)
+        when(repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))).thenReturnUnit
+        SecurityService
+          .make(repo, client, dispatcher)
+          .flatMap(_.fetchLatest(NonEmptyList.one(Exchange.NASDAQ)))
+          .asserting { _ =>
+            verify(repo).reconcile(Exchange.NASDAQ, List(MSFTSecurity))
+            verifyNoMoreInteractions(repo)
+            verifyNoInteractions(dispatcher)
+            succeed
+          }
+      }
+
       "fetch traded securities from client and store them in db" in {
         val (repo, client, dispatcher) = mocks
         when(client.getTradedSecurities(any[Exchange])).thenStream(AAPLSecurity)
@@ -84,8 +100,7 @@ class SecurityServiceSpec extends IOWordSpec {
     "setActive" should {
       "deactivate the security and pass the original request time to its profile" in {
         val (repo, client, dispatcher) = mocks
-        when(repo.find(AAPL)).thenReturnSome(AAPLSecurity)
-        when(repo.setActive(AAPL, false, ts)).thenReturnUnit
+        when(repo.setActive(AAPL, false, ts)).thenReturnIO(true)
         when(dispatcher.dispatch(Action.SetCompanyProfileActive(AAPL, false, ts))).thenReturnUnit
         (for
           service <- SecurityService.make(repo, client, dispatcher)
@@ -93,6 +108,7 @@ class SecurityServiceSpec extends IOWordSpec {
         yield ()).asserting { _ =>
           verify(repo).setActive(AAPL, false, ts)
           verify(dispatcher).dispatch(Action.SetCompanyProfileActive(AAPL, false, ts))
+          verifyNoMoreInteractions(repo, dispatcher)
           verifyNoInteractions(client)
           succeed
         }
@@ -100,47 +116,39 @@ class SecurityServiceSpec extends IOWordSpec {
 
       "activate a listed security and dispatch profile activation" in {
         val (repo, client, dispatcher) = mocks
-        when(repo.find(AAPL)).thenReturnIO(Some(AAPLSecurity))
-        when(repo.setActive(AAPL, true, ts)).thenReturnUnit
+        when(repo.setActive(AAPL, true, ts)).thenReturnIO(true)
         when(dispatcher.dispatch(Action.SetCompanyProfileActive(AAPL, true, ts))).thenReturnUnit
         (for {
           service <- SecurityService.make(repo, client, dispatcher)
           _       <- service.setActive(AAPL, true, ts)
         } yield ()).asserting { _ =>
-          verify(repo).find(AAPL)
           verify(repo).setActive(AAPL, true, ts)
           verify(dispatcher).dispatch(Action.SetCompanyProfileActive(AAPL, true, ts))
+          verifyNoMoreInteractions(repo, dispatcher)
           verifyNoInteractions(client)
           succeed
         }
       }
 
-      "send an inactive profile state when activation is requested for a delisted security" in {
+      "ignore a stale activation event without dispatching a profile update" in {
         val (repo, client, dispatcher) = mocks
-        when(repo.find(AAPL)).thenReturnIO(Some(AAPLSecurity.copy(listingStatus = ListingStatus.Delisted)))
-        when(repo.setActive(AAPL, true, ts)).thenReturnUnit
-        when(dispatcher.dispatch(Action.SetCompanyProfileActive(AAPL, false, ts))).thenReturnUnit
-        (for {
-          service <- SecurityService.make(repo, client, dispatcher)
-          _       <- service.setActive(AAPL, true, ts)
-        } yield ()).asserting { _ =>
-          verify(repo).find(AAPL)
-          verify(repo).setActive(AAPL, true, ts)
-          verify(dispatcher).dispatch(Action.SetCompanyProfileActive(AAPL, false, ts))
-          verifyNoInteractions(client)
+        when(repo.setActive(AAPL, false, ts)).thenReturnIO(false)
+        SecurityService.make(repo, client, dispatcher).flatMap(_.setActive(AAPL, false, ts)).asserting { _ =>
+          verifyNoInteractions(client, dispatcher)
           succeed
         }
       }
 
-      "reject a missing security before changing state" in {
+      "propagate a rejected repository update without dispatching profile activation" in {
         val (repo, client, dispatcher) = mocks
-        when(repo.find(AAPL)).thenReturnIO(None)
+        val error                      = AppError.FailedValidation("Cannot activate delisted security AAPL")
+        when(repo.setActive(AAPL, true, ts)).thenRaiseError(error)
         (for {
           service <- SecurityService.make(repo, client, dispatcher)
           result  <- service.setActive(AAPL, true, ts).attempt
         } yield result).asserting { result =>
-          result mustBe Left(stockschecker.domain.errors.AppError.SecurityNotFound(AAPL))
-          verify(repo).find(AAPL)
+          result mustBe Left(error)
+          verify(repo).setActive(AAPL, true, ts)
           verifyNoMoreInteractions(repo)
           verifyNoInteractions(client, dispatcher)
           succeed
@@ -150,5 +158,9 @@ class SecurityServiceSpec extends IOWordSpec {
   }
 
   def mocks: (SecurityRepository[IO], MarketDataClient[IO], ActionDispatcher[IO]) =
-    (mock[SecurityRepository[IO]], mock[MarketDataClient[IO]], mock[ActionDispatcher[IO]])
+    val dispatcher = mock[ActionDispatcher[IO]]
+    when(dispatcher.dispatch(any[Action])).thenReturnUnit
+    val repository = mock[SecurityRepository[IO]]
+    when(repository.findTickersBy(any[SecurityFilter], any[Option[Int]])).thenReturnIO(Nil)
+    (repository, mock[MarketDataClient[IO]], dispatcher)
 }

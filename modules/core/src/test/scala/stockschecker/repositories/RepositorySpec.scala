@@ -9,9 +9,12 @@ import mongo4cats.circe.*
 import mongo4cats.client.MongoClient
 import mongo4cats.database.MongoDatabase
 import mongo4cats.embedded.EmbeddedMongo
+import mongo4cats.operations.Filter
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AsyncWordSpec
-import stockschecker.domain.{CompanyProfile, FinancialMetrics, PriceAnalytics, Security}
+import stockschecker.domain.{CompanyProfile, FinancialMetrics, PriceAnalytics, Security, Ticker}
+import stockschecker.fixtures.{AAPLCompanyProfile, AAPLSecurity, MSFT, MSFTCompanyProfile, MSFTSecurity}
+import stockschecker.repositories.entities.{CompanyProfileEntity, SecurityEntity}
 
 import java.time.Instant
 import scala.concurrent.Future
@@ -21,6 +24,35 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
   def port: Int
 
   private val now = Instant.now()
+
+  protected def readSecurity(db: MongoDatabase[IO], ticker: Ticker): IO[Option[Security]] =
+    db.getCollectionWithCodec[SecurityEntity](SecurityRepository.CollectionName)
+      .flatMap(_.find(Filter.idEq(ticker.value)).first)
+      .map(_.map(_.toDomain))
+
+  protected def readProfile(db: MongoDatabase[IO], ticker: Ticker): IO[Option[CompanyProfile]] =
+    db.getCollectionWithCodec[CompanyProfileEntity](CompanyProfileRepository.CollectionName)
+      .flatMap(_.find(Filter.idEq(ticker.value)).first)
+      .map(_.map(_.toDomain))
+
+  protected def withActiveStocks[A](tickers: List[Ticker])(test: MongoDatabase[IO] => IO[A]): Future[A] =
+    withActiveStocks(
+      Map(
+        SecurityRepository.CollectionName -> tickers.map { ticker =>
+          toDoc(if ticker == MSFT then MSFTSecurity else AAPLSecurity.copy(ticker = ticker))
+        },
+        CompanyProfileRepository.CollectionName -> tickers.map { ticker =>
+          toDoc(if ticker == MSFT then MSFTCompanyProfile else AAPLCompanyProfile.copy(ticker = ticker))
+        }
+      )
+    )(test)
+
+  protected def withActiveStocks[A](seed: Map[String, List[Document]])(test: MongoDatabase[IO] => IO[A]): Future[A] =
+    val profiles = seed.getOrElse(CompanyProfileRepository.CollectionName, Nil)
+    val existing = profiles.flatMap(_.getString("_id")).toSet
+    val missing  = seed.getOrElse(SecurityRepository.CollectionName, Nil).flatMap(_.getString("_id")).filterNot(existing)
+    val complete = profiles ++ missing.map(ticker => toDoc(AAPLCompanyProfile.copy(ticker = Ticker(ticker))))
+    withEmbeddedMongoDatabase(seed.updated(CompanyProfileRepository.CollectionName, complete))(test)
 
   protected def toDoc(security: Security): Document =
     Document(

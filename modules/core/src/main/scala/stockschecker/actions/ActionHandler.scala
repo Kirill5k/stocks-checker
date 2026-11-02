@@ -77,6 +77,8 @@ final private class LiveActionHandler[F[_]](
     case Action.RecordFinancialMetricsUpdate(tickers)                => completed(profiles.recordFinancialMetricsUpdate(tickers))
     case Action.SetSecurityActive(ticker, active, requestedAt)       => completed(security.setActive(ticker, active, requestedAt))
     case Action.SetCompanyProfileActive(ticker, active, requestedAt) => completed(profiles.setActive(ticker, active, requestedAt))
+    case Action.DeletePriceAnalytics(ticker)                         => completed(prices.delete(ticker))
+    case Action.DeleteFinancialMetrics(ticker)                       => completed(financials.delete(ticker))
 
 object ActionHandler:
   def make[F[_]: Monad](services: Services[F]): F[ActionHandler[F]] =

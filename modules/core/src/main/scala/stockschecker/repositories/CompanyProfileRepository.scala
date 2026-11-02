@@ -10,7 +10,7 @@ import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort, Update}
-import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, ListingStatus, Ticker}
+import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.entities.{CompanyProfileEntity, Entity}
 import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
@@ -25,7 +25,9 @@ trait CompanyProfileRepository[F[_]]:
   def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): F[List[Ticker]]
   def updatePriceAnalyticsLastUpdated(tickers: List[Ticker]): F[Unit]
   def updateFinancialMetricsLastUpdated(tickers: List[Ticker]): F[Unit]
-  def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit]
+
+  /** Whether the event is current, including retries and cleanup when no cached profile exists. */
+  def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Boolean]
 
 final private class LiveCompanyProfileRepository[F[_]](
     private val collection: MongoCollection[F, CompanyProfileEntity]
@@ -71,30 +73,34 @@ final private class LiveCompanyProfileRepository[F[_]](
     }
 
   override def find(ticker: Ticker): F[Option[CompanyProfile]] =
-    collection.find(Filter.idEq(ticker)).first.mapOpt(_.toDomain)
+    collection
+      .aggregate[CompanyProfileEntity](
+        Aggregate
+          .matchBy(Filter.idEq(ticker) && StockVisibility.activeProfile)
+          .combinedWith(StockVisibility.withActiveSecurity(Field.Id))
+      )
+      .first
+      .mapOpt(_.toDomain)
 
   override def findAll(limit: Option[Int]): F[List[CompanyProfile]] =
-    collection.find
-      .sort(Sort.desc(Field.MarketCap))
-      .limit(limit.getOrElse(Int.MaxValue))
+    collection
+      .aggregate[CompanyProfileEntity](
+        Aggregate
+          .matchBy(StockVisibility.activeProfile)
+          .combinedWith(StockVisibility.withActiveSecurity(Field.Id))
+          .sort(Sort.desc(Field.MarketCap))
+          .limit(limit.getOrElse(Int.MaxValue))
+      )
       .all
       .mapList(_.toDomain)
 
   override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): F[List[Ticker]] =
     filter.toFilter.flatMap { mongoFilter =>
-      val matchingProfiles = Aggregate.matchBy(mongoFilter)
-      val eligibleProfiles =
-        if filter.requiresActiveSecurity then
-          matchingProfiles
-            .lookup(SecurityRepository.CollectionName, Field.Id, SecurityRepository.Field.Id, "security")
-            .matchBy(
-              Filter.eq(s"security.0.${SecurityRepository.Field.IsActive}", true) &&
-                Filter.eq(s"security.0.${SecurityRepository.Field.ListingStatus}", ListingStatus.Listed.print)
-            )
-        else matchingProfiles
       collection
         .aggregate[Entity](
-          eligibleProfiles
+          Aggregate
+            .matchBy(mongoFilter && StockVisibility.activeProfile)
+            .combinedWith(StockVisibility.withActiveSecurity(Field.Id))
             .sort(Sort.desc(Field.MarketCap))
             .limit(limit.getOrElse(Int.MaxValue))
             .project(Projection.include(Field.Id))
@@ -123,21 +129,32 @@ final private class LiveCompanyProfileRepository[F[_]](
         .void
     }
 
-  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit] =
+  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Boolean] =
+    val update = Update
+      .set(Field.IsActive, active)
+      .set(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))
+      .currentDate(Field.UpdatedAt)
+    val activation =
+      if active then update
+      else update.unset(Field.PriceAnalyticsLastUpdatedAt).unset(Field.FinancialMetricsLastUpdatedAt)
     collection
       .updateOne(
         Filter.idEq(ticker.value) &&
-          (Filter.isNull(Field.ActiveChangedAt) || Filter.lt(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))),
-        Update.set(Field.IsActive, active).set(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt)).currentDate(Field.UpdatedAt)
+          (Filter.isNull(Field.ActiveChangedAt) || Filter.lte(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))),
+        activation
       )
-      .void
+      .flatMap { result =>
+        if result.getMatchedCount > 0 then true.pure[F]
+        else
+          collection
+            .aggregate[Entity](
+              Aggregate.matchBy(Filter.idEq(ticker.value)).project(Projection.include(Field.Id))
+            )
+            .first
+            .map(_.isEmpty)
+      }
 
   extension (f: CompanyProfileFilter)
-    private def requiresActiveSecurity: Boolean = f match
-      case CompanyProfileFilter.IsActive(true)     => true
-      case CompanyProfileFilter.Composite(filters) => filters.exists(_.requiresActiveSecurity)
-      case _                                       => false
-
     private def toFilter: F[Filter] = f match
       case CompanyProfileFilter.IsActive(active) =>
         Filter.eq(Field.IsActive, active).pure

@@ -12,6 +12,7 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Accumulator, Aggregate, Filter, Index, Projection, Sort}
 import stockschecker.domain.*
+import stockschecker.domain.errors.AppError
 import stockschecker.repositories.entities.{
   InvestmentCandidateEntity,
   InvestmentRankingEntity,
@@ -20,9 +21,11 @@ import stockschecker.repositories.entities.{
 }
 
 import java.time.Instant
+import java.util.regex.Pattern
 
 trait InvestmentRankingRepository[F[_]]:
   def findCandidates: F[List[InvestmentCandidate]]
+  def rankingInputs(id: InvestmentRankingId, query: RankingInputsQuery): F[RankingInputsPage]
   def save(ranking: InvestmentRanking, entries: List[InvestmentRankingEntry]): F[Unit]
   def latest: F[Option[InvestmentRanking]]
   def prune(before: Instant): F[Unit]
@@ -53,6 +56,22 @@ final private class LiveInvestmentRankingRepository[F[_]](
       )
       .all
       .mapList(_.toDomain)
+
+  override def rankingInputs(id: InvestmentRankingId, query: RankingInputsQuery): F[RankingInputsPage] =
+    val filter = List(
+      Some(Filter.eq(Field.RankingId, id.value)),
+      query.after.map(ordinal => Filter.gt(Field.Ordinal, ordinal)),
+      query.industry.map(industry => Filter.regex("input.industry", "(?i)^\\s*" + Pattern.quote(industry.trim) + "\\s*$")),
+      query.sector.map(sector => Filter.eq("input.sector", sector.print))
+    ).flatten.foldLeft(Filter.empty)(_ && _)
+    for
+      header <- collection
+        .find(Filter.idEq(id.value))
+        .first
+        .flatMap(F.fromOption(_, AppError.EntityDoesNotExist("Investment ranking", id.value)))
+      rows <- inputs.find(filter).sort(Sort.asc(Field.Ordinal)).limit(query.limit + 1).all
+      page = rows.take(query.limit).map(_.toDiagnostic).toList
+    yield RankingInputsPage(id, header.createdAt, page, Option.when(rows.size > query.limit)(page.last.ordinal))
 
   override def save(ranking: InvestmentRanking, entries: List[InvestmentRankingEntry]): F[Unit] =
     val rows = entries.zipWithIndex.map { case (entry, ordinal) =>
@@ -127,7 +146,7 @@ object InvestmentRankingRepository extends MongoJsonCodecs:
       inputs = rawInputs.withAddedCodec[InvestmentRankingIdEntity]
       securities <- db.getCollectionWithCodec[InvestmentCandidateEntity](SecurityRepository.CollectionName)
       _          <- collection.createIndex(Index.descending(Field.CreatedAt))
-      _          <- inputs.createIndex(Index.ascending(Field.RankingId))
+      _          <- inputs.createIndex(Index.ascending(List(Field.RankingId, Field.Ordinal)))
     yield LiveInvestmentRankingRepository[F](collection, inputs, securities)
 
 private[repositories] object InvestmentRankingQueries:

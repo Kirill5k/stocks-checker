@@ -46,6 +46,7 @@ import stockschecker.domain.{
   PriceAnalyticsBasis,
   PriceHistorySnapshot,
   PricePerformanceSummary,
+  RankingInputDiagnostic,
   RankingReadiness,
   Schedule,
   Sector,
@@ -322,7 +323,19 @@ private[repositories] object entities extends MongoJsonCodecs {
       input: InvestmentScreenInput,
       scorecard: InvestmentScorecard,
       createdAt: Instant
-  ) derives Codec.AsObject
+  ) derives Codec.AsObject:
+    def toDiagnostic: RankingInputDiagnostic =
+      RankingInputDiagnostic(
+        ordinal,
+        scorecard.ticker,
+        input.industry,
+        input.sector,
+        scorecard.eligible,
+        scorecard.peerGroup,
+        scorecard.peerCount,
+        scorecard.exclusions,
+        scorecard.evidence
+      )
 
   object InvestmentRankingInputEntity:
     given MongoCodecProvider[InvestmentRankingInputEntity] = deriveCirceCodecProvider[InvestmentRankingInputEntity]

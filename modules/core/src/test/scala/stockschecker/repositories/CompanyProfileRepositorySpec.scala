@@ -2,12 +2,10 @@ package stockschecker.repositories
 
 import cats.data.NonEmptyList
 import cats.effect.IO
-import org.scalatest.wordspec.AsyncWordSpec
-import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, ListingStatus, Sector, Ticker}
+import stockschecker.domain.{CompanyProfileFilter, ListingStatus, Sector, Ticker}
 import stockschecker.fixtures.{ts, AAPL, AAPLCompanyProfile, AAPLSecurity, MSFT, MSFTCompanyProfile, MSFTSecurity}
 
 import java.time.LocalDate
-import scala.concurrent.Future
 import scala.concurrent.duration.*
 
 class CompanyProfileRepositorySpec extends RepositorySpec {
@@ -22,7 +20,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(profile)
-            res  <- repo.find(AAPL)
+            res  <- readProfile(db, AAPL)
           yield res mustBe Some(profile)
         }
 
@@ -33,42 +31,85 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             _    <- repo.save(AAPLCompanyProfile)
             _    <- repo.save(AAPLCompanyProfile)
             _    <- repo.save(AAPLCompanyProfile.copy(marketCap = 1L))
-            res  <- repo.find(AAPL)
+            res  <- readProfile(db, AAPL)
           yield res.map(_.marketCap) mustBe Some(1L)
         }
     }
 
     "setActive" should {
-      "ignore older and duplicate requests within the same millisecond" in
-        withEmbeddedMongoDatabase(Map(SecurityRepository.CollectionName -> List(toDoc(AAPLSecurity)))) { db =>
+      "ignore older requests and accept an equal-time retry within the same millisecond" in
+        withActiveStocks(List(AAPL)) { db =>
           val newer = ts.plusNanos(2)
           for
             repo   <- CompanyProfileRepository.make[IO](db)
-            _      <- repo.save(AAPLCompanyProfile)
             _      <- repo.setActive(AAPL, false, ts)
             _      <- repo.setActive(AAPL, true, newer)
-            _      <- repo.setActive(AAPL, false, ts.plusNanos(1))
-            _      <- repo.setActive(AAPL, false, newer)
-            active <- repo.findTickersBy(CompanyProfileFilter.IsActive(true), None)
-          yield active mustBe List(AAPL)
+            older  <- repo.setActive(AAPL, false, ts.plusNanos(1))
+            replay <- repo.setActive(AAPL, true, newer)
+            active <- repo.find(AAPL)
+          yield
+            older mustBe false
+            replay mustBe true
+            active mustBe defined
         }
 
       "keep a newer deactivation after a provider refresh and older activation" in
+        withActiveStocks(List(AAPL)) { db =>
+          for
+            repo     <- CompanyProfileRepository.make[IO](db)
+            _        <- repo.setActive(AAPL, false, ts.plusNanos(2))
+            _        <- repo.save(AAPLCompanyProfile)
+            older    <- repo.setActive(AAPL, true, ts.plusNanos(1))
+            inactive <- repo.find(AAPL)
+          yield
+            older mustBe false
+            inactive mustBe None
+        }
+
+      "clear refresh timestamps on deactivation so reactivated profiles are immediately due" in
+        withActiveStocks(List(AAPL)) { db =>
+          for
+            repo          <- CompanyProfileRepository.make[IO](db)
+            _             <- repo.updatePriceAnalyticsLastUpdated(List(AAPL))
+            _             <- repo.updateFinancialMetricsLastUpdated(List(AAPL))
+            before        <- readProfile(db, AAPL)
+            accepted      <- repo.setActive(AAPL, false, ts)
+            inactive      <- readProfile(db, AAPL)
+            _             <- repo.setActive(AAPL, true, ts.plusSeconds(1))
+            pricesDue     <- repo.findTickersBy(CompanyProfileFilter.PriceAnalyticsNotUpdatedFor(3.days), None)
+            financialsDue <- repo.findTickersBy(CompanyProfileFilter.FinancialMetricsNotUpdatedFor(3.days), None)
+            _             <- repo.updatePriceAnalyticsLastUpdated(List(AAPL))
+            _             <- repo.updateFinancialMetricsLastUpdated(List(AAPL))
+            stale         <- repo.setActive(AAPL, false, ts)
+            active        <- repo.find(AAPL)
+          yield
+            before.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
+            before.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
+            accepted mustBe true
+            inactive.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe None
+            inactive.flatMap(_.financialMetricsLastUpdatedAt) mustBe None
+            pricesDue mustBe List(AAPL)
+            financialsDue mustBe List(AAPL)
+            stale mustBe false
+            active.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
+            active.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
+        }
+
+      "accept missing-profile deactivation so orphaned caches can still be deleted" in
         withEmbeddedMongoDatabase { db =>
           for
             repo     <- CompanyProfileRepository.make[IO](db)
-            _        <- repo.save(AAPLCompanyProfile)
-            _        <- repo.setActive(AAPL, false, ts.plusNanos(2))
-            _        <- repo.save(AAPLCompanyProfile)
-            _        <- repo.setActive(AAPL, true, ts.plusNanos(1))
-            inactive <- repo.findTickersBy(CompanyProfileFilter.IsActive(false), None)
-          yield inactive mustBe List(AAPL)
+            accepted <- repo.setActive(AAPL, false, ts)
+            profile  <- readProfile(db, AAPL)
+          yield
+            accepted mustBe true
+            profile mustBe None
         }
     }
 
     "findAll" should {
       "return all company profiles sorted by market cap descending" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(MSFTCompanyProfile)
@@ -78,7 +119,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return limited number of company profiles when limit is specified" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -98,7 +139,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return all profiles when limit is greater than available profiles" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -127,9 +168,14 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         )
         withEmbeddedMongoDatabase(seed) { db =>
           for
-            repo <- CompanyProfileRepository.make[IO](db)
-            res  <- repo.findTickersBy(CompanyProfileFilter.IsActive(true), None)
-          yield res mustBe List(AAPL)
+            repo                <- CompanyProfileRepository.make[IO](db)
+            res                 <- repo.findTickersBy(CompanyProfileFilter.IsActive(true), None)
+            withoutActiveFilter <- repo.findTickersBy(CompanyProfileFilter.CountryIs("US"), None)
+            inactive            <- repo.find(MSFT)
+          yield
+            res mustBe List(AAPL)
+            withoutActiveFilter mustBe List(AAPL)
+            inactive mustBe None
         }
       }
 
@@ -167,7 +213,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
       }
 
       "return tickers filtered by MarketCapAbove" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -177,7 +223,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers filtered by MarketCapBelow" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -187,7 +233,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers filtered by CountryIs" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT, Ticker("HSBC"))) { db =>
           val ukProfile = AAPLCompanyProfile.copy(ticker = Ticker("HSBC"), country = "GB")
           for
             repo <- CompanyProfileRepository.make[IO](db)
@@ -199,7 +245,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers filtered by IpoDateAfter" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -209,7 +255,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers filtered by IpoDateBefore" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -219,7 +265,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers filtered by UpdatedWithin" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -230,7 +276,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers filtered by NotUpdatedFor" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -241,7 +287,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers filtered by TickerMatching with regex pattern" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -251,7 +297,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return empty list when TickerMatching pattern matches nothing" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -261,7 +307,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers filtered by Composite filter" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           val composite = CompanyProfileFilter.Composite(
             NonEmptyList.of(
               CompanyProfileFilter.CountryIs("US"),
@@ -277,7 +323,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "respect the limit parameter" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -287,7 +333,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return results sorted by market cap descending" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(MSFTCompanyProfile)
@@ -297,7 +343,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return empty list when no profiles match the filter" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -313,7 +359,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             repo    <- CompanyProfileRepository.make[IO](db)
             _       <- repo.save(AAPLCompanyProfile)
             _       <- repo.updatePriceAnalyticsLastUpdated(List(AAPL))
-            updated <- repo.find(AAPL)
+            updated <- readProfile(db, AAPL)
           yield updated.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
         }
 
@@ -322,7 +368,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.updatePriceAnalyticsLastUpdated(List(AAPL))
-            res  <- repo.find(AAPL)
+            res  <- readProfile(db, AAPL)
           yield res mustBe None
         }
 
@@ -333,8 +379,8 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             _           <- repo.save(AAPLCompanyProfile)
             _           <- repo.save(MSFTCompanyProfile)
             _           <- repo.updatePriceAnalyticsLastUpdated(List(AAPL, MSFT))
-            updatedAAPL <- repo.find(AAPL)
-            updatedMSFT <- repo.find(MSFT)
+            updatedAAPL <- readProfile(db, AAPL)
+            updatedMSFT <- readProfile(db, MSFT)
           yield
             updatedAAPL.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
             updatedMSFT.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
@@ -357,8 +403,8 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             _           <- repo.save(AAPLCompanyProfile)
             _           <- repo.save(MSFTCompanyProfile)
             _           <- repo.updatePriceAnalyticsLastUpdated(List(AAPL, nonExistent))
-            updatedAAPL <- repo.find(AAPL)
-            updatedMSFT <- repo.find(MSFT)
+            updatedAAPL <- readProfile(db, AAPL)
+            updatedMSFT <- readProfile(db, MSFT)
           yield
             updatedAAPL.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe defined
             updatedMSFT.flatMap(_.priceAnalyticsLastUpdatedAt) mustBe None
@@ -367,7 +413,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
 
     "findTickersBy with PriceAnalyticsNotUpdatedFor filter" should {
       "return tickers where priceAnalyticsLastUpdatedAt is null" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -378,7 +424,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers where priceAnalyticsLastUpdatedAt is older than duration" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -391,7 +437,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return empty list when all profiles have been recently updated" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -409,7 +455,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             repo    <- CompanyProfileRepository.make[IO](db)
             _       <- repo.save(AAPLCompanyProfile)
             _       <- repo.updateFinancialMetricsLastUpdated(List(AAPL))
-            updated <- repo.find(AAPL)
+            updated <- readProfile(db, AAPL)
           yield updated.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
         }
 
@@ -418,7 +464,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.updateFinancialMetricsLastUpdated(List(AAPL))
-            res  <- repo.find(AAPL)
+            res  <- readProfile(db, AAPL)
           yield res mustBe None
         }
 
@@ -429,8 +475,8 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             _           <- repo.save(AAPLCompanyProfile)
             _           <- repo.save(MSFTCompanyProfile)
             _           <- repo.updateFinancialMetricsLastUpdated(List(AAPL, MSFT))
-            updatedAAPL <- repo.find(AAPL)
-            updatedMSFT <- repo.find(MSFT)
+            updatedAAPL <- readProfile(db, AAPL)
+            updatedMSFT <- readProfile(db, MSFT)
           yield
             updatedAAPL.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
             updatedMSFT.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
@@ -444,8 +490,8 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
             _           <- repo.save(AAPLCompanyProfile)
             _           <- repo.save(MSFTCompanyProfile)
             _           <- repo.updateFinancialMetricsLastUpdated(List(AAPL, nonExistent))
-            updatedAAPL <- repo.find(AAPL)
-            updatedMSFT <- repo.find(MSFT)
+            updatedAAPL <- readProfile(db, AAPL)
+            updatedMSFT <- readProfile(db, MSFT)
           yield
             updatedAAPL.flatMap(_.financialMetricsLastUpdatedAt) mustBe defined
             updatedMSFT.flatMap(_.financialMetricsLastUpdatedAt) mustBe None
@@ -454,7 +500,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
 
     "findTickersBy with FinancialMetricsNotUpdatedFor filter" should {
       "return tickers where financialMetricsLastUpdatedAt is null" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
@@ -465,7 +511,7 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         }
 
       "return tickers where financialMetricsLastUpdatedAt is older than duration" in
-        withEmbeddedMongoDatabase { db =>
+        withActiveStocks(List(AAPL, MSFT)) { db =>
           for
             repo <- CompanyProfileRepository.make[IO](db)
             _    <- repo.save(AAPLCompanyProfile)
