@@ -19,6 +19,7 @@ import stockschecker.repositories.entities.{
   InvestmentEvaluationContextEntity,
   InvestmentEvaluationEntity,
   InvestmentEvaluationTaskEntity,
+  InvestmentRankingIdEntity,
   InvestmentScreenEntity,
   PriceHistoryEntity
 }
@@ -26,6 +27,7 @@ import stockschecker.repositories.entities.{
 import java.time.YearMonth
 
 trait InvestmentEvaluationRepository[F[_]]:
+  def delete(ticker: Ticker): F[Unit]
   def saveMonthly(evaluation: InvestmentEvaluation): F[Unit]
   def recordHistoryRequests(screenId: InvestmentScreenId, month: YearMonth, tickers: List[Ticker]): F[Unit]
   def findContext(screenId: InvestmentScreenId, month: YearMonth): F[Option[EvaluationCapture.Context]]
@@ -39,6 +41,19 @@ final private class LiveInvestmentEvaluationRepository[F[_]](
 )(using F: MonadThrow[F])
     extends InvestmentEvaluationRepository[F] {
   import InvestmentEvaluationRepository.{CollectionName, Field}
+
+  override def delete(ticker: Ticker): F[Unit] =
+    for
+      affected <- collection
+        .aggregate[InvestmentRankingIdEntity](
+          Aggregate
+            .lookup(InvestmentScreenRepository.CollectionName, Field.ScreenId, "_id", "screens")
+            .matchBy(Filter.eq(s"screens.${InvestmentScreenRepository.Field.CohortTickers}", ticker.value))
+            .project(Projection.include("_id"))
+        )
+        .all
+      _ <- collection.deleteMany(Filter.in("_id", affected.map(_._id).toList)).void
+    yield ()
 
   override def saveMonthly(evaluation: InvestmentEvaluation): F[Unit] =
     val month    = evaluation.captureMonth
@@ -123,7 +138,6 @@ final private class LiveInvestmentEvaluationRepository[F[_]](
       )
     Aggregate
       .matchBy(Filter.idEq(screenId.value))
-      .combinedWith(InvestmentScreenVisibility.restrict)
       .replaceWith(Document("screen" := "$$ROOT"))
       .lookup(CollectionName, captures, "captures")
       .unwind("$captures")
@@ -147,7 +161,7 @@ final private class LiveInvestmentEvaluationRepository[F[_]](
   private def taskContextAggregation(month: YearMonth): Aggregate =
     // Immediate unwind is coalesced into the lookup, so full historical reports never form one large array.
     // Only compact request state is regrouped; even a screen's combined reports can exceed Mongo's document limit.
-    InvestmentScreenVisibility.restrict
+    Aggregate
       .replaceWith(Document("screen" := "$$ROOT"))
       .lookup(CollectionName, "screen._id", Field.ScreenId, "captures")
       .unwind("$captures", UnwindOptions(preserveNullAndEmptyArrays = true))
@@ -224,7 +238,7 @@ object InvestmentEvaluationRepository extends MongoJsonCodecs:
   def make[F[_]: MonadThrow](db: MongoDatabase[F]): F[InvestmentEvaluationRepository[F]] =
     for
       raw <- db.getCollectionWithCodec[InvestmentEvaluationEntity](CollectionName)
-      collection = raw.withAddedCodec[InvestmentEvaluation]
+      collection = raw.withAddedCodec[InvestmentEvaluation].withAddedCodec[InvestmentRankingIdEntity]
       screens <- db.getCollectionWithCodec[InvestmentScreenEntity](InvestmentScreenRepository.CollectionName)
       prices  <- db.getCollectionWithCodec[PriceHistoryEntity](PriceHistoryRepository.CollectionName)
       _       <- collection.createIndex(Index.ascending(List(Field.ScreenId, Field.Month)))

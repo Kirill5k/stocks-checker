@@ -7,6 +7,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import mongo4cats.circe.MongoJsonCodecs
 import stockschecker.repositories.entities.{DataQualityReportEntity, DatasetAvailabilityEntity}
+import stockschecker.repositories.queries.{InvestmentRankingQueries, PriceAnalyticsReadinessQuery}
 import mongo4cats.bson.Document
 import mongo4cats.bson.syntax.*
 import mongo4cats.collection.MongoCollection
@@ -26,14 +27,14 @@ trait DataQualityRepository[F[_]]:
       at: Instant,
       failure: Option[String]
   ): F[Unit]
-  def report(at: Instant, recipe: InvestmentRecipe = InvestmentRecipe()): F[DataQualityReport]
+  def report(at: Instant, recipe: InvestmentRecipe): F[DataQualityReport]
 
 final private class LiveDataQualityRepository[F[_]: Concurrent](
     collection: MongoCollection[F, DatasetAvailabilityEntity]
 ) extends DataQualityRepository[F] {
   import DataQualityRepository.Field
 
-  private val reportAggregation: Aggregate =
+  private def reportAggregation(at: Instant): Aggregate =
     val security = SecurityRepository.Field
     val ranking  = InvestmentRankingRepository.Field
     // The facet provides a result even before any availability has been recorded.
@@ -58,6 +59,7 @@ final private class LiveDataQualityRepository[F[_]: Concurrent](
       .lookup(
         InvestmentRankingRepository.CollectionName,
         Aggregate
+          .matchBy(InvestmentRankingQueries.notExpired(at))
           .sort(Sort.desc(ranking.CreatedAt))
           .limit(1)
           .facet(
@@ -74,10 +76,8 @@ final private class LiveDataQualityRepository[F[_]: Concurrent](
                 )
                 .group(
                   Document(
-                    "industry" := Document(
-                      "$toLower" := Document("$trim" := Document("input" := s"$$${Field.RankingInputs}.input.industry"))
-                    ),
-                    "sector" := s"$$${Field.RankingInputs}.input.sector"
+                    "industry" := s"$$${Field.RankingInputs}.${ranking.InputIndustry}",
+                    "sector"   := s"$$${Field.RankingInputs}.input.sector"
                   ),
                   Accumulator.sum(Field.Count, 1)
                 )
@@ -110,7 +110,7 @@ final private class LiveDataQualityRepository[F[_]: Concurrent](
 
   override def report(at: Instant, recipe: InvestmentRecipe): F[DataQualityReport] =
     collection
-      .aggregate[DataQualityReportEntity](reportAggregation)
+      .aggregate[DataQualityReportEntity](reportAggregation(at))
       .first
       .map(_.fold(DataQualityReport(at, Nil, Nil, Map.empty, Map.empty))(_.toDomain(at, recipe)))
 }

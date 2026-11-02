@@ -1,9 +1,9 @@
 package stockschecker.controllers
 
-import cats.MonadThrow
 import cats.effect.Sync
 import cats.syntax.either.*
 import cats.syntax.functor.*
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import cats.syntax.applicativeError.*
 import io.circe.Codec
 import mongo4cats.bson.ObjectId
@@ -53,7 +53,7 @@ trait Controller[F[_]](protected val apiKeyRequirement: ApiKeyRequirement) exten
           Left((StatusCode.Forbidden, ErrorResponse("API key authentication is not configured for this endpoint")))
     }
 
-  extension [A](fa: F[A])(using F: MonadThrow[F])
+  extension [A](fa: F[A])(using F: Sync[F])
     def asVoidResponse: F[Either[(StatusCode, ErrorResponse), Unit]] =
       mapToResponse(_ => ())
     def asResponse: F[Either[(StatusCode, ErrorResponse), A]] =
@@ -61,7 +61,7 @@ trait Controller[F[_]](protected val apiKeyRequirement: ApiKeyRequirement) exten
     def mapToResponse[B](fab: A => B): F[Either[(StatusCode, ErrorResponse), B]] =
       fa
         .map(fab(_).asRight[(StatusCode, ErrorResponse)])
-        .handleError(e => Controller.mapError(e).asLeft[B])
+        .handleErrorWith(e => Slf4jLogger.getLogger[F].error(e)("HTTP request failed").as(Controller.mapError(e).asLeft[B]))
 
 }
 
@@ -79,39 +79,44 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
     publicEndpoint.securityIn(auth.apiKey(header[Option[String]]("X-API-Key")))
 
   def serverOptions[F[_]](using F: Sync[F]): Http4sServerOptions[F] = {
-    val errorEndpointOut = (e: Throwable) => Some(ValuedEndpointOutput(error, Controller.mapError(e)))
+    val errorEndpointOut: Throwable => Option[ValuedEndpointOutput[?]] = e => Some(ValuedEndpointOutput(error, Controller.mapError(e)))
     Http4sServerOptions.customiseInterceptors
-      .exceptionHandler(ExceptionHandler.pure((ctx: ExceptionContext) => errorEndpointOut(ctx.e)))
+      .exceptionHandler(
+        ExceptionHandler[F]((ctx: ExceptionContext) =>
+          Slf4jLogger.getLogger[F].error(ctx.e)("HTTP request failed").as(errorEndpointOut(ctx.e))
+        )
+      )
       .decodeFailureHandler(DecodeFailureHandler.pure { (ctx: DecodeFailureContext) =>
         ctx.failure match
-          case DecodeResult.Error(_, e)     => errorEndpointOut(e)
+          case DecodeResult.Error(_, e: JsonDecodeException)    => errorEndpointOut(e)
+          case DecodeResult.Error(_, e: AppError.Unprocessable) => errorEndpointOut(e)
+          case DecodeResult.Error(_, _)                         =>
+            val source = DefaultDecodeFailureHandler.FailureMessages.failureSourceMessage(ctx.failingInput)
+            errorEndpointOut(AppError.FailedValidation(source))
           case DecodeResult.InvalidValue(e) =>
             val source = DefaultDecodeFailureHandler.FailureMessages.failureSourceMessage(ctx.failingInput)
             val msgs   = e.map { case ValidationError(validator, _, _, message) =>
               message.getOrElse(validator.show.fold(source)(constraint => s"$source (must satisfy $constraint)"))
             }
             errorEndpointOut(AppError.FailedValidation(msgs.mkString(", ")))
+          case DecodeResult.Missing
+              if !ctx.failingInput.isInstanceOf[EndpointInput.PathCapture[?]] &&
+                !ctx.failingInput.isInstanceOf[EndpointInput.FixedPath[?]] && !ctx.failingInput
+                  .isInstanceOf[EndpointInput.PathsCapture[?]] =>
+            val source = DefaultDecodeFailureHandler.FailureMessages.failureSourceMessage(ctx.failingInput)
+            errorEndpointOut(AppError.FailedValidation(s"$source is required"))
           case _ => None
       })
       .options
   }
 
-  private val FailedRegexValidation = "Predicate failed: \"(.*)\"\\.matches\\(.*\\)\\.".r
-  private val NullFieldValidation   = "Attempt to decode value on failed cursor".r
-  private val EmptyFieldValidation  = "Predicate isEmpty\\(\\) did not fail\\.".r
-  private val IdValidation          = "Predicate failed: \\((.*) is valid id\\).".r
-
   private def formatJsonError(err: JsonDecodeException): String =
     err.errors
       .map { je =>
         je.msg match
-          case FailedRegexValidation(value) => s"$value is not a valid ${je.path.head.name}"
-          case NullFieldValidation()        => s"${je.path.head.name} is required"
-          case EmptyFieldValidation()       => s"${je.path.head.name} must not be empty"
-          case IdValidation(value)          => s"$value is not a valid ${je.path.head.name}"
-          case "Missing required field"     => s"${je.msg}: ${je.path.map(_.name).mkString(", ")}"
-          case msg if je.path.isEmpty       => s"Invalid message body: Could not decode $msg json"
-          case msg                          => msg
+          case "Missing required field" => s"${je.msg}: ${je.path.map(_.name).mkString(", ")}"
+          case msg if je.path.isEmpty   => s"Invalid message body: Could not decode $msg json"
+          case msg                      => msg
       }
       .mkString(", ")
 
@@ -119,23 +124,19 @@ object Controller extends TapirJsonCirce with SchemaDerivation {
     case err: AppError.ProviderDeferred =>
       (StatusCode.TooManyRequests, ErrorResponse(err.getMessage))
     case err: AppError.ProviderConfiguration =>
-      (StatusCode.ServiceUnavailable, ErrorResponse(err.getMessage))
+      (StatusCode.ServiceUnavailable, ErrorResponse(AppError.safeSummary(err)))
     case err: AppError.DataUnavailable =>
-      (StatusCode.ServiceUnavailable, ErrorResponse(err.getMessage))
-    case err: AppError.Conflict =>
-      (StatusCode.Conflict, ErrorResponse(err.getMessage))
-    case err: AppError.BadReq =>
-      (StatusCode.BadRequest, ErrorResponse(err.getMessage))
+      (StatusCode.ServiceUnavailable, ErrorResponse(AppError.safeSummary(err)))
     case err: AppError.NotFound =>
       (StatusCode.NotFound, ErrorResponse(err.getMessage))
-    case err: AppError.Forbidden =>
-      (StatusCode.Forbidden, ErrorResponse(err.getMessage))
-    case err: AppError.Unauth =>
-      (StatusCode.Unauthorized, ErrorResponse(err.getMessage))
     case err: AppError.Unprocessable =>
       (StatusCode.UnprocessableEntity, ErrorResponse(err.getMessage))
     case err: JsonDecodeException =>
       (StatusCode.UnprocessableEntity, ErrorResponse(formatJsonError(err)))
-    case err =>
-      (StatusCode.InternalServerError, ErrorResponse(err.getMessage))
+    case err: AppError.JsonParsingFailure =>
+      (StatusCode.InternalServerError, ErrorResponse(AppError.safeSummary(err)))
+    case err: AppError.HttpClient =>
+      (StatusCode.InternalServerError, ErrorResponse(AppError.safeSummary(err)))
+    case _ =>
+      (StatusCode.InternalServerError, ErrorResponse("Internal server error"))
 }

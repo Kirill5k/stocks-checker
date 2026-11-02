@@ -7,12 +7,15 @@ import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
-import stockschecker.domain.investment.{InvestmentReasons, InvestmentScreenSelection}
+import stockschecker.domain.investment.InvestmentScreenSelection
+import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.repositories.InvestmentScreenRepository
 
 import java.time.{Instant, YearMonth, ZoneOffset}
 
 trait InvestmentScreenService[F[_]]:
+  def rankingIds(ticker: Ticker): F[List[InvestmentRankingId]]
+  def delete(ticker: Ticker): F[Unit]
   def create(request: InvestmentScreenRequest): F[InvestmentScreenResult]
   def get(id: InvestmentScreenId, includeExclusions: Boolean = false): F[InvestmentScreenResult]
   def list(limit: Int): F[List[InvestmentScreenSummary]]
@@ -20,25 +23,18 @@ trait InvestmentScreenService[F[_]]:
 
 final private class LiveInvestmentScreenService[F[_]](
     private val screens: InvestmentScreenRepository[F],
+    private val dispatcher: ActionDispatcher[F],
     private val recipe: InvestmentRecipe
 )(using
     F: Sync[F],
     C: Clock[F],
     logger: Logger[F]
 ) extends InvestmentScreenService[F] {
-  private def currentEntries(id: InvestmentRankingId): F[List[InvestmentRankingEntry]] =
-    for
-      entries <- screens.rankingEntries(id)
-      visible <- screens.visibleRankingTickers(id, None)
-      peers = entries.filter(entry =>
-        entry.scorecard.eligible || entry.scorecard.exclusions == List(InvestmentReasons.InsufficientPeerCoverage)
-      )
-      _ <- F.raiseWhen(peers.exists(entry => !visible(entry.scorecard.ticker)))(
-        AppError.FailedValidation(
-          "The ranking contains scoring peers that are no longer active; refresh the ranking before creating a screen"
-        )
-      )
-    yield entries.filter(entry => visible(entry.scorecard.ticker))
+  override def rankingIds(ticker: Ticker): F[List[InvestmentRankingId]] = screens.rankingIds(ticker)
+  override def delete(ticker: Ticker): F[Unit]                          = screens.delete(ticker)
+
+  private def pin(screen: InvestmentScreen): F[Unit] =
+    dispatcher.dispatchOnce(JobId(s"pin-ranking-${screen.id.value}"), Action.PinInvestmentRanking(screen.rankingId))
 
   private def saveScreen(
       id: InvestmentScreenId,
@@ -46,11 +42,12 @@ final private class LiveInvestmentScreenService[F[_]](
       ranking: InvestmentRanking
   ): F[InvestmentScreenResult] =
     for
-      entries <- currentEntries(ranking.id)
+      entries <- screens.rankingEntries(ranking.id)
       now     <- C.now
       selection = InvestmentScreenSelection(entries, request)
       screen    = InvestmentScreen.create(id, now, ranking, request, selection.cohorts)
       _ <- screens.save(screen)
+      _ <- pin(screen)
     yield selection.result(screen)
 
   override def create(request: InvestmentScreenRequest): F[InvestmentScreenResult] =
@@ -65,15 +62,9 @@ final private class LiveInvestmentScreenService[F[_]](
   override def get(id: InvestmentScreenId, includeExclusions: Boolean = false): F[InvestmentScreenResult] =
     for
       context <- screens.findWithRanking(id)
-      (screen, ranking) = context
+      (screen, _) = context
       entries <- screens.detailEntries(screen, includeExclusions)
-      holdings = screen.cohorts.iterator.flatMap(_.tickers).toSet
-      tickers  = holdings ++ entries.iterator.map(_.scorecard.ticker)
-      visible <- screens.visibleRankingTickers(ranking.id, Some(tickers))
-      _       <- F.raiseWhen(holdings.exists(ticker => !visible(ticker)))(
-        AppError.EntityDoesNotExist("Investment screen", id.value)
-      )
-      result = InvestmentScreenSelection(entries.filter(entry => visible(entry.scorecard.ticker)), screen.request).result(screen)
+      result = InvestmentScreenSelection(entries, screen.request).result(screen)
     yield if includeExclusions then result else result.copy(exclusions = Nil)
 
   private def latestRanking(now: Instant): F[InvestmentRanking] =
@@ -99,24 +90,33 @@ final private class LiveInvestmentScreenService[F[_]](
       existing <- screens.get(monthlyId)
       outcome  <- existing match
         case Some(screen) =>
-          F.pure[MonthlyScreenOutcome](MonthlyScreenOutcome.AlreadyExists(screen.rankingId, screen.summary))
+          pin(screen).as[MonthlyScreenOutcome](MonthlyScreenOutcome.AlreadyExists(screen.rankingId, screen.summary))
         case None =>
-          for
-            ranking <- latestRanking(now)
-            _       <- F.raiseWhen(ranking.createdAt.atZone(ZoneOffset.UTC).toLocalDate != date)(
-              AppError.FailedValidation("The latest completed ranking is not from today; wait for the scheduled ranking run")
-            )
-            outcome <-
-              if ranking.summary.eligibleCount < InvestmentRecipe.MinimumEligibleStocks then
-                F.pure[MonthlyScreenOutcome](
-                  MonthlyScreenOutcome
-                    .InsufficientEligible(ranking.id, ranking.summary.eligibleCount, InvestmentRecipe.MinimumEligibleStocks)
-                )
-              else
-                saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), ranking)
-                  .map[MonthlyScreenOutcome](r => MonthlyScreenOutcome.Created(ranking.id, r.summary))
-          yield outcome
+          screens.latestRanking.flatMap {
+            case None =>
+              F.pure[MonthlyScreenOutcome](MonthlyScreenOutcome.RankingUnavailable("No completed ranking is available"))
+            case Some(ranking) =>
+              val usable = ranking
+                .requireUsable(recipe, now)
+                .flatMap { value =>
+                  Either.cond(
+                    value.createdAt.atZone(ZoneOffset.UTC).toLocalDate == date,
+                    value,
+                    "The latest completed ranking is not from today"
+                  )
+                }
+              usable match
+                case Left(reason) => F.pure[MonthlyScreenOutcome](MonthlyScreenOutcome.RankingUnavailable(reason))
+                case Right(value) if value.summary.eligibleCount < InvestmentRecipe.MinimumEligibleStocks =>
+                  F.pure[MonthlyScreenOutcome](
+                    MonthlyScreenOutcome.InsufficientEligible(value.id, value.summary.eligibleCount, InvestmentRecipe.MinimumEligibleStocks)
+                  )
+                case Right(value) =>
+                  saveScreen(monthlyId, InvestmentScreenRequest(recipeVersion = Some(recipe.version)), value)
+                    .map[MonthlyScreenOutcome](r => MonthlyScreenOutcome.Created(value.id, r.summary))
+          }
       _ <- outcome match
+        case MonthlyScreenOutcome.RankingUnavailable(reason)  => logger.info(s"Monthly screen ${monthlyId.value} skipped: $reason")
         case MonthlyScreenOutcome.Created(rankingId, summary) =>
           logger.info(
             s"Created monthly screen ${summary.id.value}: ranking=${rankingId.value}, eligible=${summary.eligibleCount}, required=${InvestmentRecipe.MinimumEligibleStocks}, selected=${summary.selectedCount}"
@@ -135,6 +135,7 @@ final private class LiveInvestmentScreenService[F[_]](
 object InvestmentScreenService:
   def make[F[_]: {Sync, Clock, Logger}](
       screens: InvestmentScreenRepository[F],
-      recipe: InvestmentRecipe = InvestmentRecipe()
+      dispatcher: ActionDispatcher[F],
+      recipe: InvestmentRecipe
   ): F[InvestmentScreenService[F]] =
-    Sync[F].pure(LiveInvestmentScreenService(screens, recipe))
+    Sync[F].pure(LiveInvestmentScreenService(screens, dispatcher, recipe))

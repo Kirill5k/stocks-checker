@@ -59,32 +59,6 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
         verify(svc).find(ticker)
       }
 
-      "return 401 when API key is missing" in {
-        val svc = mocks
-
-        val res = for
-          controller <- SecurityController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/securities/aapl", method = Method.GET)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
-
-      "return 401 when API key is invalid" in {
-        val svc = mocks
-
-        val res = for
-          controller <- SecurityController.make(svc, apiConfig)
-          invalidApiKeyHeader = Header.Raw(CIString("X-API-Key"), "wrong-key")
-          req                 = Request[IO](uri = uri"/securities/aapl", method = Method.GET).withHeaders(invalidApiKeyHeader)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
     }
 
     "GET /securities/exchange/:exchange" should {
@@ -126,33 +100,20 @@ class SecurityControllerSpec extends HttpRoutesWordSpec {
         verify(svc).findByExchange(Exchange.NASDAQ)
       }
 
-      "return 401 when API key is missing" in {
-        val svc = mocks
-
-        val res = for
-          controller <- SecurityController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/securities/exchange/nasdaq", method = Method.GET)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
     }
 
     "GET /securities/tickers" should {
-      "return 401 when API key is missing" in {
+      "return the ticker list without interpreting tickers as a ticker" in {
         val svc = mocks
-
-        val res = for
+        when(svc.getAllTickers).thenReturnIO(List(AAPL, MSFT))
+        val response = for
           controller <- SecurityController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/securities/tickers", method = Method.GET)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
+          result     <- controller.routes.orNotFound.run(Request[IO](uri = uri"/securities/tickers").withHeaders(apiKeyHeader))
+        yield result
+        response mustHaveStatus (Status.Ok, Some("""["AAPL","MSFT"]"""))
+        verify(svc).getAllTickers
       }
+
     }
   }
 

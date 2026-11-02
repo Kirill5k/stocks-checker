@@ -75,7 +75,6 @@ final private class LiveTwelveDataClient[F[_]](
       queryParams = Map(
         "symbol"     -> ticker.value,
         "interval"   -> "1day",
-        "apikey"     -> apiKey,
         "outputsize" -> "5000",
         "start_date" -> range.from.toString,
         "end_date"   -> range.through.toString,
@@ -84,6 +83,7 @@ final private class LiveTwelveDataClient[F[_]](
       response <- backend.send(
         emptyRequest
           .get(uri"${config.baseUri}/time_series".addParams(queryParams))
+          .header("Authorization", s"apikey $apiKey")
           .response(asJson[TwelveDataClient.TimeSeriesResponse])
           .readTimeout(30.seconds)
       )
@@ -94,7 +94,7 @@ final private class LiveTwelveDataClient[F[_]](
         // Error envelopes may contain only a partial `meta`; successful histories still require the full metadata codec.
         case Left(ResponseException.DeserializationException(body, _, _)) if isNoDataEnvelope(body) =>
           historyFailure(400, body, ticker, range, adjustment)
-        case Left(error) => F.raiseError(AppError.JsonParsingFailure("", s"Invalid daily prices: ${redact(error.getMessage)}"))
+        case Left(error) => F.raiseError(AppError.JsonParsingFailure("", s"Invalid daily prices: ${error.getMessage}"))
       values <- processData(data, ticker, range, adjustment)
       now    <- C.now
       candles = values.toList.sortBy(_.date)
@@ -139,11 +139,10 @@ final private class LiveTwelveDataClient[F[_]](
     case PriceAdjustment.Splits             => "splits"
     case PriceAdjustment.SplitsAndDividends => "all"
 
-  private def redact(message: String): String =
-    apiKeys.map(_._1).sortBy(key => -key.length).foldLeft(message)((result, key) => result.replace(key, "[redacted]"))
-
-  private def failure[A](status: Int, message: String, retryAfter: Option[String]): F[A] =
-    ProviderErrors.fromStatus[F](Provider.TwelveData, status, retryAfter, redact(message)).flatMap(F.raiseError)
+  private def failure[A](status: Int, ticker: Ticker, retryAfter: Option[String]): F[A] =
+    ProviderErrors
+      .fromStatus[F](Provider.TwelveData, status, retryAfter, s"Error retrieving daily prices for $ticker", Some(ticker))
+      .flatMap(F.raiseError)
 
   private def requestContext(ticker: Ticker, range: DateRange, adjustment: PriceAdjustment): String =
     s"provider=${Provider.TwelveData.print} ticker=${ticker.value.take(64)} adjustment=${adjustment.value} requested=${range.from}..${range.through}"
@@ -173,7 +172,7 @@ final private class LiveTwelveDataClient[F[_]](
       F.raiseError(
         AppError.DataUnavailable(ticker, s"no provider data in the requested date range; ${requestContext(ticker, range, adjustment)}")
       )
-    else failure(status, message, retryAfter)
+    else failure(status, ticker, retryAfter)
 
   private def processData(
       data: TwelveDataClient.TimeSeriesResponse,
@@ -183,18 +182,18 @@ final private class LiveTwelveDataClient[F[_]](
   ): F[NonEmptyList[PriceCandle]] =
     if data.isOk then
       val maybeValues = data.values.flatMap(v => NonEmptyList.fromList(v.map(_.toDomain)))
-      F.fromOption(maybeValues, AppError.HttpClient(Provider.TwelveData.print, 500, s"No values returned for ticker $ticker"))
+      F.fromOption(maybeValues, AppError.DataUnavailable(ticker, "No daily prices returned"))
     else if data.isError then
       val errorCode    = data.code.getOrElse(500)
       val errorMessage = data.message.getOrElse("Unknown error from TwelveData API")
       if errorCode == 400 && isNoDataMessage(errorMessage) then historyFailure(errorCode, errorMessage, ticker, range, adjustment)
-      else failure(errorCode, s"API error for getting time series data for $ticker: $errorMessage", None)
+      else failure(errorCode, ticker, None)
     else
       F.raiseError(
         AppError.HttpClient(
           Provider.TwelveData.print,
           500,
-          s"Time series API returned unexpected status code for ticker $ticker: ${redact(data.toString)}"
+          s"Time series API returned unexpected status code for ticker $ticker"
         )
       )
 }

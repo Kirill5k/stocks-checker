@@ -6,6 +6,7 @@ import cats.syntax.foldable.*
 import stockschecker.domain.Provider
 import fs2.Stream
 import kirill5k.common.http4s.Server
+import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.log4cats.Logger
 import stockschecker.actions.{ActionDispatcher, ActionExecutor, ActionHandler, CommandScheduler}
@@ -34,7 +35,7 @@ object Application extends IOApp.Simple {
             repositories     <- Repositories.make(res.mongoDatabase)
             actionDispatcher <- ActionDispatcher.make[IO](repositories.jobs)
             clients          <- Clients.make(config.clients, res.httpBackend, repositories.providerBudgets, repositories.dataQuality)
-            services         <- Services.make(clients, repositories, actionDispatcher, config.investment)
+            services         <- Services.make(clients, repositories, actionDispatcher, config.investment, config.security)
             controllers      <- Controllers.make(services, config.api)
             actionHandler    <- ActionHandler.make(services)
             actionExecutor   <- ActionExecutor.make(
@@ -44,7 +45,7 @@ object Application extends IOApp.Simple {
               config.actionExecutor
             )
             commandScheduler <- CommandScheduler.make(repositories.command, repositories.jobs)
-            restartTime      <- IO.realTimeInstant
+            restartTime      <- Clock[IO].now
             _                <- Provider.values.toList.traverse_(repositories.jobs.resumePaused(_, restartTime))
             _                <- Stream(
               Server.serveEmber(config.server, controllers.routes),

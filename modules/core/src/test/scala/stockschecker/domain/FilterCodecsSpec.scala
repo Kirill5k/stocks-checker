@@ -17,7 +17,6 @@ class FilterCodecsSpec extends AnyWordSpec with Matchers with EitherValues with 
     "preserve the legacy JSON for every variant and recursive composites" in {
       val testCases = Table[CompanyProfileFilter, String](
         ("filter", "json"),
-        (CompanyProfileFilter.IsActive(true), """{"kind":"is-active","active":true}"""),
         (CompanyProfileFilter.MarketCapAbove(10000000000L), """{"kind":"market-cap-above","min":10000000000}"""),
         (CompanyProfileFilter.MarketCapBelow(20000000000L), """{"kind":"market-cap-below","max":20000000000}"""),
         (CompanyProfileFilter.CountryIs("US"), """{"kind":"country-is","countryCode":"US"}"""),
@@ -34,11 +33,11 @@ class FilterCodecsSpec extends AnyWordSpec with Matchers with EitherValues with 
         (
           CompanyProfileFilter.Composite(
             NonEmptyList.of(
-              CompanyProfileFilter.IsActive(false),
+              CompanyProfileFilter.MarketCapBelow(100),
               CompanyProfileFilter.Composite(NonEmptyList.one(CompanyProfileFilter.CountryIs("GB")))
             )
           ),
-          """{"kind":"composite","filters":[{"kind":"is-active","active":false},{"kind":"composite","filters":[{"kind":"country-is","countryCode":"GB"}]}]}"""
+          """{"kind":"composite","filters":[{"kind":"market-cap-below","max":100},{"kind":"composite","filters":[{"kind":"country-is","countryCode":"GB"}]}]}"""
         )
       )
 
@@ -79,7 +78,6 @@ class FilterCodecsSpec extends AnyWordSpec with Matchers with EitherValues with 
         (SecurityFilter.ExchangeIs(Exchange.NYSE), """{"kind":"exchange-is","exchange":"nyse"}"""),
         (SecurityFilter.KindIs(SecurityKind.Stock), """{"kind":"kind-is","securityKind":"stock"}"""),
         (SecurityFilter.KindIs(SecurityKind.ETF), """{"kind":"kind-is","securityKind":"etf"}"""),
-        (SecurityFilter.IsActive(false), """{"kind":"is-active","active":false}"""),
         (SecurityFilter.UpdatedWithin(1.minute), """{"kind":"updated-within","duration":"1minute"}"""),
         (SecurityFilter.NotUpdatedFor(2.hours), """{"kind":"not-updated-for","duration":"2hours"}"""),
         (SecurityFilter.CompanyProfileNotUpdatedFor(3.days), """{"kind":"company-profile-not-updated-for","duration":"3days"}"""),
@@ -122,8 +120,6 @@ class FilterCodecsSpec extends AnyWordSpec with Matchers with EitherValues with 
     "preserve the legacy JSON for every variant and recursive composites" in {
       val testCases = Table[PriceAnalyticsFilter, String](
         ("filter", "json"),
-        (PriceAnalyticsFilter.UpdatedWithin(1.minute), """{"kind":"updated-within","duration":"1minute"}"""),
-        (PriceAnalyticsFilter.NotUpdatedFor(2.hours), """{"kind":"not-updated-for","duration":"2hours"}"""),
         (PriceAnalyticsFilter.PriceAbove(BigDecimal("12.34")), """{"kind":"price-above","minPrice":12.34}"""),
         (PriceAnalyticsFilter.PriceBelow(BigDecimal("56.78")), """{"kind":"price-below","maxPrice":56.78}"""),
         (
@@ -138,10 +134,10 @@ class FilterCodecsSpec extends AnyWordSpec with Matchers with EitherValues with 
           PriceAnalyticsFilter.Composite(
             NonEmptyList.of(
               PriceAnalyticsFilter.PriceAbove(BigDecimal("1.25")),
-              PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.NotUpdatedFor(3.days)))
+              PriceAnalyticsFilter.Composite(NonEmptyList.one(PriceAnalyticsFilter.PriceAbove(100)))
             )
           ),
-          """{"kind":"composite","filters":[{"kind":"price-above","minPrice":1.25},{"kind":"composite","filters":[{"kind":"not-updated-for","duration":"3days"}]}]}"""
+          """{"kind":"composite","filters":[{"kind":"price-above","minPrice":1.25},{"kind":"composite","filters":[{"kind":"price-above","minPrice":100}]}]}"""
         )
       )
 

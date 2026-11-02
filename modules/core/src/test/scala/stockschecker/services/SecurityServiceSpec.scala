@@ -8,148 +8,63 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.clients.MarketDataClient
-import stockschecker.domain.{Exchange, Security, SecurityFilter}
+import stockschecker.common.config.SecurityConfig
+import stockschecker.domain.{Exchange, JobId}
 import stockschecker.domain.errors.AppError
+import stockschecker.domain.investment.InvestmentEvaluator
 import stockschecker.repositories.SecurityRepository
+import stockschecker.repositories.SecurityRepository.ActivationResult
 import stockschecker.fixtures.*
 
 class SecurityServiceSpec extends IOWordSpec {
   given Logger[IO] = Slf4jLogger.getLogger[IO]
 
-  "A SecurityService" when {
-    "fetchLatestSecurities" should {
-      "reconcile a nonempty listing without dispatching profile changes or cache deletion" in {
-        val (repo, client, dispatcher) = mocks
-        when(client.getTradedSecurities(Exchange.NASDAQ)).thenStream(MSFTSecurity)
-        when(repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))).thenReturnUnit
-        SecurityService
-          .make(repo, client, dispatcher)
-          .flatMap(_.fetchLatest(NonEmptyList.one(Exchange.NASDAQ)))
-          .asserting { _ =>
-            verify(repo).reconcile(Exchange.NASDAQ, List(MSFTSecurity))
-            verifyNoMoreInteractions(repo)
-            verifyNoInteractions(dispatcher)
-            succeed
-          }
-      }
-
-      "fetch traded securities from client and store them in db" in {
-        val (repo, client, dispatcher) = mocks
-        when(client.getTradedSecurities(any[Exchange])).thenStream(AAPLSecurity)
-        when(repo.reconcile(any[Exchange], anyList[Security])).thenReturnUnit
-        val res = for
-          svc <- SecurityService.make(repo, client, dispatcher)
-          _   <- svc.fetchLatest(NonEmptyList.of(Exchange.NASDAQ))
-        yield ()
-
-        res.asserting { r =>
-          verify(client).getTradedSecurities(Exchange.NASDAQ)
-          verify(repo).reconcile(Exchange.NASDAQ, List(AAPLSecurity))
-          r mustBe ()
-        }
-      }
-
-      "leave listing state unchanged when a provider stream fails partway through" in {
-        val (repo, client, dispatcher) = mocks
-        val error                      = new RuntimeException("Truncated listing response")
-        when(client.getTradedSecurities(Exchange.NASDAQ)).thenReturn(
-          Stream.emit(AAPLSecurity).covary[IO] ++ Stream.raiseError[IO](error)
-        )
-        val result = for
-          svc <- SecurityService.make(repo, client, dispatcher)
-          _   <- svc.fetchLatest(NonEmptyList.of(Exchange.NASDAQ))
-        yield ()
-        result.attempt.asserting { outcome =>
-          outcome mustBe Left(error)
-          verifyNoInteractions(repo)
-          succeed
-        }
-      }
-
-      "refuse to reconcile an unexpectedly empty exchange listing" in {
-        val (repo, client, dispatcher) = mocks
-        when(client.getTradedSecurities(Exchange.NASDAQ)).thenReturn(Stream.empty)
-        val result = for
-          svc <- SecurityService.make(repo, client, dispatcher)
-          _   <- svc.fetchLatest(NonEmptyList.of(Exchange.NASDAQ))
-        yield ()
-        result.attempt.asserting { outcome =>
-          outcome.isLeft mustBe true
-          verifyNoInteractions(repo)
-          succeed
-        }
+  "Security deactivation" should {
+    "dispatch the same purge after a successful write is retried" in {
+      val (repo, client, dispatcher) = mocks
+      val id                         = JobId(s"purge-AAPL-$ts")
+      val failure                    = new java.io.IOException("dispatch unavailable")
+      when(repo.setActive(AAPL, false, ts, "provider-profile-empty")).thenReturnIO(ActivationResult.Applied)
+      when(dispatcher.dispatchOnce(id, Action.PurgeStock(AAPL, ts))).thenReturn(IO.raiseError(failure), IO.unit)
+      (for
+        service <- SecurityService.make(repo, client, dispatcher)
+        first   <- service.setActive(AAPL, false, ts, "provider-profile-empty").attempt
+        _       <- service.setActive(AAPL, false, ts, "provider-profile-empty")
+      yield first).asserting { first =>
+        first mustBe Left(failure)
+        verify(dispatcher, times(2)).dispatchOnce(id, Action.PurgeStock(AAPL, ts))
+        succeed
       }
     }
 
-    "recordCompanyProfileUpdate" should {
-      "update the owning repository for every ticker in the event" in {
-        val (repo, client, dispatcher) = mocks
-        val tickers                    = NonEmptyList.of(AAPL, MSFT)
-        when(repo.updateCompanyProfileLastUpdated(tickers.toList)).thenReturnUnit
-        (for {
-          service <- SecurityService.make(repo, client, dispatcher)
-          _       <- service.recordCompanyProfileUpdate(tickers)
-        } yield ()).asserting { _ =>
-          verify(repo).updateCompanyProfileLastUpdated(tickers.toList)
-          verifyNoInteractions(client, dispatcher)
-          succeed
-        }
+    "refetch the profile after an accepted activation" in {
+      val (repo, client, dispatcher) = mocks
+      val action                     = Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL))
+      val id                         = JobId(s"reactivate-AAPL-$ts")
+      when(repo.setActive(AAPL, true, ts, "user-excluded")).thenReturnIO(ActivationResult.Applied)
+      when(dispatcher.dispatchOnce(id, action)).thenReturnUnit
+      SecurityService.make(repo, client, dispatcher).flatMap(_.setActive(AAPL, true, ts)).asserting { _ =>
+        verify(dispatcher).dispatchOnce(id, action)
+        succeed
       }
     }
 
-    "setActive" should {
-      "deactivate the security and pass the original request time to its profile" in {
-        val (repo, client, dispatcher) = mocks
-        when(repo.setActive(AAPL, false, ts)).thenReturnIO(true)
-        when(dispatcher.dispatch(Action.SetCompanyProfileActive(AAPL, false, ts))).thenReturnUnit
-        (for
-          service <- SecurityService.make(repo, client, dispatcher)
-          _       <- service.setActive(AAPL, false, ts)
-        yield ()).asserting { _ =>
-          verify(repo).setActive(AAPL, false, ts)
-          verify(dispatcher).dispatch(Action.SetCompanyProfileActive(AAPL, false, ts))
-          verifyNoMoreInteractions(repo, dispatcher)
-          verifyNoInteractions(client)
+    "reject deactivation of the shared benchmark before any write" in {
+      val (repo, client, dispatcher) = mocks
+      SecurityService.make(repo, client, dispatcher).flatMap(_.setActive(InvestmentEvaluator.Benchmark, false, ts)).attempt.asserting {
+        result =>
+          result.left.toOption.get mustBe a[AppError.FailedValidation]
+          verifyNoInteractions(repo, client, dispatcher)
           succeed
-        }
       }
+    }
 
-      "activate a listed security and dispatch profile activation" in {
+    List(ActivationResult.Stale, ActivationResult.Delisted, ActivationResult.Missing).foreach { outcome =>
+      s"avoid follow-up work for $outcome" in {
         val (repo, client, dispatcher) = mocks
-        when(repo.setActive(AAPL, true, ts)).thenReturnIO(true)
-        when(dispatcher.dispatch(Action.SetCompanyProfileActive(AAPL, true, ts))).thenReturnUnit
-        (for {
-          service <- SecurityService.make(repo, client, dispatcher)
-          _       <- service.setActive(AAPL, true, ts)
-        } yield ()).asserting { _ =>
-          verify(repo).setActive(AAPL, true, ts)
-          verify(dispatcher).dispatch(Action.SetCompanyProfileActive(AAPL, true, ts))
-          verifyNoMoreInteractions(repo, dispatcher)
-          verifyNoInteractions(client)
-          succeed
-        }
-      }
-
-      "ignore a stale activation event without dispatching a profile update" in {
-        val (repo, client, dispatcher) = mocks
-        when(repo.setActive(AAPL, false, ts)).thenReturnIO(false)
-        SecurityService.make(repo, client, dispatcher).flatMap(_.setActive(AAPL, false, ts)).asserting { _ =>
-          verifyNoInteractions(client, dispatcher)
-          succeed
-        }
-      }
-
-      "propagate a rejected repository update without dispatching profile activation" in {
-        val (repo, client, dispatcher) = mocks
-        val error                      = AppError.FailedValidation("Cannot activate delisted security AAPL")
-        when(repo.setActive(AAPL, true, ts)).thenRaiseError(error)
-        (for {
-          service <- SecurityService.make(repo, client, dispatcher)
-          result  <- service.setActive(AAPL, true, ts).attempt
-        } yield result).asserting { result =>
-          result mustBe Left(error)
-          verify(repo).setActive(AAPL, true, ts)
-          verifyNoMoreInteractions(repo)
+        when(repo.setActive(AAPL, true, ts, "user-excluded")).thenReturnIO(outcome)
+        SecurityService.make(repo, client, dispatcher).flatMap(_.setActive(AAPL, true, ts)).attempt.asserting { result =>
+          result.isRight mustBe (outcome == ActivationResult.Stale)
           verifyNoInteractions(client, dispatcher)
           succeed
         }
@@ -157,10 +72,88 @@ class SecurityServiceSpec extends IOWordSpec {
     }
   }
 
-  def mocks: (SecurityRepository[IO], MarketDataClient[IO], ActionDispatcher[IO]) =
-    val dispatcher = mock[ActionDispatcher[IO]]
-    when(dispatcher.dispatch(any[Action])).thenReturnUnit
-    val repository = mock[SecurityRepository[IO]]
-    when(repository.findTickersBy(any[SecurityFilter], any[Option[Int]])).thenReturnIO(Nil)
-    (repository, mock[MarketDataClient[IO]], dispatcher)
+  "Listing reconciliation" should {
+    "purge the active tickers delisted by a complete listing" in {
+      val (repo, client, dispatcher) = mocks
+      when(client.getTradedSecurities(Exchange.NASDAQ)).thenStream(MSFTSecurity)
+      when(repo.countListed(Exchange.NASDAQ)).thenReturnIO(2L)
+      when(repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))).thenReturnIO(List(AAPL))
+      when(repo.pendingPurges).thenReturn(IO.pure(Nil), IO.pure(List(SecurityRepository.PendingPurge(AAPL, ts))))
+      when(dispatcher.dispatchOnce(JobId(s"purge-AAPL-$ts"), Action.PurgeStock(AAPL, ts))).thenReturnUnit
+      SecurityService
+        .make(repo, client, dispatcher, SecurityConfig(0.5))
+        .flatMap(_.fetchLatest(NonEmptyList.one(Exchange.NASDAQ)))
+        .asserting { _ =>
+          verify(dispatcher).dispatchOnce(JobId(s"purge-AAPL-$ts"), Action.PurgeStock(AAPL, ts))
+          succeed
+        }
+    }
+
+    List("dispatch", "acknowledgement").foreach { failurePoint =>
+      s"replay the saved purge request after a failed $failurePoint without relying on newly delisted tickers" in {
+        val (repo, client, dispatcher) = mocks
+        val pending                    = List(SecurityRepository.PendingPurge(AAPL, ts))
+        val id                         = JobId(s"purge-AAPL-$ts")
+        val error                      = new java.io.IOException("temporary write failure")
+        when(client.getTradedSecurities(Exchange.NASDAQ)).thenStream(MSFTSecurity)
+        when(repo.countListed(Exchange.NASDAQ)).thenReturnIO(1L)
+        when(repo.reconcile(Exchange.NASDAQ, List(MSFTSecurity))).thenReturn(IO.pure(List(AAPL)), IO.pure(Nil))
+        when(repo.pendingPurges).thenReturn(IO.pure(Nil), IO.pure(pending), IO.pure(pending), IO.pure(Nil))
+        when(dispatcher.dispatchOnce(id, Action.PurgeStock(AAPL, ts)))
+          .thenReturn(if failurePoint == "dispatch" then IO.raiseError(error) else IO.unit, IO.unit)
+        if failurePoint == "acknowledgement" then
+          val _ = when(repo.acknowledgePurge(AAPL, ts)).thenReturn(IO.raiseError(error), IO.unit)
+        (for
+          service <- SecurityService.make(repo, client, dispatcher)
+          first   <- service.fetchLatest(NonEmptyList.one(Exchange.NASDAQ)).attempt
+          _       <- service.fetchLatest(NonEmptyList.one(Exchange.NASDAQ))
+        yield first).asserting { first =>
+          first mustBe Left(error)
+          verify(dispatcher, times(2)).dispatchOnce(id, Action.PurgeStock(AAPL, ts))
+          verify(repo, times(if failurePoint == "dispatch" then 1 else 2)).acknowledgePurge(AAPL, ts)
+          succeed
+        }
+      }
+    }
+
+    "refuse a listing that shrinks beyond the configured fraction" in {
+      val (repo, client, dispatcher) = mocks
+      when(client.getTradedSecurities(Exchange.NASDAQ)).thenStream(MSFTSecurity)
+      when(repo.countListed(Exchange.NASDAQ)).thenReturnIO(2L)
+      SecurityService
+        .make(repo, client, dispatcher, SecurityConfig(0.2))
+        .flatMap(_.fetchLatest(NonEmptyList.one(Exchange.NASDAQ)))
+        .attempt
+        .asserting { result =>
+          result.isLeft mustBe true
+          verify(repo, never).reconcile(any[Exchange], anyList)
+          verifyNoInteractions(dispatcher)
+          succeed
+        }
+    }
+
+    List("empty", "truncated").foreach { response =>
+      s"leave state unchanged for an $response provider response" in {
+        val (repo, client, dispatcher) = mocks
+        val stream                     =
+          if response == "empty" then Stream.empty
+          else Stream.emit(AAPLSecurity) ++ Stream.raiseError[IO](new java.io.IOException("truncated"))
+        when(client.getTradedSecurities(Exchange.NASDAQ)).thenReturn(stream)
+        SecurityService.make(repo, client, dispatcher).flatMap(_.fetchLatest(NonEmptyList.one(Exchange.NASDAQ))).attempt.asserting {
+          result =>
+            result.isLeft mustBe true
+            verify(repo, never).reconcile(any[Exchange], anyList)
+            verifyNoInteractions(dispatcher)
+            succeed
+        }
+      }
+    }
+  }
+
+  private def mocks = {
+    val repo = mock[SecurityRepository[IO]]
+    when(repo.pendingPurges).thenReturnIO(Nil)
+    when(repo.acknowledgePurge(any[stockschecker.domain.Ticker], any[java.time.Instant])).thenReturnUnit
+    (repo, mock[MarketDataClient[IO]], mock[ActionDispatcher[IO]])
+  }
 }

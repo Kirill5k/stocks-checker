@@ -13,6 +13,7 @@ import stockschecker.repositories.entities.PriceHistoryEntity
 import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
 
 trait PriceHistoryRepository[F[_]]:
+  def delete(ticker: Ticker): F[Unit]
   def save(snapshot: PriceHistorySnapshot): F[Unit]
   def latest(ticker: Ticker, adjustment: PriceAdjustment): F[Option[PriceHistorySnapshot]]
   def latestCovering(ticker: Ticker, adjustment: PriceAdjustment, range: DateRange): F[Option[PriceHistorySnapshot]]
@@ -24,6 +25,9 @@ final private class LivePriceHistoryRepository[F[_]: Concurrent](collection: Mon
   private def key(ticker: Ticker, adjustment: PriceAdjustment): String = s"${ticker.value}:${adjustment.value}"
 
   // Replace a complete vintage atomically; never merge corporate-action vintages.
+  override def delete(ticker: Ticker): F[Unit] =
+    collection.deleteMany(Filter.in("_id", PriceAdjustment.values.toList.map(a => key(ticker, a)))).void
+
   override def save(snapshot: PriceHistorySnapshot): F[Unit] =
     val newer = Filter.idEq(key(snapshot.ticker, snapshot.adjustment)) &&
       Filter.lt(Field.FetchedAt, snapshot.fetchedAt) && Filter.ne(Field.SnapshotId, snapshot.id)

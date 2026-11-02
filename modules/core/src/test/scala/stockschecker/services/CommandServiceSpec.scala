@@ -72,9 +72,9 @@ class CommandServiceSpec extends IOWordSpec {
         Action.RecordPriceAnalyticsUpdate(NonEmptyList.one(AAPL)),
         Action.RecordFinancialMetricsUpdate(NonEmptyList.one(AAPL)),
         Action.SetSecurityActive(AAPL, true, java.time.Instant.EPOCH),
-        Action.SetCompanyProfileActive(AAPL, true, java.time.Instant.EPOCH),
+        Action.DeleteCompanyProfile(AAPL),
         Action.SetSecurityActive(AAPL, false, java.time.Instant.EPOCH),
-        Action.SetCompanyProfileActive(AAPL, false, java.time.Instant.EPOCH),
+        Action.PurgeStock(AAPL, java.time.Instant.EPOCH),
         Action.RefreshEvaluationPrices(AAPL, java.time.LocalDate.parse("2026-02-01")),
         Action.Sequence(
           NonEmptyList.of(

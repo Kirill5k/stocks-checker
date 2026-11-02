@@ -13,7 +13,9 @@ import stockschecker.domain.{Job, JobCommand, JobId, JobPlan}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.JobRepository
 
+import java.time.Instant
 import java.util.concurrent.ThreadLocalRandom
+import scala.concurrent.duration.*
 
 trait ActionExecutor[F[_]]:
   def run: Stream[F, Unit]
@@ -46,31 +48,60 @@ final private class LiveActionExecutor[F[_]](
       .flatMap(jobs.claim(_, Lease))
       .flatMap {
         case None      => F.sleep(IdlePollInterval).as(Option.empty[Unit])
-        case Some(job) => F.race(process(job), heartbeat(job)).as(Some(()))
+        case Some(job) =>
+          clock.now
+            .flatMap(now => F.race(process(job), heartbeat(job, job.leaseUntil.getOrElse(now.plusMillis(Lease.toMillis)))))
+            .as(Some(()))
       }
       .handleErrorWith(error => logger.error(s"Job worker failed: ${error.getMessage}") >> F.sleep(WorkerRecoveryDelay).as(None))
   }.unNone
 
-  private def heartbeat(job: Job): F[Unit] =
-    F.sleep(HeartbeatInterval) >> clock.now.flatMap(jobs.renew(job, _, Lease)).flatMap {
-      case true  => heartbeat(job)
-      case false => F.unit // Losing the lease cancels the competing execution fiber.
+  private def heartbeat(job: Job, leaseUntil: Instant, delay: FiniteDuration = HeartbeatInterval): F[Unit] =
+    clock.now.flatMap { before =>
+      val remaining = java.time.Duration.between(before, leaseUntil).toMillis.millis
+      if remaining <= Duration.Zero then F.unit
+      else
+        F.sleep(delay.min(remaining)) >> clock.now.flatMap { now =>
+          if !now.isBefore(leaseUntil) then F.unit
+          else
+            F.timeoutTo(
+              jobs.renew(job, now, Lease).attempt,
+              java.time.Duration.between(now, leaseUntil).toMillis.millis,
+              F.pure(Right(false))
+            ).flatMap {
+              case Right(true)  => heartbeat(job, now.plusMillis(Lease.toMillis))
+              case Right(false) => F.unit // Losing the lease cancels the competing execution fiber.
+              case Left(error)  =>
+                logger.error(error)(s"Heartbeat renewal failed for job ${job.id}; retrying while the lease is valid") >>
+                  heartbeat(job, leaseUntil, WorkerRecoveryDelay)
+            }
+        }
     }
 
+  // Completion is a separate durable write: retrying it must never invoke the action again.
+  // The heartbeat continues to fence this writer, and lease loss cancels both fibers.
+  private def finish(job: Job, state: stockschecker.domain.JobState, error: Option[String] = None): F[Unit] =
+    jobs
+      .finish(job, state, error)
+      .handleErrorWith { failure =>
+        logger.error(failure)(s"Completion write failed for job ${job.id}; retrying the write") >>
+          F.sleep(WorkerRecoveryDelay) >> finish(job, state, error)
+      }
+
   private def process(job: Job): F[Unit] = {
-    val execute = for {
+    val execute = for
       current <- job.command.fold(F.pure(true))(isCurrent)
       _       <-
-        if (!current) jobs.finish(job, Job.Cancelled, Some("Command changed or deactivated"))
+        if (!current) finish(job, Job.Cancelled, Some("Command changed or deactivated"))
         else checkDependencies(job)
-    } yield ()
+    yield ()
     execute.handleErrorWith(handleFailure(job, _))
   }
 
   private def checkDependencies(job: Job): F[Unit] =
     jobs.summarize(job.dependsOn).flatMap { summary =>
       JobExecutionPolicy.dependencies(job.dependsOn.size, summary) match
-        case JobExecutionPolicy.Progress.Finish(state, error) => jobs.finish(job, state, error)
+        case JobExecutionPolicy.Progress.Finish(state, error) => finish(job, state, error)
         case JobExecutionPolicy.Progress.Wait                 =>
           clock.now.flatMap(now => jobs.defer(job, now.plusSeconds(pollDelaySeconds(job)), None, countRetry = false))
         case JobExecutionPolicy.Progress.Ready =>
@@ -81,14 +112,14 @@ final private class LiveActionExecutor[F[_]](
   private def reconcileChildren(job: Job): F[Unit] =
     jobs.summarize(job.children).flatMap { summary =>
       JobExecutionPolicy.children(job.children.size, summary) match
-        case JobExecutionPolicy.Progress.Finish(state, error) => jobs.finish(job, state, error)
+        case JobExecutionPolicy.Progress.Finish(state, error) => finish(job, state, error)
         case JobExecutionPolicy.Progress.Wait                 =>
           clock.now.flatMap(now => jobs.waitForChildren(job, job.children, now.plusSeconds(pollDelaySeconds(job))))
         case JobExecutionPolicy.Progress.Ready => F.unit
     }
 
   private def expand(job: Job, actions: List[Action], sequential: Boolean): F[Unit] =
-    if (actions.isEmpty) jobs.finish(job, Job.Succeeded)
+    if (actions.isEmpty) finish(job, Job.Succeeded)
     else
       clock.now.flatMap { now =>
         val children = actions.zipWithIndex.map { case (action, index) =>
@@ -106,9 +137,8 @@ final private class LiveActionExecutor[F[_]](
 
   private def execute(job: Job): F[Unit] =
     handler.execute(job.action).flatMap {
-      case ActionResult.Completed         => jobs.finish(job, Job.Succeeded)
-      case ActionResult.Expand(plan)      => expand(job, plan.actions, plan.sequential)
-      case ActionResult.Cancelled(reason) => jobs.finish(job, Job.Cancelled, Some(reason))
+      case ActionResult.Completed    => finish(job, Job.Succeeded)
+      case ActionResult.Expand(plan) => expand(job, plan.actions, plan.sequential)
     }
 
   private def handleFailure(job: Job, error: Throwable): F[Unit] =
@@ -119,7 +149,7 @@ final private class LiveActionExecutor[F[_]](
           now    <- clock.now
           jitter <- F.delay(ThreadLocalRandom.current().nextLong(MaximumProviderDeferJitterMillis + 1))
           until = JobExecutionPolicy.providerDeferUntil(job, now, retryAt, jitter)
-          _ <- jobs.defer(job, until, Some(summary), countRetry = false)
+          _ <- jobs.defer(job, until, Some(summary), countRetry = false, countDeferral = true)
         yield ()
       case JobExecutionPolicy.Failure.Pause(provider) =>
         logger.warn(s"Job ${job.id} paused: $summary") >> jobs.pause(job, provider, summary)
@@ -141,7 +171,7 @@ final private class LiveActionExecutor[F[_]](
           case _: AppError.DataUnavailable | _: AppError.CompanyProfileNotFound =>
             logger.info(message)
           case _ => logger.warn(message)
-        log >> jobs.finish(job, Job.Failed, Some(summary))
+        log >> finish(job, Job.Failed, Some(summary))
     }
 }
 

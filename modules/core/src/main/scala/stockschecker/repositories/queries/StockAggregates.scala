@@ -1,4 +1,4 @@
-package stockschecker.repositories
+package stockschecker.repositories.queries
 
 import cats.syntax.apply.*
 import mongo4cats.bson.Document
@@ -6,6 +6,7 @@ import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.operations.{Aggregate, Filter, Sort}
 import stockschecker.domain.{StockFilters, StockSortField}
+import stockschecker.repositories.{CompanyProfileRepository, FinancialMetricsRepository, PriceAnalyticsRepository, SecurityRepository}
 
 /** Shared stock joins; each requesting repository executes the aggregate against securities. */
 private[repositories] object StockAggregates extends MongoJsonCodecs:
@@ -28,7 +29,7 @@ private[repositories] object StockAggregates extends MongoJsonCodecs:
       .matchBy(securityFilter && StockVisibility.activeSecurity)
       .replaceWith(Document(Field.Security := "$$ROOT"))
       .lookup(CompanyProfileRepository.CollectionName, s"${Field.Security}.${Field.Id}", Field.Id, Field.Profile)
-      .matchBy(filters.toProfileFilter && StockVisibility.activeProfile(s"${Field.Profile}.0"))
+      .matchBy(filters.toProfileFilter && StockVisibility.profileExists(s"${Field.Profile}.0"))
       .lookup(PriceAnalyticsRepository.CollectionName, s"${Field.Security}.${Field.Id}", Field.Id, Field.PriceAnalytics)
       .matchBy(filters.toPriceAnalyticsFilter)
       .lookup(FinancialMetricsRepository.CollectionName, s"${Field.Security}.${Field.Id}", Field.Id, Field.FinancialMetrics)
@@ -38,8 +39,7 @@ private[repositories] object StockAggregates extends MongoJsonCodecs:
   extension (sf: StockFilters)
     def toSecurityFilter: Filter = List(
       sf.exchange.map(e => Filter.eq(SecurityRepository.Field.Exchange, e)),
-      sf.kind.map(k => Filter.eq(SecurityRepository.Field.Kind, k)),
-      sf.isActive.map(a => Filter.eq(SecurityRepository.Field.IsActive, a))
+      sf.kind.map(k => Filter.eq(SecurityRepository.Field.Kind, k))
     ).flatten.foldLeft(Filter.empty)(_ && _)
 
     private def toProfileFilter: Filter = List(

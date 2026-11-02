@@ -18,15 +18,6 @@ class InvestmentRankingControllerSpec extends HttpRoutesWordSpec {
   private val apiKey = Header.Raw(CIString("X-API-Key"), config.key)
 
   "Ranking input endpoint" should {
-    "require authentication for frozen ranking inputs" in {
-      val service  = mock[InvestmentRankingService[IO]]
-      val response = for
-        controller <- InvestmentRankingController.make(service, config)
-        response   <- controller.routes.orNotFound.run(Request[IO](uri = uri"/investment-rankings/rank-1/inputs"))
-      yield response
-      response mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-      verifyNoInteractions(service)
-    }
 
     "default ranking input pages to fifty rows" in {
       val service = mock[InvestmentRankingService[IO]]

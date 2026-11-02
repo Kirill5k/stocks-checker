@@ -1,7 +1,11 @@
 package stockschecker.repositories
 
 import cats.effect.IO
-import stockschecker.domain.FinancialMetrics
+import mongo4cats.database.MongoDatabase
+import mongo4cats.circe.*
+import mongo4cats.operations.Filter
+import stockschecker.domain.{FinancialMetrics, Ticker}
+import stockschecker.repositories.entities.FinancialMetricsEntity
 import stockschecker.fixtures.*
 
 class FinancialMetricsRepositorySpec extends RepositorySpec {
@@ -17,8 +21,8 @@ class FinancialMetricsRepositorySpec extends RepositorySpec {
             _        <- repo.save(List(AAPLFinancialMetrics, MSFTFinancialMetrics))
             _        <- repo.delete(AAPL)
             _        <- repo.delete(AAPL)
-            removed  <- repo.find(AAPL)
-            retained <- repo.find(MSFT)
+            removed  <- read(db, AAPL)
+            retained <- read(db, MSFT)
           yield
             removed mustBe None
             retained mustBe Some(MSFTFinancialMetrics)
@@ -30,7 +34,7 @@ class FinancialMetricsRepositorySpec extends RepositorySpec {
           for
             repo <- FinancialMetricsRepository.make[IO](db)
             _    <- repo.save(List(AAPLFinancialMetrics))
-            res  <- repo.find(AAPL)
+            res  <- read(db, AAPL)
           yield res mustBe Some(AAPLFinancialMetrics)
         }
 
@@ -43,31 +47,15 @@ class FinancialMetricsRepositorySpec extends RepositorySpec {
             repo <- FinancialMetricsRepository.make[IO](db)
             _    <- repo.save(List(AAPLFinancialMetrics))
             _    <- repo.save(List(updatedMetrics))
-            res  <- repo.find(AAPL)
+            res  <- read(db, AAPL)
           yield res.map(_.peRatioTtm) mustBe Some(Some(BigDecimal(30.50)))
         }
     }
 
-    "find" should {
-      "return None when metrics do not exist for ticker" in
-        withEmbeddedMongoDatabase { db =>
-          for
-            repo <- FinancialMetricsRepository.make[IO](db)
-            res  <- repo.find(MSFT)
-          yield res mustBe None
-        }
-
-      "find metrics by ticker" in
-        withEmbeddedMongoDatabase { db =>
-          for
-            repo <- FinancialMetricsRepository.make[IO](db)
-            _    <- repo.save(List(AAPLFinancialMetrics))
-            res  <- repo.find(AAPL)
-          yield
-            res mustBe defined
-            res.map(_.ticker) mustBe Some(AAPL)
-            res.map(_.peRatioTtm) mustBe Some(Some(BigDecimal(34.11)))
-        }
-    }
   }
+
+  private def read(db: MongoDatabase[IO], ticker: Ticker): IO[Option[FinancialMetrics]] =
+    db.getCollectionWithCodec[FinancialMetricsEntity](FinancialMetricsRepository.CollectionName)
+      .flatMap(_.find(Filter.idEq(ticker.value)).first)
+      .map(_.map(_.toDomain))
 }

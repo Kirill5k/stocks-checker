@@ -6,6 +6,7 @@ import kirill5k.common.cats.test.IOWordSpec
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.domain.*
+import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.*
@@ -49,7 +50,7 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
     InvestmentCandidate(
       Stock(
         AAPLSecurity.copy(ticker = ticker),
-        Some(AAPLCompanyProfile.copy(ticker = ticker, industry = "Technology", sector = Some(Sector.Technology))),
+        AAPLCompanyProfile.copy(ticker = ticker, industry = "Technology", sector = Some(Sector.Technology)),
         Some(
           AAPLPriceAnalytics.copy(
             ticker = ticker,
@@ -72,7 +73,9 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
     def latest: IO[Option[InvestmentRanking]]                                             = published.get.map(_.headOption.map(_._1))
     def save(ranking: InvestmentRanking, entries: List[InvestmentRankingEntry]): IO[Unit] =
       published.update((ranking -> entries) :: _)
-    def prune(before: Instant): IO[Unit] = IO.unit
+    def delete(ticker: Ticker): IO[Unit]                                 = IO.unit
+    def pin(id: InvestmentRankingId): IO[Unit]                           = IO.unit
+    def release(id: InvestmentRankingId, requestedAt: Instant): IO[Unit] = IO.unit
 
   private def memoryScreens(
       state: Ref[IO, List[InvestmentScreen]],
@@ -86,8 +89,8 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
         val holdings = screen.cohorts.flatMap(_.tickers).toSet
         entries.filter(entry => includeExclusions || holdings(entry.scorecard.ticker))
       }
-    def visibleRankingTickers(id: InvestmentRankingId, tickers: Option[Set[Ticker]]): IO[Set[Ticker]] =
-      rankingEntries(id).map(_.iterator.map(_.scorecard.ticker).filter(ticker => tickers.forall(_(ticker))).toSet)
+    def rankingIds(ticker: Ticker): IO[List[InvestmentRankingId]]                          = IO.pure(Nil)
+    def delete(ticker: Ticker): IO[Unit]                                                   = IO.unit
     def save(screen: InvestmentScreen): IO[Unit]                                           = state.update(_ :+ screen)
     def get(id: InvestmentScreenId): IO[Option[InvestmentScreen]]                          = state.get.map(_.find(_.id == id))
     def list(limit: Int): IO[List[InvestmentScreenSummary]]                                = state.get.map(_.take(limit).map(_.summary))
@@ -99,13 +102,15 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
 
   "InvestmentRankingService" should {
     "rebuild after a same-day refill, create the monthly screen and preserve its pinned ranking on later refreshes" in {
-      val complete = (1 to 20).toList.map(completeCandidate)
+      val complete   = (1 to 20).toList.map(completeCandidate)
+      val dispatcher = mock[ActionDispatcher[IO]]
+      when(dispatcher.dispatchOnce(any[JobId], any[Action])).thenReturnUnit
       (for
         candidates  <- Ref.of[IO, List[InvestmentCandidate]](complete.map(_.copy(financialSnapshot = None)))
         published   <- Ref.of[IO, Published](Nil)
         saved       <- Ref.of[IO, List[InvestmentScreen]](Nil)
-        rankings    <- InvestmentRankingService.make(memoryRankings(candidates, published))
-        screens     <- InvestmentScreenService.make(memoryScreens(saved, published))
+        rankings    <- InvestmentRankingService.make(memoryRankings(candidates, published), recipe)
+        screens     <- InvestmentScreenService.make(memoryScreens(saved, published), dispatcher, recipe)
         _           <- rankings.refresh
         first       <- published.get.map(_.head._1)
         skipped     <- screens.createMonthlyScreen
@@ -136,7 +141,7 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
       }
     }
 
-    "score the complete universe and compact its inputs before publishing and pruning" in {
+    "score the complete universe and compact its inputs before publishing" in {
       val rankings    = mock[InvestmentRankingRepository[IO]]
       val observation = FinancialObservation(FinancialMetric.FreeCashFlowMargin, date.minusYears(1), BigDecimal("0.2"))
       val financial   = FinancialSnapshot(
@@ -158,14 +163,12 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
       when(rankings.findCandidates)
         .thenReturnIO(List(InvestmentCandidate(AAPLStock, None), InvestmentCandidate(MSFTStock, Some(financial))))
       when(rankings.save(any[InvestmentRanking], any[List[InvestmentRankingEntry]])).thenReturnUnit
-      when(rankings.prune(any[Instant])).thenReturnUnit
-      InvestmentRankingService.make(rankings).flatMap(_.refresh).asserting { _ =>
+      InvestmentRankingService.make(rankings, recipe).flatMap(_.refresh).asserting { _ =>
         val published = org.mockito.ArgumentCaptor.forClass(classOf[InvestmentRanking])
         val captured  = org.mockito.ArgumentCaptor.forClass(classOf[List[InvestmentRankingEntry]])
         val ordered   = org.mockito.Mockito.inOrder(rankings)
         ordered.verify(rankings).findCandidates
         ordered.verify(rankings).save(published.capture(), captured.capture())
-        ordered.verify(rankings).prune(now.minusSeconds(3L * 86400))
         verifyNoMoreInteractions(rankings)
         val refreshed = published.getValue
         val saved     = captured.getValue
@@ -175,9 +178,9 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
         saved.map(_.input) mustBe List(AAPLStock, MSFTStock).map(stock =>
           InvestmentScreenInput(
             stock.security.exchange,
-            stock.profile.map(_.country),
-            stock.profile.map(_.industry),
-            stock.profile.flatMap(_.sector),
+            Some(stock.profile.country),
+            Some(InvestmentScreenInput.industryKey(stock.profile.industry)),
+            stock.profile.sector,
             stock.priceAnalytics.map(_.scores.overallScore),
             None
           )
@@ -192,14 +195,13 @@ class InvestmentRankingServiceSpec extends IOWordSpec:
       }
     }
 
-    "skip pruning when saving the ranking fails" in {
+    "propagate a failed publication" in {
       val rankings = mock[InvestmentRankingRepository[IO]]
       val failure  = new RuntimeException("Input batch failed")
       when(rankings.findCandidates).thenReturnIO(List(InvestmentCandidate(AAPLStock, None)))
       when(rankings.save(any[InvestmentRanking], any[List[InvestmentRankingEntry]])).thenReturn(IO.raiseError(failure))
-      InvestmentRankingService.make(rankings).flatMap(_.refresh).attempt.asserting { result =>
+      InvestmentRankingService.make(rankings, recipe).flatMap(_.refresh).attempt.asserting { result =>
         result mustBe Left(failure)
-        verify(rankings, never).prune(any[Instant])
         succeed
       }
     }

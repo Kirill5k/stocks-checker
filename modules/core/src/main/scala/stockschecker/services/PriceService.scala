@@ -17,8 +17,7 @@ import java.time.{Duration, Instant, LocalDate, Period, ZoneOffset}
 
 trait PriceService[F[_]]:
   def delete(ticker: Ticker): F[Unit]
-  def getAllPriceAnalytics(limit: Option[Int]): F[List[PriceAnalytics]]
-  def findPriceAnalyticsBy(filter: PriceAnalyticsFilter, limit: Option[Int]): F[List[PriceAnalytics]]
+  def findPriceAnalyticsBy(filter: Option[PriceAnalyticsFilter], limit: Option[Int]): F[List[PriceAnalytics]]
   def findPriceAnalytics(ticker: Ticker, fetch: Boolean): F[PriceAnalytics]
   def refreshHistory(ticker: Ticker, through: LocalDate): F[Unit]
 
@@ -30,7 +29,9 @@ final private class LivePriceService[F[_]](
 )(using F: Sync[F], C: Clock[F])
     extends PriceService[F] {
 
-  override def delete(ticker: Ticker): F[Unit] = repository.delete(ticker)
+  override def delete(ticker: Ticker): F[Unit] =
+    repository.delete(ticker) >>
+      history.delete(ticker)
 
   override def findPriceAnalytics(ticker: Ticker, fetch: Boolean): F[PriceAnalytics] =
     if (fetch) fetchPriceAnalytics(ticker).flatTap(analytics => save(NonEmptyList.one(analytics)))
@@ -98,11 +99,8 @@ final private class LivePriceService[F[_]](
     repository.save(analyticsList.toList) >>
       dispatcher.dispatch(Action.RecordPriceAnalyticsUpdate(analyticsList.map(_.ticker)))
 
-  override def findPriceAnalyticsBy(filter: PriceAnalyticsFilter, limit: Option[Int]): F[List[PriceAnalytics]] =
-    repository.findBy(filter, limit)
-
-  override def getAllPriceAnalytics(limit: Option[Int]): F[List[PriceAnalytics]] =
-    repository.findAll(limit)
+  override def findPriceAnalyticsBy(filter: Option[PriceAnalyticsFilter], limit: Option[Int]): F[List[PriceAnalytics]] =
+    filter.fold(repository.findAll(limit))(repository.findBy(_, limit))
 }
 
 object PriceService:

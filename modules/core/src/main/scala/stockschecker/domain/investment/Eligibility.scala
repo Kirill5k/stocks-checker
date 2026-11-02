@@ -37,20 +37,17 @@ object Eligibility:
       case _ => None
 
   def stockReasons(stock: Stock, asOf: Instant, recipe: InvestmentRecipe): List[String] =
-    val sector     = stock.profile.flatMap(_.sector)
+    val sector     = stock.profile.sector
     val today      = asOf.atZone(ZoneOffset.UTC).toLocalDate
     val validPrice = stock.priceAnalytics.exists { analytics =>
       val p = analytics.performanceSummary
       p.latestPrice > 0 && !p.latestPriceDate.isAfter(today) && ChronoUnit.DAYS.between(p.latestPriceDate, today) <= recipe.maxPriceAgeDays
     }
     List(
-      Option.when(!stock.security.isActive)(InvestmentReasons.InactiveSecurity),
-      Option.when(stock.security.listingStatus != ListingStatus.Listed)(InvestmentReasons.SecurityNotListed),
-      stock.security.exclusionReason.map(reason => InvestmentReasons.securityExcluded(reason)),
       Option.when(!validPrice)(InvestmentReasons.MissingInvalidOrStalePrice),
       Option.when(stock.security.kind != SecurityKind.Stock)(InvestmentReasons.SpecialistSecurityModelRequired),
-      Option.when(!stock.profile.exists(_.country.equalsIgnoreCase("US")))(InvestmentReasons.OutsideUsCompanyUniverse),
-      Option.when(!stock.profile.exists(_.currency.equalsIgnoreCase("USD")))(InvestmentReasons.UnsupportedReportingCurrency),
+      Option.when(!stock.profile.country.equalsIgnoreCase("US"))(InvestmentReasons.OutsideUsCompanyUniverse),
+      Option.when(!stock.profile.currency.equalsIgnoreCase("USD"))(InvestmentReasons.UnsupportedReportingCurrency),
       Option.when(sector.isEmpty)(InvestmentReasons.UnmappedIndustry),
       Option.when(sector.exists(Sector.requiresSpecialistModel))(InvestmentReasons.SpecialistSectorModelRequired)
     ).flatten

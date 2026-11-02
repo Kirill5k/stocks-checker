@@ -45,12 +45,13 @@ final private class LiveFinnhubClient[F[_]](
 
   private def fetchFinancialData(ticker: Ticker): F[Option[FinancialData]] = {
     val request = emptyRequest
-      .get(uri"${config.baseUri}/api/v1/stock/metric?token=${config.apiKey}&symbol=$ticker&metric=all")
+      .get(uri"${config.baseUri}/api/v1/stock/metric?symbol=$ticker&metric=all")
+      .header("X-Finnhub-Token", config.apiKey)
       .response(asJson[JsonObject])
       .readTimeout(30.seconds)
 
     backend.send(request).flatMap { response =>
-      handle(response, s"basic financials for $ticker") { body =>
+      handle(response, s"basic financials for $ticker", Some(ticker)) { body =>
         C.now.flatMap { now =>
           F.fromEither(
             FinnhubFinancialMapping
@@ -65,20 +66,27 @@ final private class LiveFinnhubClient[F[_]](
 
   private def fetchCompanyProfile(ticker: Ticker): F[Option[CompanyProfile]] = {
     val request = emptyRequest
-      .get(uri"${config.baseUri}/api/v1/stock/profile2?token=${config.apiKey}&symbol=$ticker")
+      .get(uri"${config.baseUri}/api/v1/stock/profile2?symbol=$ticker")
+      .header("X-Finnhub-Token", config.apiKey)
       .response(asJson[JsonObject])
       .readTimeout(30.seconds)
 
     backend.send(request).flatMap { response =>
-      handle(response, s"company profile for $ticker") { jsonObj =>
+      handle(response, s"company profile for $ticker", Some(ticker)) { jsonObj =>
         if jsonObj.isEmpty then F.pure(None)
         else
           F.fromEither(
             jsonObj.toJson
               .as[FinnhubClient.CompanyProfileResponse]
-              .map(profile => Some(profile.toDomain))
               .left
               .map(err => AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile for $ticker: ${err.getMessage}"))
+              .flatMap { profile =>
+                Either.cond(
+                  profile.ticker == ticker,
+                  Some(profile.toDomain(ticker)),
+                  AppError.FailedValidation(s"Finnhub profile ticker mismatch: requested=$ticker returned=${profile.ticker}")
+                )
+              }
           )
       }
     }
@@ -88,7 +96,8 @@ final private class LiveFinnhubClient[F[_]](
     val mic     = mapExchangeToFinnhubMic(exchange)
     val code    = mapExchangeToFinnhubCode(exchange)
     val request = emptyRequest
-      .get(uri"${config.baseUri}/api/v1/stock/symbol?token=${config.apiKey}&exchange=$code&mic=$mic")
+      .get(uri"${config.baseUri}/api/v1/stock/symbol?exchange=$code&mic=$mic")
+      .header("X-Finnhub-Token", config.apiKey)
       .response(asStreamUnsafe(Fs2Streams[F]))
       .readTimeout(10.minutes)
 
@@ -107,10 +116,12 @@ final private class LiveFinnhubClient[F[_]](
     }
   }
 
-  private def handle[E, A, B](response: Response[Either[E, A]], context: String)(onSuccess: A => F[B]): F[B] =
+  private def handle[E, A, B](response: Response[Either[E, A]], context: String, ticker: Option[Ticker] = None)(
+      onSuccess: A => F[B]
+  ): F[B] =
     if !response.code.isSuccess then
       ProviderErrors
-        .fromStatus[F](Provider.Finnhub, response.code.code, response.header("Retry-After"), s"Error retrieving Finnhub $context")
+        .fromStatus[F](Provider.Finnhub, response.code.code, response.header("Retry-After"), s"Error retrieving Finnhub $context", ticker)
         .flatMap(F.raiseError)
     else
       response.body match
@@ -131,18 +142,14 @@ final private class LiveFinnhubClient[F[_]](
 
 object FinnhubClient {
   final case class FinancialMetricsResponse(
-      `10DayAverageTradingVolume`: Option[BigDecimal],
       `52WeekHigh`: Option[BigDecimal],
       `52WeekLow`: Option[BigDecimal],
-      `52WeekPriceReturnDaily`: Option[BigDecimal],
-      beta: Option[BigDecimal],
       peTTM: Option[BigDecimal],
       epsTTM: Option[BigDecimal],
       roeTTM: Option[BigDecimal],
       dividendYieldIndicatedAnnual: Option[BigDecimal],
       `totalDebt/totalEquityAnnual`: Option[BigDecimal],
       netProfitMarginTTM: Option[BigDecimal],
-      cashFlowPerShareTTM: Option[BigDecimal],
       revenueGrowth5Y: Option[BigDecimal],
       epsGrowth5Y: Option[BigDecimal]
   ) derives Codec.AsObject:
@@ -162,18 +169,10 @@ object FinnhubClient {
         priceLow52Week = `52WeekLow`
       )
 
-  final case class BasicFinancialsResponse(
-      metric: JsonObject
-  ) derives Codec.AsObject
-
   final case class StockSymbol(
-      currency: String,
       description: String,
-      displaySymbol: String,
-      figi: String,
-      mic: String,
       symbol: Ticker,
-      `type`: String
+      `type`: Option[String]
   ) derives Codec.AsObject {
     def toDomain(exchange: Exchange): Security = {
       def mapTypeToSecurityKind(stockType: String): SecurityKind = stockType match
@@ -186,7 +185,7 @@ object FinnhubClient {
       Security(
         ticker = symbol,
         name = description,
-        kind = mapTypeToSecurityKind(`type`),
+        kind = mapTypeToSecurityKind(`type`.getOrElse("")),
         exchange = exchange
       )
     }
@@ -198,21 +197,21 @@ object FinnhubClient {
       country: String,
       finnhubIndustry: String,
       description: Option[String],
-      weburl: String,
-      ipo: String,
-      estimateCurrency: String,
+      weburl: Option[String],
+      ipo: Option[String],
+      currency: String,
       marketCapitalization: BigDecimal
   ) derives Codec.AsObject {
-    def toDomain: CompanyProfile =
+    def toDomain(requestedTicker: Ticker): CompanyProfile =
       CompanyProfile(
-        ticker = ticker,
+        ticker = requestedTicker,
         name = name.toUpperCase,
         country = country,
         industry = finnhubIndustry,
         description = description,
-        website = weburl,
-        ipoDate = if (ipo.trim.isEmpty) None else Try(LocalDate.parse(ipo)).toOption,
-        currency = estimateCurrency,
+        website = weburl.getOrElse(""),
+        ipoDate = ipo.flatMap(value => Try(LocalDate.parse(value)).toOption),
+        currency = currency,
         marketCap = (marketCapitalization * 1_000_000).longValue,
         sector = FinnhubSectorMapping.sectorFor(finnhubIndustry)
       )

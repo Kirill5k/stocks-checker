@@ -1,16 +1,18 @@
 package stockschecker.repositories
 
 import cats.effect.IO
-import cats.syntax.traverse.*
+import kirill5k.common.cats.Clock
+import scala.concurrent.duration.FiniteDuration
 import mongo4cats.bson.BsonValue
 import mongo4cats.bson.Document
 import mongo4cats.bson.syntax.*
 import mongo4cats.circe.MongoJsonCodecs
-import mongo4cats.operations.Filter
+import mongo4cats.operations.{Filter, Update}
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.InvestmentRepositoryFixtures.*
+import stockschecker.repositories.InvestmentRepositoryFixtures.given
 
 import java.time.LocalDate
 
@@ -19,7 +21,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
 
   "An InvestmentRankingRepository" should {
     "findCandidates" should {
-      "exclude inactive, delisted, missing-profile and inactive-profile stocks before decoding their financial snapshots" in {
+      "exclude inactive, delisted and missing-profile stocks before decoding their financial snapshots" in {
         val missing         = Ticker("MISSING")
         val inactiveProfile = Ticker("PROFILE")
         val delisted        = Ticker("DELISTED")
@@ -28,13 +30,11 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
             toDoc(AAPLSecurity),
             toDoc(MSFTSecurity.copy(isActive = false)),
             toDoc(AAPLSecurity.copy(ticker = missing)),
-            toDoc(AAPLSecurity.copy(ticker = inactiveProfile)),
             toDoc(AAPLSecurity.copy(ticker = delisted, listingStatus = ListingStatus.Delisted))
           ),
           CompanyProfileRepository.CollectionName -> List(
             toDoc(AAPLCompanyProfile),
             toDoc(MSFTCompanyProfile),
-            toDoc(AAPLCompanyProfile.copy(ticker = inactiveProfile)).add("isActive", false.toBson),
             toDoc(AAPLCompanyProfile.copy(ticker = delisted))
           ),
           FinancialHistoryRepository.CollectionName -> List(MSFT, missing, inactiveProfile, delisted).map(ticker =>
@@ -53,7 +53,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
         val msftAnalytics = AAPLPriceAnalytics.copy(ticker = MSFT)
         val aapl          = AAPLStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(basis = None)))
         val msft          = MSFTStock.copy(
-          profile = Some(MSFTCompanyProfile),
+          profile = MSFTCompanyProfile,
           priceAnalytics = Some(msftAnalytics.copy(basis = None)),
           financialMetrics = None
         )
@@ -133,7 +133,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
         yield
           saved mustBe values
           stored.foreach { row =>
-            row.keys mustBe Set("_id", "rankingId", "ordinal", "input", "scorecard", "createdAt")
+            row.keys mustBe Set("_id", "rankingId", "ordinal", "input", "scorecard", "createdAt", "expiresAt")
             row.getDocument("input").map(_.keys) mustBe Some(
               Set("exchange", "country", "industry", "sector", "priceScore", "exclusionExplanation")
             )
@@ -200,59 +200,103 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
         yield saved mustBe List(value)
       }
 
-    "prune only old rankings without a referencing screen and remove their inputs" in
-      withEmbeddedMongoDatabase { db =>
-        val before     = now.minusSeconds(3L * 86400)
-        val referenced = ranking.copy(createdAt = before.minusSeconds(1))
-        val obsolete   = ranking.copy(id = InvestmentRankingId("obsolete"), createdAt = before.minusSeconds(1))
-        val boundary   = ranking.copy(id = InvestmentRankingId("boundary"), createdAt = before)
-        for
-          repo           <- InvestmentRankingRepository.make[IO](db)
-          screens        <- InvestmentScreenRepository.make[IO](db)
-          _              <- List(referenced, obsolete, boundary).traverse(value => repo.save(value, entries))
-          _              <- screens.save(screen)
-          _              <- screens.save(screen.copy(id = InvestmentScreenId("second-reference")))
-          _              <- repo.prune(before)
-          retained       <- storedRanking(db, referenced.id)
-          retainedInputs <- storedRankingEntries(db, referenced.id)
-          removed        <- storedRanking(db, obsolete.id)
-          removedInputs  <- storedRankingEntries(db, obsolete.id)
-          atBoundary     <- storedRanking(db, boundary.id)
-          boundaryInputs <- storedRankingEntries(db, boundary.id)
-        yield
-          retained mustBe Some(referenced)
-          retainedInputs mustBe entries
-          removed mustBe None
-          removedInputs mustBe Nil
-          atBoundary mustBe Some(boundary)
-          boundaryInputs mustBe entries
-      }
+    "store expiry as BSON dates and pin both the header and its inputs" in withEmbeddedMongoDatabase { db =>
+      for
+        repo        <- InvestmentRankingRepository.make[IO](db)
+        _           <- repo.save(ranking, entries)
+        headers     <- db.getCollection(InvestmentRankingRepository.CollectionName)
+        inputs      <- db.getCollection(InvestmentRankingRepository.InputsCollectionName)
+        header      <- headers.find.first
+        input       <- inputs.find.first
+        _           <- repo.pin(ranking.id)
+        pinned      <- headers.find.first
+        pinnedInput <- inputs.find.first
+      yield
+        val expiry = now.plusSeconds(3L * 86400)
+        header.flatMap(_.get("expiresAt").flatMap(_.asInstant)) mustBe Some(expiry)
+        input.flatMap(_.get("expiresAt").flatMap(_.asInstant)) mustBe Some(expiry)
+        pinned.exists(_.keys.contains("expiresAt")) mustBe false
+        pinnedInput.exists(_.keys.contains("expiresAt")) mustBe false
+    }
 
-    "sweep only old orphan input groups while retaining published, boundary and in-flight inputs" in
-      withEmbeddedMongoDatabase { db =>
-        val before    = now.minusSeconds(3L * 86400)
-        val pinned    = ranking.copy(createdAt = before.minusSeconds(1))
-        val oldOrphan = ranking.copy(id = InvestmentRankingId("old-orphan"), createdAt = before.minusSeconds(1))
-        val boundary  = ranking.copy(id = InvestmentRankingId("boundary-orphan"), createdAt = before)
-        val inFlight  = ranking.copy(id = InvestmentRankingId("in-flight-orphan"))
-        for
-          repo       <- InvestmentRankingRepository.make[IO](db)
-          screens    <- InvestmentScreenRepository.make[IO](db)
-          _          <- List(pinned, oldOrphan, boundary, inFlight).traverse(value => repo.save(value, entries))
-          _          <- screens.save(screen)
-          headers    <- db.getCollection(InvestmentRankingRepository.CollectionName)
-          _          <- headers.deleteMany(Filter.in("_id", List(oldOrphan.id.value, boundary.id.value, inFlight.id.value)))
-          _          <- repo.prune(before)
-          published  <- storedRankingEntries(db, pinned.id)
-          removed    <- storedRankingEntries(db, oldOrphan.id)
-          atBoundary <- storedRankingEntries(db, boundary.id)
-          recent     <- storedRankingEntries(db, inFlight.id)
-        yield
-          published mustBe entries
-          removed mustBe Nil
-          atBoundary mustBe entries
-          recent mustBe entries
-      }
+    "release only unreferenced rankings and retain the original retention boundary" in withEmbeddedMongoDatabase { db =>
+      for
+        repo          <- InvestmentRankingRepository.make[IO](db)
+        screens       <- InvestmentScreenRepository.make[IO](db)
+        _             <- repo.save(ranking, entries)
+        _             <- screens.save(screen)
+        _             <- repo.pin(ranking.id)
+        _             <- repo.release(ranking.id, now)
+        headers       <- db.getCollection(InvestmentRankingRepository.CollectionName)
+        inputs        <- db.getCollection(InvestmentRankingRepository.InputsCollectionName)
+        referenced    <- headers.find.first
+        _             <- screens.delete(AAPL)
+        _             <- repo.release(ranking.id, now)
+        released      <- headers.find.first
+        releasedInput <- inputs.find.first
+      yield
+        referenced.exists(_.keys.contains("expiresAt")) mustBe false
+        released.flatMap(_.get("expiresAt").flatMap(_.asInstant)) mustBe Some(now.plusSeconds(3L * 86400))
+        releasedInput.flatMap(_.get("expiresAt").flatMap(_.asInstant)) mustBe Some(now.plusSeconds(3L * 86400))
+    }
+
+    "re-pin after a screen and concurrent pin appear between the reference check and release writes" in withEmbeddedMongoDatabase { db =>
+      for
+        screens <- InvestmentScreenRepository.make[IO](db)
+        headers <- db.getCollection(InvestmentRankingRepository.CollectionName)
+        inputs  <- db.getCollection(InvestmentRankingRepository.InputsCollectionName)
+        concurrentClock = new Clock[IO]:
+          def now: IO[java.time.Instant] =
+            screens.save(screen) >>
+              inputs.updateMany(Filter.eq("rankingId", ranking.id.value), Update.unset("expiresAt")).void >>
+              headers.updateOne(Filter.idEq(ranking.id.value), Update.unset("expiresAt")).as(InvestmentRepositoryFixtures.now)
+          def durationBetweenNowAnd(other: java.time.Instant): IO[FiniteDuration] = IO.pure(scala.concurrent.duration.Duration.Zero)
+          def sleep(duration: FiniteDuration): IO[Unit]                           = IO.unit
+        repo   <- InvestmentRankingRepository.make[IO](db)(using summon[cats.MonadThrow[IO]], concurrentClock)
+        _      <- repo.save(ranking, entries)
+        _      <- repo.release(ranking.id, now)
+        header <- headers.find.first
+        input  <- inputs.find.first
+      yield
+        header.exists(_.keys.contains("expiresAt")) mustBe false
+        input.exists(_.keys.contains("expiresAt")) mustBe false
+    }
+
+    "skip expired ranking headers in latest and paginated input reads before TTL removes them" in withEmbeddedMongoDatabase { db =>
+      for
+        repo         <- InvestmentRankingRepository.make[IO](db)
+        screens      <- InvestmentScreenRepository.make[IO](db)
+        _            <- repo.save(ranking, entries)
+        headers      <- db.getCollection(InvestmentRankingRepository.CollectionName)
+        _            <- headers.updateOne(Filter.idEq(ranking.id.value), Update.set("expiresAt", now.minusMillis(1)))
+        latest       <- repo.latest
+        screenLatest <- screens.latestRanking
+        page         <- repo.rankingInputs(ranking.id, RankingInputsQuery(limit = 50)).attempt
+        stored       <- storedRanking(db, ranking.id)
+      yield
+        latest mustBe None
+        screenLatest mustBe None
+        page mustBe Left(AppError.EntityDoesNotExist("Investment ranking", ranking.id.value))
+        stored mustBe Some(ranking)
+    }
+
+    "purge a ticker's input rows from every ranking without deleting other inputs or headers" in withEmbeddedMongoDatabase { db =>
+      val values = entries :+ entries.head.copy(scorecard = card.copy(ticker = MSFT))
+      val second = ranking.copy(id = InvestmentRankingId("second"))
+      for
+        repo       <- InvestmentRankingRepository.make[IO](db)
+        _          <- repo.save(ranking, values)
+        _          <- repo.save(second, values)
+        _          <- repo.delete(AAPL)
+        _          <- repo.delete(AAPL)
+        firstRows  <- storedRankingEntries(db, ranking.id)
+        secondRows <- storedRankingEntries(db, second.id)
+        header     <- storedRanking(db, ranking.id)
+      yield
+        firstRows.map(_.scorecard.ticker) mustBe List(MSFT)
+        secondRows.map(_.scorecard.ticker) mustBe List(MSFT)
+        header mustBe Some(ranking)
+    }
 
     "leave metadata unpublished if an input batch fails" in
       withEmbeddedMongoDatabase { db =>
@@ -277,7 +321,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
           ("OTHER-SECTOR", "health care", Sector.Industrials)
         ).map { case (ticker, industry, sector) =>
           base.copy(
-            input = base.input.copy(industry = Some(industry), sector = Some(sector)),
+            input = base.input.copy(industry = Some(InvestmentScreenInput.industryKey(industry)), sector = Some(sector)),
             scorecard = base.scorecard
               .copy(ticker = Ticker(ticker), eligible = false, exclusions = List("missing-metric:eps-growth5y"), evidence = Some(evidence))
           )
@@ -299,7 +343,7 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
           first.asOf mustBe now
           first.items.map(_.ticker) mustBe List(Ticker("FIRST"))
           first.nextAfter mustBe Some(0)
-          first.items.head.industry mustBe Some("  HEALTH CARE  ")
+          first.items.head.industry mustBe Some("health care")
           first.items.head.exclusions mustBe List("missing-metric:eps-growth5y")
           first.items.head.evidence mustBe Some(evidence)
           second.items.map(_.ordinal) mustBe List(2)
@@ -324,20 +368,5 @@ class InvestmentRankingRepositorySpec extends RepositorySpec with MongoJsonCodec
           empty mustBe RankingInputsPage(ranking.id, now, Nil, None)
       }
 
-      "read a bounded input page without embedding complete scorecards in the ranking header" in withEmbeddedMongoDatabase { db =>
-        val base    = InvestmentRepositoryFixtures.entries.head
-        val entries = (1 to 20).map { index =>
-          base.copy(scorecard = base.scorecard.copy(ticker = Ticker(s"LARGE$index"), weaknesses = List("x" * (1024 * 1024))))
-        }.toList
-        val ranking =
-          InvestmentRanking(InvestmentRankingId("large-inputs"), now, InvestmentRecipe(), InvestmentRankingSummary.from(entries))
-        for
-          rankings <- InvestmentRankingRepository.make[IO](db)
-          _        <- rankings.save(ranking, entries)
-          page     <- rankings.rankingInputs(ranking.id, RankingInputsQuery(limit = 100))
-        yield
-          page.items.size mustBe 20
-          page.nextAfter mustBe None
-      }
     }
   }

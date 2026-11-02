@@ -58,6 +58,7 @@ import stockschecker.domain.{
   Ticker
 }
 import stockschecker.domain.investment.EvaluationCapture
+import stockschecker.repositories.queries.PriceAnalyticsReadinessQuery
 
 import java.time.{Instant, LocalDate, YearMonth}
 
@@ -77,7 +78,8 @@ private[repositories] object entities extends MongoJsonCodecs {
       updatedAt: Instant,
       listingStatus: ListingStatus,
       exclusionReason: Option[String] = None,
-      activeChangedAt: Option[String] = None
+      activeChangedAt: Option[String] = None,
+      pendingPurgeAt: Option[String] = None
   ) derives Codec.AsObject:
     def toDomain: Security =
       Security(
@@ -96,7 +98,6 @@ private[repositories] object entities extends MongoJsonCodecs {
 
   final case class CompanyProfileEntity(
       _id: Ticker,
-      isActive: Boolean,
       name: String,
       country: String,
       industry: String,
@@ -109,8 +110,7 @@ private[repositories] object entities extends MongoJsonCodecs {
       priceAnalyticsLastUpdatedAt: Option[Instant],
       financialMetricsLastUpdatedAt: Option[Instant],
       createdAt: Instant,
-      updatedAt: Instant,
-      activeChangedAt: Option[String] = None
+      updatedAt: Instant
   ) derives Codec.AsObject:
     def toDomain: CompanyProfile =
       CompanyProfile(
@@ -290,7 +290,8 @@ private[repositories] object entities extends MongoJsonCodecs {
       _id: String,
       createdAt: Instant,
       recipe: InvestmentRecipe,
-      summary: InvestmentRankingSummary
+      summary: InvestmentRankingSummary,
+      expiresAt: Option[Instant]
   ) derives Codec.AsObject:
     def toDomain: InvestmentRanking =
       InvestmentRanking(
@@ -308,7 +309,8 @@ private[repositories] object entities extends MongoJsonCodecs {
         _id = header.id.value,
         createdAt = header.createdAt,
         recipe = header.recipe,
-        summary = header.summary
+        summary = header.summary,
+        expiresAt = Some(header.createdAt.plusMillis(InvestmentRecipe.RankingRetention.toMillis))
       )
 
   final case class InvestmentRankingIdEntity(_id: String) derives Codec.AsObject
@@ -322,7 +324,8 @@ private[repositories] object entities extends MongoJsonCodecs {
       ordinal: Int,
       input: InvestmentScreenInput,
       scorecard: InvestmentScorecard,
-      createdAt: Instant
+      createdAt: Instant,
+      expiresAt: Option[Instant]
   ) derives Codec.AsObject:
     def toDiagnostic: RankingInputDiagnostic =
       RankingInputDiagnostic(
@@ -529,7 +532,7 @@ private[repositories] object entities extends MongoJsonCodecs {
     def toDomain: Stock =
       Stock(
         security = security.toDomain,
-        profile = profile.headOption.map(_.toDomain),
+        profile = profile.head.toDomain,
         priceAnalytics = priceAnalytics.headOption.map(_.toDomain),
         financialMetrics = financialMetrics.headOption.map(_.toDomain)
       )

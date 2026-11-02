@@ -7,12 +7,11 @@ import cats.syntax.flatMap.*
 import cats.syntax.applicative.*
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.syntax.applicative.*
-import kirill5k.common.syntax.time.*
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
-import mongo4cats.operations.{Filter, Index, Sort, Update}
+import mongo4cats.operations.{Aggregate, Filter, Index, Sort, Update}
 import stockschecker.domain.{
   PriceAnalytics,
   PriceAnalyticsBasis,
@@ -23,12 +22,12 @@ import stockschecker.domain.{
   Ticker
 }
 import stockschecker.repositories.entities.PriceAnalyticsEntity
+import stockschecker.repositories.queries.StockVisibility
 
 import java.time.Instant
 
 trait PriceAnalyticsRepository[F[_]]:
   def delete(ticker: Ticker): F[Unit]
-  def save(analytics: PriceAnalytics): F[Unit]
   def save(analyticsList: List[PriceAnalytics]): F[Unit]
   def find(ticker: Ticker): F[Option[PriceAnalytics]]
   def findAll(limit: Option[Int]): F[List[PriceAnalytics]]
@@ -56,11 +55,6 @@ final private class LivePriceAnalyticsRepository[F[_]](
         .set(Field.Scores.Root, analytics.scores)
         .set(Field.Basis, analytics.basis)
 
-  override def save(analytics: PriceAnalytics): F[Unit] =
-    clock.now.flatMap { now =>
-      collection.updateOne(Filter.idEq(analytics.ticker.value), analytics.toUpdate(now), UpdateOptions(upsert = true)).void
-    }
-
   override def save(analyticsList: List[PriceAnalytics]): F[Unit] =
     clock.now.flatMap { now =>
       val updateOpt = UpdateOptions(upsert = true)
@@ -72,24 +66,32 @@ final private class LivePriceAnalyticsRepository[F[_]](
 
   override def find(ticker: Ticker): F[Option[PriceAnalytics]] =
     collection
-      .find(Filter.idEq(ticker.value))
+      .aggregate[PriceAnalyticsEntity](
+        Aggregate
+          .matchBy(Filter.idEq(ticker.value))
+          .combinedWith(StockVisibility.withActiveSecurity(Field.Id))
+      )
       .first
       .mapOpt(_.toDomain)
 
   override def findAll(limit: Option[Int]): F[List[PriceAnalytics]] =
     collection
-      .find(Filter.empty)
-      .sort(Sort.desc(Field.Scores.OverallScore))
-      .limit(limit.getOrElse(Int.MaxValue))
+      .aggregate[PriceAnalyticsEntity](
+        StockVisibility.withActiveSecurity(Field.Id).sort(Sort.desc(Field.Scores.OverallScore)).limit(limit.getOrElse(Int.MaxValue))
+      )
       .all
       .mapList(_.toDomain)
 
   override def findBy(filter: PriceAnalyticsFilter, limit: Option[Int]): F[List[PriceAnalytics]] =
     filter.toFilter.flatMap { mongoFilter =>
       collection
-        .find(mongoFilter)
-        .sort(Sort.desc(Field.Scores.OverallScore))
-        .limit(limit.getOrElse(Int.MaxValue))
+        .aggregate[PriceAnalyticsEntity](
+          Aggregate
+            .matchBy(mongoFilter)
+            .combinedWith(StockVisibility.withActiveSecurity(Field.Id))
+            .sort(Sort.desc(Field.Scores.OverallScore))
+            .limit(limit.getOrElse(Int.MaxValue))
+        )
         .all
         .mapList(_.toDomain)
     }
@@ -106,10 +108,6 @@ final private class LivePriceAnalyticsRepository[F[_]](
       case PriceAnalyticsFilter.PerformanceBelow(period, maxPercentage) =>
         val fieldName = s"${Field.PerformanceSummary.Root}.${period.fieldName}"
         Filter.lte(fieldName, maxPercentage).pure
-      case PriceAnalyticsFilter.UpdatedWithin(duration) =>
-        clock.now.map(currentTime => Filter.gt(Field.UpdatedAt, currentTime.minus(duration)))
-      case PriceAnalyticsFilter.NotUpdatedFor(duration) =>
-        clock.now.map(currentTime => Filter.lt(Field.UpdatedAt, currentTime.minus(duration)))
       case PriceAnalyticsFilter.Composite(filters) =>
         filters.traverse(_.toFilter).map(_.toList.foldLeft(Filter.empty)(_ && _))
 }
@@ -142,7 +140,6 @@ object PriceAnalyticsRepository extends MongoJsonCodecs:
     for
       collection <- database.getCollectionWithCodec[PriceAnalyticsEntity](CollectionName)
       _          <- collection.createIndex(Index.descending(Field.Scores.OverallScore))
-      _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
       collWithCodecs = collection
         .withAddedCodec[Ticker]
         .withAddedCodec[PricePerformanceSummary]

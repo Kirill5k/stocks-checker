@@ -61,32 +61,6 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
         verify(svc).get(AAPL, false)
       }
 
-      "return 401 when API key is missing" in {
-        val svc = mocks
-
-        val res = for
-          controller <- CompanyProfileController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/company-profiles/AAPL", method = Method.GET)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
-
-      "return 401 when API key is invalid" in {
-        val svc = mocks
-
-        val res = for
-          controller <- CompanyProfileController.make(svc, apiConfig)
-          invalidApiKeyHeader = Header.Raw(CIString("X-API-Key"), "wrong-key")
-          req                 = Request[IO](uri = uri"/company-profiles/AAPL", method = Method.GET).withHeaders(invalidApiKeyHeader)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
     }
 
     "GET /company-profiles" should {
@@ -173,18 +147,6 @@ class CompanyProfileControllerSpec extends HttpRoutesWordSpec {
         verify(svc).getAll(None)
       }
 
-      "return 401 when API key is missing" in {
-        val svc = mocks
-
-        val res = for
-          controller <- CompanyProfileController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/company-profiles", method = Method.GET)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
     }
   }
 

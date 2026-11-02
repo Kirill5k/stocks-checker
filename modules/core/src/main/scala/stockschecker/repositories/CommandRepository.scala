@@ -79,8 +79,9 @@ final private class LiveCommandRepository[F[_]](
     Filter.idEq(cmd.id.toObjectId) && Filter.eq(Field.Version, cmd.version)
 
   private def editCommand(id: CommandId, update: Update): F[Command] =
-    find(id).flatMap { before =>
-      collection
+    for
+      before <- find(id)
+      after  <- collection
         .findOneAndUpdate(
           versionFilter(before),
           update
@@ -88,14 +89,14 @@ final private class LiveCommandRepository[F[_]](
             .set(Field.NextRunAt, Option.empty[Instant]),
           FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
         )
-        .flatMap {
-          case Some(entity) => entity.toDomain.pure
-          case None         => editCommand(id, update)
-        }
-    }
+      res <- after match
+        case Some(entity) => entity.toDomain.pure
+        case None         => editCommand(id, update)
+    yield res
 
   override def initializeNextRun(cmd: Command, now: Instant): F[Option[Command]] =
-    if (!cmd.canBeExecuted || cmd.nextRunAt.nonEmpty || cmd.activeRunId.nonEmpty) Some(cmd).pure[F]
+    if (!cmd.canBeExecuted || cmd.nextRunAt.nonEmpty || cmd.activeRunId.nonEmpty)
+      Some(cmd).pure[F]
     else
       collection
         .findOneAndUpdate(
@@ -103,7 +104,7 @@ final private class LiveCommandRepository[F[_]](
           Update.set(Field.NextRunAt, now.plusMillis(cmd.durationUntilNextExecution(now).toMillis)),
           FindOneAndUpdateOptions(returnDocument = ReturnDocument.AFTER)
         )
-        .map(_.map(_.toDomain))
+        .mapOpt(_.toDomain)
 
   override def reserve(cmd: Command, now: Instant): F[Option[Command]] =
     cmd.nextRunAt.filter(at => cmd.canBeExecuted && cmd.activeRunId.isEmpty && !at.isAfter(now)) match
@@ -156,7 +157,6 @@ object CommandRepository:
     for
       collection <- db.getCollectionWithCodec[CommandEntity](CollectionName)
       _          <- collection.createIndex(Index.ascending(Field.ActiveRunId))
-      _          <- collection.createIndex(Index.ascending(Field.IsActive))
       _          <- collection.createIndex(Index.ascending(List(Field.IsActive, Field.NextRunAt)))
     yield LiveCommandRepository(
       collection

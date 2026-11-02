@@ -34,7 +34,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
       when(dispatcher.dispatch(any[Action])).thenReturnUnit
       (for
         service <- FinancialMetricsService.make(repo, client, dispatcher, history)
-        result  <- service.find(AAPL, true)
+        result  <- service.fetch(AAPL)
       yield result).asserting { result =>
         result mustBe AAPLFinancialMetrics
         verify(history).save(snapshot)
@@ -51,7 +51,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
       when(history.save(snapshot)).thenRaiseError(error)
       (for
         service <- FinancialMetricsService.make(repo, client, dispatcher, history)
-        result  <- service.find(AAPL, true)
+        result  <- service.fetch(AAPL)
       yield result).attempt.asserting { result =>
         result mustBe Left(error)
         verifyNoInteractions(repo, dispatcher)
@@ -65,23 +65,10 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
       when(client.getFinancialData(AAPL)).thenRaiseError(deferred)
       (for
         service <- FinancialMetricsService.make(repo, client, dispatcher, history)
-        result  <- service.find(AAPL, true)
+        result  <- service.fetch(AAPL)
       yield result).attempt.asserting { result =>
         result mustBe Left(deferred)
         verifyNoInteractions(repo, dispatcher, history)
-        succeed
-      }
-    }
-
-    "read cached metrics without contacting the provider" in {
-      val (repo, client, dispatcher, history) = mocks
-      when(repo.find(AAPL)).thenReturnSome(AAPLFinancialMetrics)
-      (for
-        service <- FinancialMetricsService.make(repo, client, dispatcher, history)
-        result  <- service.find(AAPL, false)
-      yield result).asserting { result =>
-        result mustBe AAPLFinancialMetrics
-        verifyNoInteractions(client, dispatcher, history)
         succeed
       }
     }
@@ -91,7 +78,7 @@ class FinancialMetricsServiceSpec extends IOWordSpec {
       when(client.getFinancialData(AAPL)).thenReturnNone
       (for
         service <- FinancialMetricsService.make(repo, client, dispatcher, history)
-        result  <- service.find(AAPL, true)
+        result  <- service.fetch(AAPL)
       yield result).attempt.asserting { result =>
         result mustBe Left(AppError.FinancialMetricsNotFound(AAPL))
         verifyNoInteractions(repo, dispatcher, history)

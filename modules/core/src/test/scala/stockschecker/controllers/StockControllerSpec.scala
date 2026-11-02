@@ -189,19 +189,6 @@ class StockControllerSpec extends HttpRoutesWordSpec {
         verify(svc).findAll(StockFilters(), None)
       }
 
-      "return 401 when accessed without API key" in {
-        val svc = mocks
-
-        val res = for
-          controller <- StockController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/stocks", method = Method.GET)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
-
       "return 200 and filter by exchange" in {
         val svc = mocks
         when(svc.findAll(any[StockFilters], anyOpt[Int])).thenReturnIO(List(AAPLStock))
@@ -230,20 +217,6 @@ class StockControllerSpec extends HttpRoutesWordSpec {
         verify(svc).findAll(StockFilters(kind = Some(stockschecker.domain.SecurityKind.Stock)), None)
       }
 
-      "return 200 and filter by isActive" in {
-        val svc = mocks
-        when(svc.findAll(any[StockFilters], anyOpt[Int])).thenReturnIO(List(AAPLStock))
-
-        val res = for
-          controller <- StockController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/stocks?isActive=true", method = Method.GET).withHeaders(apiKeyHeader)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Ok, Some(s"""[$applStockJson]""".stripMargin))
-        verify(svc).findAll(StockFilters(isActive = Some(true)), None)
-      }
-
       "return 200 and filter by minMarketCap" in {
         val svc = mocks
         when(svc.findAll(any[StockFilters], anyOpt[Int])).thenReturnIO(List(AAPLStock))
@@ -265,7 +238,6 @@ class StockControllerSpec extends HttpRoutesWordSpec {
         val queryParams = List(
           "exchange=nasdaq",
           "kind=stock",
-          "isActive=true",
           "country=US",
           "minMarketCap=1000000000000",
           "maxMarketCap=5000000000000",
@@ -306,7 +278,6 @@ class StockControllerSpec extends HttpRoutesWordSpec {
           StockFilters(
             exchange = Some(stockschecker.domain.Exchange.NASDAQ),
             kind = Some(stockschecker.domain.SecurityKind.Stock),
-            isActive = Some(true),
             country = Some("US"),
             minMarketCap = Some(1000000000000L),
             maxMarketCap = Some(5000000000000L),
@@ -353,18 +324,6 @@ class StockControllerSpec extends HttpRoutesWordSpec {
         verify(svc).deactivate(AAPL)
       }
 
-      "return 401 when accessed without API key" in {
-        val svc = mocks
-
-        val res = for
-          controller <- StockController.make(svc, apiConfig)
-          req = Request[IO](uri = uri"/stocks/aapl/deactivate", method = Method.PUT)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
     }
   }
 

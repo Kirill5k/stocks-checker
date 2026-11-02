@@ -63,6 +63,20 @@ class DatasetObserverSpec extends IOWordSpec {
         .asserting(_ => succeed)
     }
 
+    "preserve both success and the original provider failure when bookkeeping fails" in {
+      val quality = mock[DataQualityRepository[IO]]
+      when(
+        quality.record(any[stockschecker.domain.Ticker], any[Provider], any[Dataset], any[DatasetStatus], any[Instant], any[Option[String]])
+      )
+        .thenRaiseError(new java.io.IOException("database unavailable"))
+      val failure = AppError.HttpClient(Provider.Finnhub.print, 503, "provider unavailable")
+      (for
+        observer <- DatasetObserver.make[IO](quality)
+        success  <- observer.observe(Provider.Finnhub, Dataset.CompanyProfile, AAPL)(IO.pure(Option(1)))(_.nonEmpty)
+        failed <- observer.observe(Provider.Finnhub, Dataset.CompanyProfile, AAPL)(IO.raiseError[Option[Int]](failure))(_.nonEmpty).attempt
+      yield (success, failed)).asserting(_ mustBe (Some(1), Left(failure)))
+    }
+
     "leave dataset availability unchanged when the logical request is deferred" in {
       val quality = mock[DataQualityRepository[IO]]
       val error   = AppError.ProviderDeferred(Provider.Finnhub, now.plusSeconds(60), ProviderDeferralReason.Provider429)

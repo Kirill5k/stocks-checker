@@ -4,7 +4,7 @@ import stockschecker.domain.{Dataset, DatasetStatus}
 import stockschecker.domain.{Provider, ProviderDeferralReason}
 import kirill5k.common.cats.Clock
 import cats.effect.{IO, Ref}
-import stockschecker.domain.{DateRange, PriceAdjustment, PriceHistorySnapshot, Ticker}
+import stockschecker.domain.{DateRange, InvestmentRecipe, PriceAdjustment, PriceHistorySnapshot, Ticker}
 import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 import stockschecker.repositories.{DataQualityRepository, ProviderBudgetRepository, RepositorySpec, SecurityRepository}
@@ -61,17 +61,17 @@ class DatasetObserverIntegrationSpec extends RepositorySpec {
             case _ => IO.pure(snapshot.copy(ticker = MSFT))
           })
           first       <- apple.attempt
-          unavailable <- quality.report(snapshot.fetchedAt).map(_.datasets)
+          unavailable <- quality.report(snapshot.fetchedAt, InvestmentRecipe()).map(_.datasets)
           _           <- IO.sleep(5.millis)
           _           <- microsoft.attempt
           _           <- IO.sleep(5.millis)
           recovered   <- apple
           _           <- IO.sleep(5.millis)
           _           <- microsoft
-          available   <- quality.report(snapshot.fetchedAt).map(_.datasets)
+          available   <- quality.report(snapshot.fetchedAt, InvestmentRecipe()).map(_.datasets)
           _           <- IO.sleep(5.millis)
           _           <- apple.attempt
-          failed      <- quality.report(snapshot.fetchedAt).map(_.datasets)
+          failed      <- quality.report(snapshot.fetchedAt, InvestmentRecipe()).map(_.datasets)
           excluded    <- readSecurity(db, AAPL)
           included    <- readSecurity(db, MSFT)
         yield
@@ -102,12 +102,12 @@ class DatasetObserverIntegrationSpec extends RepositorySpec {
           now          <- IO.realTimeInstant
           _ <- quality.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, now, None)
           _ <- quality.record(MSFT, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Failed, now, Some("HTTP 503"))
-          before <- quality.report(snapshot.fetchedAt).map(_.datasets)
+          before <- quality.report(snapshot.fetchedAt, InvestmentRecipe()).map(_.datasets)
           first  <- observed(access, availability, AAPL)(
             IO.raiseError(AppError.ProviderDeferred(Provider.TwelveData, now.plusSeconds(300), ProviderDeferralReason.Provider429))
           ).attempt
           second <- observed(access, availability, MSFT)(IO.raiseError(new AssertionError("Deferred request ran"))).attempt
-          after  <- quality.report(snapshot.fetchedAt).map(_.datasets)
+          after  <- quality.report(snapshot.fetchedAt, InvestmentRecipe()).map(_.datasets)
         yield
           first.left.toOption.get mustBe a[AppError.ProviderDeferred]
           second.left.toOption.get mustBe a[AppError.ProviderDeferred]

@@ -38,7 +38,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
         rankings <- InvestmentRankingRepository.make[IO](db)
         _        <- rankings.save(old, entries)
         _        <- rankings.save(ranking, entries)
-        report   <- repo.report(now)
+        report   <- repo.report(now, InvestmentRecipe())
       yield
         val readiness = report.rankingReadiness.get
         readiness.rankingId mustBe ranking.id
@@ -74,7 +74,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
             rankings <- InvestmentRankingRepository.make[IO](db)
             _        <- rankings.save(older, List(oldEntry))
             _        <- rankings.save(latest, latestEntries)
-            report   <- repo.report(now)
+            report   <- repo.report(now, InvestmentRecipe())
           yield
             report.rankingAsOf mustBe Some(now)
             val readiness = report.rankingReadiness.get
@@ -105,7 +105,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
         repo     <- DataQualityRepository.make[IO](db)
         rankings <- InvestmentRankingRepository.make[IO](db)
         _        <- rankings.save(ranking, entries)
-        report   <- repo.report(now)
+        report   <- repo.report(now, InvestmentRecipe())
       yield
         val readiness = report.rankingReadiness.get
         readiness.rankingId mustBe ranking.id
@@ -131,7 +131,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
           repo    <- DataQualityRepository.make[IO](db)
           _       <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesUnadjusted, DatasetStatus.Available, now, None)
           _       <- repo.record(MSFT, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, now, None)
-          report  <- repo.report(now)
+          report  <- repo.report(now, InvestmentRecipe())
           relaxed <- repo.report(now, InvestmentRecipe(maxPriceAgeDays = 8))
         yield
           report.countsByStatus mustBe Map(DatasetStatus.Available -> 2)
@@ -147,7 +147,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
     "return an empty report when none of the source collections contain data" in withEmbeddedMongoDatabase { db =>
       for
         repo   <- DataQualityRepository.make[IO](db)
-        report <- repo.report(now)
+        report <- repo.report(now, InvestmentRecipe())
       yield report mustBe DataQualityReport(now, Nil, Nil, Map.empty, Map.empty, None)
     }
 
@@ -187,7 +187,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
           )
           _      <- repo.record(AAPL, Provider.Finnhub, Dataset.CompanyProfile, DatasetStatus.Available, observedAt, None)
           _      <- repo.record(AAPL, Provider.Finnhub, Dataset.Financials, DatasetStatus.Available, observedAt, None)
-          report <- repo.report(now)
+          report <- repo.report(now, InvestmentRecipe())
         yield report.copy(rankingReadiness = None, priceAnalyticsReadiness = Nil) mustBe DataQualityReport(
           now,
           List(
@@ -236,7 +236,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
           repo     <- DataQualityRepository.make[IO](db)
           rankings <- InvestmentRankingRepository.make[IO](db)
           _        <- rankings.save(ranking, Nil)
-          report   <- repo.report(now)
+          report   <- repo.report(now, InvestmentRecipe())
         yield report.copy(rankingReadiness = None, priceAnalyticsReadiness = Nil) mustBe DataQualityReport(
           now,
           Nil,
@@ -248,11 +248,28 @@ class DataQualityRepositorySpec extends RepositorySpec {
       }
     }
 
+    "omit ranking coverage when the latest header has expired before the TTL monitor deletes it" in withEmbeddedMongoDatabase { db =>
+      val ranking = InvestmentRanking(InvestmentRankingId("expired"), now, InvestmentRecipe(), InvestmentRankingSummary(1, 1, Map.empty))
+      for
+        repo     <- DataQualityRepository.make[IO](db)
+        rankings <- InvestmentRankingRepository.make[IO](db)
+        _        <- rankings.save(ranking, Nil)
+        raw      <- db.getCollection(InvestmentRankingRepository.CollectionName)
+        _        <- raw.updateOne(
+          mongo4cats.operations.Filter.idEq(ranking.id.value),
+          mongo4cats.operations.Update.set("expiresAt", now.minusMillis(1))
+        )
+        report <- repo.report(now, InvestmentRecipe())
+      yield
+        report.rankingReadiness mustBe None
+        report.rankingAsOf mustBe None
+    }
+
     "report availability without manufacturing coverage when no ranking has been published" in withEmbeddedMongoDatabase { db =>
       for
         repo   <- DataQualityRepository.make[IO](db)
         _      <- repo.record(AAPL, Provider.Finnhub, Dataset.Financials, DatasetStatus.Unavailable, now, None)
-        report <- repo.report(now)
+        report <- repo.report(now, InvestmentRecipe())
       yield report.copy(rankingReadiness = None, priceAnalyticsReadiness = Nil) mustBe DataQualityReport(
         now,
         List(DatasetAvailability(AAPL, Provider.Finnhub, Dataset.Financials, DatasetStatus.Unavailable, now, None, None)),
@@ -267,7 +284,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
       for
         repo <- DataQualityRepository.make[IO](db)
         _ <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Unavailable, now, Some("HTTP 404"))
-        result <- repo.report(now).map(_.datasets)
+        result <- repo.report(now, InvestmentRecipe()).map(_.datasets)
       yield result mustBe List(
         DatasetAvailability(
           AAPL,
@@ -288,9 +305,9 @@ class DataQualityRepositorySpec extends RepositorySpec {
         repo <- DataQualityRepository.make[IO](db)
         _    <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, now, None)
         _ <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Failed, failedAt, Some("HTTP 503"))
-        failed <- repo.report(now).map(_.datasets)
+        failed <- repo.report(now, InvestmentRecipe()).map(_.datasets)
         _      <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, recoveredAt, None)
-        recovered <- repo.report(now).map(_.datasets)
+        recovered <- repo.report(now, InvestmentRecipe()).map(_.datasets)
       yield
         failed mustBe List(
           DatasetAvailability(
@@ -323,7 +340,7 @@ class DataQualityRepositorySpec extends RepositorySpec {
         _    <- repo.record(AAPL, Provider.Finnhub, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Unavailable, now, Some("HTTP 404"))
         _    <- repo.record(AAPL, Provider.TwelveData, Dataset.DailyPricesSplits, DatasetStatus.Failed, now, Some("HTTP 503"))
         _    <- repo.record(MSFT, Provider.TwelveData, Dataset.DailyPricesSplitsAndDividends, DatasetStatus.Available, now, None)
-        rows <- repo.report(now).map(_.datasets)
+        rows <- repo.report(now, InvestmentRecipe()).map(_.datasets)
       yield rows.toSet mustBe Set(
         DatasetAvailability(
           AAPL,

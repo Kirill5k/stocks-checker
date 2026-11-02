@@ -114,6 +114,40 @@ class ProviderAccessSpec extends IOWordSpec {
       }
     }
 
+    "preserve a provider deferral when persisting its cooldown fails" in {
+      val repository = budgets
+      val until      = Instant.parse("2026-11-02T12:00:00Z")
+      val failure    = AppError.ProviderDeferred(Provider.Finnhub, until, ProviderDeferralReason.Provider429)
+      when(repository.cooldown(Provider.Finnhub, until, None)).thenRaiseError(new java.io.IOException("offline"))
+      (for
+        access <- ProviderAccess.make[IO](repository)
+        result <- access.run(Provider.Finnhub, fast)(IO.raiseError[Int](failure)).attempt
+        next   <- access.run(Provider.Finnhub, fast)(IO.pure(1))
+      yield (result, next)).asserting(_ mustBe (Left(failure), 1))
+    }
+
+    "retry a paused account after its credential cooldown" in {
+      val now   = Instant.parse("2026-11-02T12:00:00Z")
+      val clock = mock[Clock[IO]]
+      when(clock.now).thenReturn(
+        IO.pure(now),
+        IO.pure(now),
+        IO.pure(now),
+        IO.pure(now.plusMillis(Provider.configurationRetryDelay.toMillis))
+      )
+      given Clock[IO] = clock
+      (for
+        access <- ProviderAccess.make[IO](budgets)
+        first <- access.run(Provider.Finnhub, fast)(IO.raiseError[Int](AppError.ProviderConfiguration(Provider.Finnhub, "invalid"))).attempt
+        paused  <- access.run(Provider.Finnhub, fast)(IO.pure(1)).attempt
+        retried <- access.run(Provider.Finnhub, fast)(IO.pure(2))
+      yield (first, paused, retried)).asserting { case (first, paused, retried) =>
+        first.left.toOption.get mustBe a[AppError.ProviderConfiguration]
+        paused.left.toOption.get mustBe a[AppError.ProviderConfiguration]
+        retried mustBe 2
+      }
+    }
+
     "reject invalid quota configuration" in
       List(fast.copy(requestsPerMinute = 0), fast.copy(maxConcurrent = 0), fast.copy(dailyAllowance = -1))
         .traverse(limits => ProviderAccess.make[IO](budgets).flatMap(_.validateLimits(Provider.Finnhub, limits)).attempt)

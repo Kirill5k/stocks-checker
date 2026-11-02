@@ -12,7 +12,7 @@ import stockschecker.repositories.{FinancialHistoryRepository, FinancialMetricsR
 
 trait FinancialMetricsService[F[_]]:
   def delete(ticker: Ticker): F[Unit]
-  def find(ticker: Ticker, fetch: Boolean): F[FinancialMetrics]
+  def fetch(ticker: Ticker): F[FinancialMetrics]
 
 final private class LiveFinancialMetricsService[F[_]](
     private val metricsRepository: FinancialMetricsRepository[F],
@@ -23,19 +23,19 @@ final private class LiveFinancialMetricsService[F[_]](
     F: Sync[F]
 ) extends FinancialMetricsService[F] {
 
-  override def delete(ticker: Ticker): F[Unit] = metricsRepository.delete(ticker)
+  override def delete(ticker: Ticker): F[Unit] =
+    metricsRepository.delete(ticker) >>
+      historyRepository.delete(ticker)
 
-  override def find(ticker: Ticker, fetch: Boolean): F[FinancialMetrics] =
+  override def fetch(ticker: Ticker): F[FinancialMetrics] =
     val result =
-      if fetch then
-        client.getFinancialData(ticker).flatMap {
-          case Some(data) =>
-            historyRepository.save(data.snapshot) >>
-              metricsRepository.save(List(data.metrics)) >>
-              dispatcher.dispatch(Action.RecordFinancialMetricsUpdate(NonEmptyList.one(ticker))).as(Some(data.metrics))
-          case None => F.pure(None)
-        }
-      else metricsRepository.find(ticker)
+      client.getFinancialData(ticker).flatMap {
+        case Some(data) =>
+          historyRepository.save(data.snapshot) >>
+            metricsRepository.save(List(data.metrics)) >>
+            dispatcher.dispatch(Action.RecordFinancialMetricsUpdate(NonEmptyList.one(ticker))).as(Some(data.metrics))
+        case None => F.pure(None)
+      }
     result.flatMap(value => F.fromOption(value, AppError.FinancialMetricsNotFound(ticker)))
 }
 

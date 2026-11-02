@@ -87,7 +87,7 @@ class CompanyProfileServiceSpec extends IOWordSpec {
           verify(client).getCompanyProfile(AAPL)
           verify(repo, never).save(any[CompanyProfile])
           verify(repo, never).find(AAPL)
-          verify(dispatcher).dispatch(Action.SetSecurityActive(AAPL, false, ts))
+          verify(dispatcher).dispatch(Action.SetSecurityActive(AAPL, false, ts, "provider-profile-empty"))
           verify(dispatcher, never).dispatch(Action.RecordCompanyProfileUpdate(NonEmptyList.one(AAPL)))
           err mustBe Left(AppError.CompanyProfileNotFound(AAPL))
         }
@@ -121,121 +121,6 @@ class CompanyProfileServiceSpec extends IOWordSpec {
         }
       }
 
-    }
-
-    "consume profile events" should {
-      "dispatch both cache deletions for an inactive profile event" in {
-        val (repo, client, dispatcher) = mocks
-        when(repo.setActive(AAPL, false, ts)).thenReturnIO(true)
-        when(dispatcher.dispatch(Action.DeletePriceAnalytics(AAPL))).thenReturnUnit
-        when(dispatcher.dispatch(Action.DeleteFinancialMetrics(AAPL))).thenReturnUnit
-        (for
-          svc <- CompanyProfileService.make(repo, client, dispatcher)
-          _   <- svc.setActive(AAPL, false, ts)
-        yield ()).asserting { _ =>
-          verify(repo).setActive(AAPL, false, ts)
-          verify(dispatcher).dispatch(Action.DeletePriceAnalytics(AAPL))
-          verify(dispatcher).dispatch(Action.DeleteFinancialMetrics(AAPL))
-          verifyNoInteractions(client)
-          succeed
-        }
-      }
-
-      "leave analytics alone when the profile rejects a stale deactivation" in {
-        val (repo, client, dispatcher) = mocks
-        when(repo.setActive(AAPL, false, ts)).thenReturnIO(false)
-        CompanyProfileService.make(repo, client, dispatcher).flatMap(_.setActive(AAPL, false, ts)).asserting { _ =>
-          verifyNoInteractions(client, dispatcher)
-          succeed
-        }
-      }
-
-      "retry cache deletion when an accepted deactivation is replayed after dispatch failure" in {
-        val (repo, client, dispatcher) = mocks
-        val failure                    = new com.mongodb.MongoException("dispatch unavailable")
-        when(repo.setActive(AAPL, false, ts)).thenReturnIO(true)
-        when(dispatcher.dispatch(Action.DeletePriceAnalytics(AAPL))).thenReturnUnit
-        when(dispatcher.dispatch(Action.DeleteFinancialMetrics(AAPL))).thenReturn(IO.raiseError(failure), IO.unit)
-        (for
-          service <- CompanyProfileService.make(repo, client, dispatcher)
-          first   <- service.setActive(AAPL, false, ts).attempt
-          _       <- service.setActive(AAPL, false, ts)
-        yield first).asserting { first =>
-          first mustBe Left(failure)
-          verify(dispatcher, times(2)).dispatch(Action.DeletePriceAnalytics(AAPL))
-          verify(dispatcher, times(2)).dispatch(Action.DeleteFinancialMetrics(AAPL))
-          verifyNoInteractions(client)
-          succeed
-        }
-      }
-
-      "update profile timestamps and activation through the owned repository" in {
-        val (repo, client, dispatcher) = mocks
-        val tickers                    = NonEmptyList.of(AAPL, MSFT)
-        when(repo.updatePriceAnalyticsLastUpdated(anyList[Ticker])).thenReturnUnit
-        when(repo.updateFinancialMetricsLastUpdated(anyList[Ticker])).thenReturnUnit
-        when(repo.setActive(AAPL, true, ts)).thenReturnIO(true)
-
-        (for
-          svc <- CompanyProfileService.make(repo, client, dispatcher)
-          _   <- svc.recordPriceAnalyticsUpdate(tickers)
-          _   <- svc.recordFinancialMetricsUpdate(tickers)
-          _   <- svc.setActive(AAPL, true, ts)
-        yield ()).asserting { _ =>
-          verify(repo).updatePriceAnalyticsLastUpdated(tickers.toList)
-          verify(repo).updateFinancialMetricsLastUpdated(tickers.toList)
-          verify(repo).setActive(AAPL, true, ts)
-          verifyNoInteractions(client, dispatcher)
-          succeed
-        }
-      }
-    }
-
-    "getAll" should {
-      "return all company profiles from repository" in {
-        val (repo, client, dispatcher) = mocks
-        when(repo.findAll(any[Option[Int]])).thenReturnIO(List(AAPLCompanyProfile, MSFTCompanyProfile))
-
-        val res = for
-          svc <- CompanyProfileService.make(repo, client, dispatcher)
-          res <- svc.getAll(None)
-        yield res
-
-        res.asserting { profiles =>
-          verify(repo).findAll(None)
-          profiles mustBe List(AAPLCompanyProfile, MSFTCompanyProfile)
-        }
-      }
-
-      "return limited number of company profiles when limit is specified" in {
-        val (repo, client, dispatcher) = mocks
-        when(repo.findAll(any[Option[Int]])).thenReturnIO(List(AAPLCompanyProfile))
-
-        val res = for
-          svc <- CompanyProfileService.make(repo, client, dispatcher)
-          res <- svc.getAll(Some(1))
-        yield res
-
-        res.asserting { profiles =>
-          verify(repo).findAll(Some(1))
-          profiles mustBe List(AAPLCompanyProfile)
-        }
-      }
-
-      "return empty list when no company profiles exist" in {
-        val (repo, client, dispatcher) = mocks
-        when(repo.findAll(any[Option[Int]])).thenReturnIO(List.empty)
-
-        val res = for
-          svc <- CompanyProfileService.make(repo, client, dispatcher)
-          res <- svc.getAll(None)
-        yield res
-
-        res.asserting { profiles =>
-          verify(repo).findAll(None)
-          profiles mustBe List.empty
-        }
-      }
     }
 
   }

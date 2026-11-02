@@ -18,7 +18,6 @@ import stockschecker.services.{
 enum ActionResult:
   case Completed
   case Expand(plan: JobPlan)
-  case Cancelled(reason: String)
 
 trait ActionHandler[F[_]]:
   def execute(action: Action): F[ActionResult]
@@ -59,7 +58,7 @@ final private class LiveActionHandler[F[_]](
     case Action.UpdatePriceAnalytics(tickers) =>
       update(tickers)(Action.UpdatePriceAnalytics(_))(ticker => prices.findPriceAnalytics(ticker, true).void)
     case Action.UpdateFinancialMetrics(tickers) =>
-      update(tickers)(Action.UpdateFinancialMetrics(_))(ticker => financials.find(ticker, true).void)
+      update(tickers)(Action.UpdateFinancialMetrics(_))(ticker => financials.fetch(ticker).void)
     case Action.RefreshInvestmentRanking =>
       completed(rankings.refresh)
     case Action.CreateMonthlyScreen       => completed(screens.createMonthlyScreen.void)
@@ -72,13 +71,41 @@ final private class LiveActionHandler[F[_]](
       F.pure(expand(actions))
     case Action.RefreshEvaluationPrices(ticker, through) =>
       completed(prices.refreshHistory(ticker, through))
-    case Action.RecordCompanyProfileUpdate(tickers)                  => completed(security.recordCompanyProfileUpdate(tickers))
-    case Action.RecordPriceAnalyticsUpdate(tickers)                  => completed(profiles.recordPriceAnalyticsUpdate(tickers))
-    case Action.RecordFinancialMetricsUpdate(tickers)                => completed(profiles.recordFinancialMetricsUpdate(tickers))
-    case Action.SetSecurityActive(ticker, active, requestedAt)       => completed(security.setActive(ticker, active, requestedAt))
-    case Action.SetCompanyProfileActive(ticker, active, requestedAt) => completed(profiles.setActive(ticker, active, requestedAt))
-    case Action.DeletePriceAnalytics(ticker)                         => completed(prices.delete(ticker))
-    case Action.DeleteFinancialMetrics(ticker)                       => completed(financials.delete(ticker))
+    case Action.RecordCompanyProfileUpdate(tickers)                    => completed(security.recordCompanyProfileUpdate(tickers))
+    case Action.RecordPriceAnalyticsUpdate(tickers)                    => completed(profiles.recordPriceAnalyticsUpdate(tickers))
+    case Action.RecordFinancialMetricsUpdate(tickers)                  => completed(profiles.recordFinancialMetricsUpdate(tickers))
+    case Action.SetSecurityActive(ticker, active, requestedAt, reason) => completed(security.setActive(ticker, active, requestedAt, reason))
+    case Action.PurgeStock(ticker, requestedAt)                        =>
+      F.pure(
+        expand(
+          List(
+            Action.Sequence(
+              NonEmptyList.of(
+                Action.DeleteRankingInputs(ticker),
+                Action.DeleteScreenEvaluations(ticker),
+                Action.DeleteScreens(ticker, requestedAt)
+              )
+            ),
+            Action.DeleteCompanyProfile(ticker),
+            Action.DeletePriceData(ticker),
+            Action.DeleteFinancialData(ticker)
+          )
+        )
+      )
+    case Action.DeleteCompanyProfile(ticker)       => completed(profiles.delete(ticker))
+    case Action.DeletePriceData(ticker)            => completed(prices.delete(ticker))
+    case Action.DeleteFinancialData(ticker)        => completed(financials.delete(ticker))
+    case Action.DeleteRankingInputs(ticker)        => completed(rankings.delete(ticker))
+    case Action.DeleteScreenEvaluations(ticker)    => completed(evaluations.delete(ticker))
+    case Action.DeleteScreens(ticker, requestedAt) =>
+      screens
+        .rankingIds(ticker)
+        .map(ids =>
+          expand(Action.DeleteScreenRecords(ticker) :: ids.map(Action.ReleaseInvestmentRanking(_, requestedAt)), sequential = true)
+        )
+    case Action.DeleteScreenRecords(ticker)               => completed(screens.delete(ticker))
+    case Action.PinInvestmentRanking(id)                  => completed(rankings.pin(id))
+    case Action.ReleaseInvestmentRanking(id, requestedAt) => completed(rankings.release(id, requestedAt))
 
 object ActionHandler:
   def make[F[_]: Monad](services: Services[F]): F[ActionHandler[F]] =

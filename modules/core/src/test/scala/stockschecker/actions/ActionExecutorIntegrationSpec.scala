@@ -61,7 +61,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       val services = mock(classOf[Services[IO]])
       val security = mock(classOf[SecurityService[IO]])
       when(services.security).thenReturn(security)
-      when(security.setActive(AAPL, false, java.time.Instant.EPOCH)).thenReturn(IO.unit)
+      when(security.setActive(AAPL, false, java.time.Instant.EPOCH, "user-excluded")).thenReturn(IO.unit)
       for {
         jobs     <- JobRepository.make[IO](db)
         _        <- (1 to 16).toList.traverse_(n => enqueue(jobs)(Job(JobId(s"timer-$n"), action, now.plusSeconds(86400), now)))
@@ -262,7 +262,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         release <- Deferred[IO, Unit]
         second  <- Ref.of[IO, Boolean](false)
         _ = when(profiles.get(AAPL, true)).thenReturn(started.complete(()).void >> release.get.as(AAPLCompanyProfile))
-        _ = when(security.setActive(AAPL, false, java.time.Instant.EPOCH)).thenReturn(second.set(true))
+        _ = when(security.setActive(AAPL, false, java.time.Instant.EPOCH, "user-excluded")).thenReturn(second.set(true))
         jobs <- JobRepository.make[IO](db)
         now  <- IO.realTimeInstant
         _    <- enqueue(jobs)(
@@ -305,7 +305,8 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         cooldown.availableAt.isBefore(now.plusSeconds(300)) mustBe false
         cooldown.availableAt.isAfter(now.plusSeconds(330)) mustBe false
         cooldown.retries mustBe 2
-        cooldown.waitCount mustBe 1
+        cooldown.waitCount mustBe 0
+        cooldown.deferralCount mustBe 1
         cooldown.error mustBe Some(s"Deferred: provider=Finnhub reason=provider-429 retryAt=${now.plusSeconds(300)}")
         exhausted.state mustBe Job.Failed
         exhausted.retries mustBe 3
@@ -332,7 +333,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
           )
         _ <- enqueue(jobs)(Job(JobId("first-wait"), Action.UpdateCompanyProfiles(NonEmptyList.one(AAPL)), now, now))
         _ <- enqueue(jobs)(
-          Job(JobId("repeated-wait"), Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 3, waitCount = 10)
+          Job(JobId("repeated-wait"), Action.UpdateCompanyProfiles(NonEmptyList.one(MSFT)), now, now, retries = 3, deferralCount = 10)
         )
         executor      <- makeExecutor(jobs, services, ActionExecutorConfig(1))
         _             <- executor.run.take(2).compile.drain.timeout(3.seconds)
@@ -346,13 +347,15 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         first.state mustBe Job.Pending
         first.availableAt.isBefore(now.plusSeconds(30)) mustBe false
         first.availableAt.isAfter(finishedAt.plusSeconds(60)) mustBe false
-        first.waitCount mustBe 1
+        first.waitCount mustBe 0
+        first.deferralCount mustBe 1
         first.retries mustBe 0
         first.error mustBe Some(s"Deferred: provider=Finnhub reason=concurrency-limit retryAt=${now.plusSeconds(1)}")
         repeated.state mustBe Job.Pending
         repeated.availableAt.isBefore(now.plusSeconds(300)) mustBe false
         repeated.availableAt.isAfter(finishedAt.plusSeconds(330)) mustBe false
-        repeated.waitCount mustBe 11
+        repeated.waitCount mustBe 0
+        repeated.deferralCount mustBe 11
         repeated.retries mustBe 3
         repeated.error mustBe first.error
         early mustBe None
@@ -426,7 +429,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
       when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.CompanyProfileNotFound(MSFT)))
       for {
         ran <- Ref.of[IO, Boolean](false)
-        _ = when(security.setActive(AAPL, false, java.time.Instant.EPOCH)).thenReturn(ran.set(true))
+        _ = when(security.setActive(AAPL, false, java.time.Instant.EPOCH, "user-excluded")).thenReturn(ran.set(true))
         jobs <- JobRepository.make[IO](db)
         now  <- IO.realTimeInstant
         _    <- enqueue(jobs)(

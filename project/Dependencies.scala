@@ -43,21 +43,19 @@ object Dependencies {
     }
 
     object circe {
-      val core    = "io.circe" %% "circe-core"    % Versions.circe
-      val generic = "io.circe" %% "circe-generic" % Versions.circe
-      val parser  = "io.circe" %% "circe-parser"  % Versions.circe
-      val fs2     = "io.circe" %% "circe-fs2"     % Versions.circeFs2
+      val core   = "io.circe" %% "circe-core"   % Versions.circe
+      val parser = "io.circe" %% "circe-parser" % Versions.circe
+      val fs2    = "io.circe" %% "circe-fs2"    % Versions.circeFs2
 
-      val all = Seq(core, generic, parser, fs2)
+      val all = Seq(core, parser, fs2)
     }
 
     object sttp {
-      val core          = "com.softwaremill.sttp.client4" %% "core"           % Versions.sttp
-      val circe         = "com.softwaremill.sttp.client4" %% "circe"          % Versions.sttp
-      val catsBackend   = "com.softwaremill.sttp.client4" %% "fs2"            % Versions.sttp
-      val http4sBackend = "com.softwaremill.sttp.client4" %% "http4s-backend" % Versions.sttp
+      val core        = "com.softwaremill.sttp.client4" %% "core"  % Versions.sttp
+      val circe       = "com.softwaremill.sttp.client4" %% "circe" % Versions.sttp
+      val catsBackend = "com.softwaremill.sttp.client4" %% "fs2"   % Versions.sttp
 
-      val all = Seq(core, circe, catsBackend, http4sBackend)
+      val all = Seq(core, circe, catsBackend)
     }
 
     object tapir {

@@ -3,6 +3,7 @@ package stockschecker.repositories
 import mongo4cats.bson.Document
 import mongo4cats.bson.syntax.*
 import stockschecker.domain.{InvestmentRecipe, Ticker}
+import stockschecker.repositories.queries.PriceAnalyticsReadinessQuery
 
 import java.time.{Instant, LocalDate}
 

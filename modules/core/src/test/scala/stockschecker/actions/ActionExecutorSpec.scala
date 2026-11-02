@@ -55,7 +55,8 @@ class ActionExecutorSpec extends IOWordSpec:
         ts,
         state = Job.Running,
         retries = JobExecutionPolicy.MaxTransientRetries,
-        waitCount = 3,
+        waitCount = 30,
+        deferralCount = 3,
         leaseToken = Some("owner")
       )
       val error = AppError.ProviderDeferred(
@@ -67,13 +68,13 @@ class ActionExecutorSpec extends IOWordSpec:
       val scheduled = ArgumentCaptor.forClass(classOf[Instant])
       when(jobs.claim(any[Instant], any[FiniteDuration])).thenReturn(IO.pure(Some(job)), IO.pure(None))
       when(jobs.summarize(Nil)).thenReturnIO(JobStatusSummary(Map.empty))
-      when(jobs.defer(any[Job], any[Instant], any[Option[String]], any[Boolean])).thenReturnUnit
+      when(jobs.defer(any[Job], any[Instant], any[Option[String]], any[Boolean], any[Boolean])).thenReturnUnit
       when(jobs.pruneCompleted(any[Instant])).thenReturnUnit
       val handler = new ActionHandler[IO] {
         def execute(action: Action): IO[ActionResult] = IO.raiseError(error)
       }
       executeAndRecordLogs(jobs, handler).asserting { logs =>
-        verify(jobs).defer(eqTo(job), scheduled.capture(), eqTo(Some(error.getMessage)), eqTo(false))
+        verify(jobs).defer(eqTo(job), scheduled.capture(), eqTo(Some(error.getMessage)), eqTo(false), eqTo(true))
         scheduled.getValue.isBefore(ts.plusSeconds(240)) mustBe false
         scheduled.getValue.isAfter(ts.plusSeconds(270)) mustBe false
         verify(jobs, never).finish(any[Job], any[JobState], any[Option[String]])
@@ -96,7 +97,7 @@ class ActionExecutorSpec extends IOWordSpec:
       }
       executeAndRecordLogs(jobs, handler).asserting { logs =>
         verify(jobs).finish(job, Job.Failed, Some(error.getMessage))
-        verify(jobs, never).defer(any[Job], any[Instant], any[Option[String]], any[Boolean])
+        verify(jobs, never).defer(any[Job], any[Instant], any[Option[String]], any[Boolean], any[Boolean])
         logs mustBe List("warn" -> s"Job ${job.id} failed: ${error.getMessage}")
         succeed
       }
@@ -118,10 +119,66 @@ class ActionExecutorSpec extends IOWordSpec:
         }
         executeAndRecordLogs(jobs, handler).asserting { logs =>
           verify(jobs).finish(job, Job.Failed, Some(error.getMessage))
-          verify(jobs, never).defer(any[Job], any[Instant], any[Option[String]], any[Boolean])
+          verify(jobs, never).defer(any[Job], any[Instant], any[Option[String]], any[Boolean], any[Boolean])
           logs mustBe List("info" -> s"Job ${job.id} failed: ${error.getMessage}")
           succeed
         }
+      }
+    }
+
+    "retry a failed completion write without executing the action again" in {
+      val jobs = mock[JobRepository[IO]]
+      val job  = Job(JobId("finish-retry"), Action.RefreshInvestmentResearch, ts, ts, state = Job.Running, leaseToken = Some("owner"))
+      when(jobs.claim(any[Instant], any[FiniteDuration])).thenReturn(IO.pure(Some(job)), IO.pure(None))
+      when(jobs.summarize(Nil)).thenReturnIO(JobStatusSummary(Map.empty))
+      when(jobs.finish(job, Job.Succeeded, None)).thenReturn(IO.raiseError(new java.io.IOException("write interrupted")), IO.unit)
+      when(jobs.pruneCompleted(any[Instant])).thenReturnUnit
+      (for
+        calls <- Ref.of[IO, Int](0)
+        handler = new ActionHandler[IO] {
+          def execute(action: Action): IO[ActionResult] = calls.update(_ + 1).as(ActionResult.Completed)
+        }
+        _     <- executeAndRecordLogs(jobs, handler)
+        count <- calls.get
+      yield count).asserting { count =>
+        count mustBe 1
+        verify(jobs, times(2)).finish(job, Job.Succeeded, None)
+        verify(jobs, never).defer(any[Job], any[Instant], any[Option[String]], any[Boolean], any[Boolean])
+        succeed
+      }
+    }
+
+    "keep the action running when a failed heartbeat succeeds before lease expiry" in {
+      val jobs = mock[JobRepository[IO]]
+      val job  = Job(
+        JobId("heartbeat-retry"),
+        Action.RefreshInvestmentResearch,
+        ts,
+        ts,
+        state = Job.Running,
+        leaseToken = Some("owner"),
+        leaseUntil = Some(ts.plusSeconds(120))
+      )
+      when(jobs.claim(any[Instant], any[FiniteDuration])).thenReturn(IO.pure(Some(job)), IO.pure(None))
+      when(jobs.summarize(Nil)).thenReturnIO(JobStatusSummary(Map.empty))
+      when(jobs.finish(job, Job.Succeeded, None)).thenReturnUnit
+      when(jobs.pruneCompleted(any[Instant])).thenReturnUnit
+      (for
+        renewed   <- Deferred[IO, Unit]
+        cancelled <- Ref.of[IO, Boolean](false)
+        _ = when(jobs.renew(eqTo(job), any[Instant], any[FiniteDuration]))
+          .thenReturn(IO.raiseError(new java.io.IOException("temporary outage")), renewed.complete(()).as(true))
+        handler = new ActionHandler[IO] {
+          def execute(action: Action): IO[ActionResult] = renewed.get.as(ActionResult.Completed).onCancel(cancelled.set(true))
+        }
+        executor     <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), ActionExecutorConfig(1))
+        _            <- executor.run.take(1).compile.drain.timeout(JobExecutionPolicy.HeartbeatInterval + 5.seconds)
+        wasCancelled <- cancelled.get
+      yield wasCancelled).asserting { wasCancelled =>
+        wasCancelled mustBe false
+        verify(jobs, times(2)).renew(eqTo(job), any[Instant], any[FiniteDuration])
+        verify(jobs).finish(job, Job.Succeeded, None)
+        succeed
       }
     }
 

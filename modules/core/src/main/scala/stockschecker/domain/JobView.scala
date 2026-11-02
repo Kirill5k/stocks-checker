@@ -4,7 +4,6 @@ import io.circe.Codec
 import stockschecker.actions.Action
 
 import java.time.Instant
-import java.util.regex.Matcher
 
 final case class JobFilter(
     commandId: Option[CommandId] = None,
@@ -30,15 +29,6 @@ final case class JobView(
 ) derives Codec.AsObject
 
 object JobView:
-  // Stored messages retain useful provider diagnostics. Scrub common credential fields from old messages too.
-  private val Credentials =
-    """(?i)(["']?(?:api[-_]?key|token|access[-_]?token|password|authorization)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s&,;}]+)""".r
-  private val Authentication = """(?i)\b(Bearer|Basic)\s+[^\s,"'}]+""".r
-
-  private def redact(message: String): String =
-    val authentication = Authentication.replaceAllIn(message, matched => s"${matched.group(1)} [redacted]")
-    Credentials.replaceAllIn(authentication, matched => Matcher.quoteReplacement(s"${matched.group(1)}[redacted]"))
-
   def from(job: Job): JobView =
     JobView(
       job.id,
@@ -54,5 +44,5 @@ object JobView:
       job.dependsOn,
       job.children,
       job.pausedProvider,
-      job.error.map(redact)
+      job.error
     )

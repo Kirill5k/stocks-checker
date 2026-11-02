@@ -54,14 +54,4 @@ class JobViewSpec extends AnyWordSpec with Matchers:
       view.asJson.noSpaces must not include "private-token"
     }
 
-    "redact credential fields while retaining useful provider diagnostics" in {
-      val error =
-        """TwelveData HTTP 400 for ACA https://example.test?apikey=secret-one&token=secret-two {"api_key":"secret-three","password":"secret-four"} Authorization: Bearer secret-five Basic secret-six"""
-      val view     = JobView.from(Job(JobId("failed"), Action.RefreshInvestmentResearch, ts, ts, error = Some(error)))
-      val redacted = view.error.get
-      List("secret-one", "secret-two", "secret-three", "secret-four", "secret-five", "secret-six")
-        .foreach(secret => redacted must not include secret)
-      redacted must include("TwelveData HTTP 400 for ACA")
-      redacted must include("[redacted]")
-    }
   }

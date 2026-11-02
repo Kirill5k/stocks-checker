@@ -15,13 +15,12 @@ import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Update}
 import stockschecker.domain.{Exchange, Security, SecurityFilter, SecurityKind, Ticker}
-import stockschecker.domain.errors.AppError
 import stockschecker.repositories.entities.{Entity, SecurityEntity}
+import stockschecker.repositories.queries.StockVisibility
 
 import java.time.Instant
 
 trait SecurityRepository[F[_]]:
-  def save(security: Security): F[Unit]
   def save(securities: List[Security]): F[Unit]
   def findVisible(ticker: Ticker): F[Option[Security]]
   def findByExchange(exchange: Exchange): F[List[Security]]
@@ -29,9 +28,17 @@ trait SecurityRepository[F[_]]:
   def findTickersBy(filter: SecurityFilter, limit: Option[Int]): F[List[Ticker]]
   def updateCompanyProfileLastUpdated(tickers: List[Ticker]): F[Unit]
 
-  /** Whether the event was applied or replayed; stale requests and absent securities return false. */
-  def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Boolean]
-  def reconcile(exchange: Exchange, securities: List[Security]): F[Unit]
+  /** Equal timestamp replays are accepted so a failed dispatch can resume. */
+  def setActive(
+      ticker: Ticker,
+      active: Boolean,
+      requestedAt: Instant,
+      reason: String = "user-excluded"
+  ): F[SecurityRepository.ActivationResult]
+  def countListed(exchange: Exchange): F[Long]
+  def reconcile(exchange: Exchange, securities: List[Security]): F[List[Ticker]]
+  def pendingPurges: F[List[SecurityRepository.PendingPurge]]
+  def acknowledgePurge(ticker: Ticker, requestedAt: Instant): F[Unit]
 
 final private class LiveSecurityRepository[F[_]](
     private val collection: MongoCollection[F, SecurityEntity]
@@ -55,7 +62,7 @@ final private class LiveSecurityRepository[F[_]](
         .set(Field.Name, security.name)
         .set(Field.Kind, security.kind)
         .set(Field.ListingStatus, ListingStatus.Listed.print)
-      update = security.companyProfileLastUpdatedAt.fold(update)(ts => update.set(Field.CompanyProfileLastUpdatedAt, ts))
+      update = security.companyProfileLastUpdatedAt.fold(update)(ts => update.setOnInsert(Field.CompanyProfileLastUpdatedAt, ts))
       WriteCommand.UpdateOne(Filter.idEq(id), update, UpdateOptions(upsert = true))
 
   override def save(securities: List[Security]): F[Unit] =
@@ -63,17 +70,12 @@ final private class LiveSecurityRepository[F[_]](
       F.whenA(securities.nonEmpty)(collection.bulkWrite(securities.map(_.toUpdateCommand(now))).void)
     }
 
-  override def save(security: Security): F[Unit] =
-    clock.now.flatMap { now =>
-      collection.bulkWrite(List(security.toUpdateCommand(now))).void
-    }
-
   override def findVisible(ticker: Ticker): F[Option[Security]] =
     collection
       .aggregate[SecurityEntity](
         Aggregate
           .matchBy(Filter.idEq(ticker.value) && StockVisibility.activeSecurity)
-          .combinedWith(StockVisibility.withActiveProfile(Field.Id))
+          .combinedWith(StockVisibility.withProfile(Field.Id))
       )
       .first
       .mapOpt(_.toDomain)
@@ -83,7 +85,7 @@ final private class LiveSecurityRepository[F[_]](
       .aggregate[SecurityEntity](
         Aggregate
           .matchBy(Filter.eq(Field.Exchange, exchange) && StockVisibility.activeSecurity)
-          .combinedWith(StockVisibility.withActiveProfile(Field.Id))
+          .combinedWith(StockVisibility.withProfile(Field.Id))
       )
       .all
       .mapList(_.toDomain)
@@ -93,7 +95,7 @@ final private class LiveSecurityRepository[F[_]](
       .aggregate[Entity](
         Aggregate
           .matchBy(StockVisibility.activeSecurity)
-          .combinedWith(StockVisibility.withActiveProfile(Field.Id))
+          .combinedWith(StockVisibility.withProfile(Field.Id))
           .project(Projection.include(Field.Id))
       )
       .all
@@ -122,54 +124,87 @@ final private class LiveSecurityRepository[F[_]](
         .void
     }
 
-  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Boolean] =
-    val currentRequest = Filter.idEq(ticker.value) &&
-      (Filter.isNull(Field.ActiveChangedAt) || Filter.lte(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt)))
-    val filter = if active then currentRequest && Filter.eq(Field.ListingStatus, ListingStatus.Listed.print) else currentRequest
+  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant, reason: String): F[SecurityRepository.ActivationResult] =
+    import SecurityRepository.ActivationResult
+    val currentRequest = Filter.idEq(ticker.value) && ActiveChangedAt.accepts(Field.ActiveChangedAt, requestedAt)
+    val filter         = if active then currentRequest && Filter.eq(Field.ListingStatus, ListingStatus.Listed.print) else currentRequest
+    val update         = Update
+      .set(Field.IsActive, active)
+      .set(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))
+      .set(Field.ExclusionReason, Option.when(!active)(reason))
+      .unset(Field.CompanyProfileLastUpdatedAt)
+      .currentDate(Field.UpdatedAt)
+    val withPurge = if active then update else update.set(Field.PendingPurgeAt, ActiveChangedAt.encode(requestedAt))
     collection
-      .updateOne(
-        filter,
-        Update
-          .set(Field.IsActive, active)
-          .set(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))
-          .set(Field.ExclusionReason, Option.when(!active)("user-excluded"))
-          .currentDate(Field.UpdatedAt)
-      )
+      .updateOne(filter, withPurge)
       .flatMap { result =>
-        if result.getMatchedCount > 0 then true.pure[F]
-        else if active then
-          collection
-            .aggregate[Entity](
-              Aggregate
-                .matchBy(currentRequest && Filter.eq(Field.ListingStatus, ListingStatus.Delisted.print))
-                .project(Projection.include(Field.Id))
-            )
-            .first
-            .flatMap { delisted =>
-              F.raiseWhen(delisted.nonEmpty)(AppError.FailedValidation(s"Cannot activate delisted security $ticker")).as(false)
-            }
-        else false.pure[F]
+        if result.getMatchedCount > 0 then ActivationResult.Applied.pure[F]
+        else
+          collection.find(Filter.idEq(ticker.value)).first.map {
+            case None                                                                                       => ActivationResult.Missing
+            case Some(security) if security.activeChangedAt.exists(_ > ActiveChangedAt.encode(requestedAt)) => ActivationResult.Stale
+            case Some(security) if active && security.listingStatus == ListingStatus.Delisted               => ActivationResult.Delisted
+            case _                                                                                          => ActivationResult.Stale
+          }
       }
 
-  override def reconcile(exchange: Exchange, securities: List[Security]): F[Unit] =
-    F.whenA(securities.nonEmpty) {
-      val listed = securities.map(_.ticker.value)
+  override def countListed(exchange: Exchange): F[Long] =
+    collection.count(Filter.eq(Field.Exchange, exchange) && Filter.eq(Field.ListingStatus, ListingStatus.Listed.print))
+
+  override def reconcile(exchange: Exchange, securities: List[Security]): F[List[Ticker]] =
+    if securities.isEmpty then List.empty[Ticker].pure[F]
+    else
+      val listed  = securities.map(_.ticker.value)
+      val missing = Filter.eq(Field.Exchange, exchange) && Filter.nin(Field.Id, listed) &&
+        Filter.ne(Field.Id, stockschecker.domain.investment.InvestmentEvaluator.Benchmark.value)
       for
+        now      <- clock.now
+        delisted <- collection
+          .aggregate[Entity](Aggregate.matchBy(missing && StockVisibility.activeSecurity).project(Projection.include(Field.Id)))
+          .all
         _ <- save(securities)
         _ <- collection
+          .updateMany(Filter.in(Field.Id, listed) && Filter.isNull(Field.ExclusionReason), Update.set(Field.IsActive, true))
+          .void
+        _ <- collection
           .updateMany(
-            Filter.in(Field.Id, listed) && Filter.isNull(Field.ExclusionReason),
-            Update.set(Field.IsActive, true)
+            missing && StockVisibility.activeSecurity,
+            Update
+              .set(Field.ListingStatus, ListingStatus.Delisted.print)
+              .set(Field.IsActive, false)
+              .set(Field.PendingPurgeAt, ActiveChangedAt.encode(now))
+              .unset(Field.CompanyProfileLastUpdatedAt)
           )
           .void
         _ <- collection
           .updateMany(
-            Filter.eq(Field.Exchange, exchange) && Filter.nin(Field.Id, listed),
-            Update.set(Field.ListingStatus, ListingStatus.Delisted.print).set(Field.IsActive, false)
+            missing,
+            Update
+              .set(Field.ListingStatus, ListingStatus.Delisted.print)
+              .set(Field.IsActive, false)
+              .unset(Field.CompanyProfileLastUpdatedAt)
           )
           .void
-      yield ()
-    }
+      yield delisted.toList.map(_._id)
+
+  override def pendingPurges: F[List[SecurityRepository.PendingPurge]] =
+    collection
+      .find(Filter.exists(Field.PendingPurgeAt) && Filter.ne(Field.PendingPurgeAt, Option.empty[String]))
+      .all
+      .map { securities =>
+        securities.toList
+          .flatMap { security =>
+            security.pendingPurgeAt.map(requestedAt => SecurityRepository.PendingPurge(security._id, Instant.parse(requestedAt)))
+          }
+      }
+
+  override def acknowledgePurge(ticker: Ticker, requestedAt: Instant): F[Unit] =
+    collection
+      .updateOne(
+        Filter.idEq(ticker.value) && Filter.eq(Field.PendingPurgeAt, ActiveChangedAt.encode(requestedAt)),
+        Update.unset(Field.PendingPurgeAt)
+      )
+      .void
 
   extension (f: SecurityFilter)
     private def toFilter: F[Filter] = f match
@@ -177,8 +212,6 @@ final private class LiveSecurityRepository[F[_]](
         Filter.eq(Field.Exchange, exchange).pure
       case SecurityFilter.KindIs(kind) =>
         Filter.eq(Field.Kind, kind).pure
-      case SecurityFilter.IsActive(active) =>
-        Filter.eq(Field.IsActive, active).pure
       case SecurityFilter.UpdatedWithin(duration) =>
         clock.now.map(now => Filter.gt(Field.UpdatedAt, now.minus(duration)))
       case SecurityFilter.NotUpdatedFor(duration) =>
@@ -192,6 +225,11 @@ final private class LiveSecurityRepository[F[_]](
 }
 
 object SecurityRepository extends MongoJsonCodecs:
+  final case class PendingPurge(ticker: Ticker, requestedAt: Instant)
+
+  enum ActivationResult:
+    case Applied, Stale, Delisted, Missing
+
   val CollectionName = "securities"
   object Field:
     val Id                          = "_id"
@@ -201,6 +239,7 @@ object SecurityRepository extends MongoJsonCodecs:
     val Kind                        = "kind"
     val IsActive                    = "isActive"
     val ActiveChangedAt             = "activeChangedAt"
+    val PendingPurgeAt              = "pendingPurgeAt"
     val ExclusionReason             = "exclusionReason"
     val ListingStatus               = "listingStatus"
     val CompanyProfileLastUpdatedAt = "companyProfileLastUpdatedAt"
@@ -210,10 +249,8 @@ object SecurityRepository extends MongoJsonCodecs:
   def make[F[_]: {Concurrent, Clock}](database: MongoDatabase[F]): F[SecurityRepository[F]] =
     for
       collection <- database.getCollectionWithCodec[SecurityEntity](CollectionName)
-      _          <- collection.createIndex(Index.ascending(Field.Ticker))
-      _          <- collection.createIndex(Index.ascending(Field.Exchange))
       _          <- collection.createIndex(Index.ascending(Field.Kind))
-      _          <- collection.createIndex(Index.ascending(Field.IsActive))
+      _          <- collection.createIndex(Index.ascending(List(Field.IsActive, Field.ListingStatus)))
       _          <- collection.createIndex(Index.ascending(Field.ExclusionReason))
       _          <- collection.createIndex(Index.ascending(List(Field.Exchange, Field.Kind, Field.IsActive)))
       _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))

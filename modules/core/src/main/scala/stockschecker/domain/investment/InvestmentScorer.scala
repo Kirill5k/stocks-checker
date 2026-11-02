@@ -11,24 +11,12 @@ object InvestmentScorer:
       asOf: Instant,
       recipe: InvestmentRecipe = InvestmentRecipe()
   ): List[InvestmentScorecard] =
-    val duplicates = candidates.groupBy(_.stock.security.ticker).collect { case (ticker, rows) if rows.size > 1 => ticker }.toSet
-    val prepared   = candidates.map { candidate =>
-      val prepared = prepare(candidate, asOf, recipe)
-      if duplicates.contains(candidate.stock.security.ticker) then
-        prepared.copy(card =
-          prepared.card.copy(
-            exclusions = prepared.card.exclusions :+ InvestmentReasons.DuplicateTickerInUniverse,
-            weaknesses = prepared.card.weaknesses :+ "Not ranked: ticker appears more than once in the input universe."
-          )
-        )
-      else prepared
-    }
-    PeerScoring.rank(prepared, recipe)
+    PeerScoring.rank(candidates.map(prepare(_, asOf, recipe)), recipe)
 
   private def prepare(candidate: InvestmentCandidate, asOf: Instant, recipe: InvestmentRecipe): PeerScoring.Candidate =
     val stock     = candidate.stock
-    val industry  = stock.profile.map(_.industry.trim.toLowerCase(java.util.Locale.ROOT)).filter(_.nonEmpty)
-    val sector    = stock.profile.flatMap(_.sector)
+    val industry  = Some(InvestmentScreenInput.industryKey(stock.profile.industry)).filter(_.nonEmpty)
+    val sector    = stock.profile.sector
     val extracted = candidate.financialSnapshot match
       case None           => Left(FeatureExtraction.Failure(Map.empty, List(InvestmentReasons.MissingFinancialSnapshot)))
       case Some(snapshot) => FeatureExtraction.from(snapshot, stock.security.ticker, asOf, recipe)
@@ -71,5 +59,5 @@ object InvestmentScorer:
       observations,
       snapshot.quarterly.filter(_.metric == FinancialMetric.FreeCashFlowPerShareTtm).sortBy(_.period).lastOption,
       stock.priceAnalytics.map(_.toLatestPrice),
-      stock.profile.map(_.currency)
+      Some(stock.profile.currency)
     )

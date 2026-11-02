@@ -1,87 +1,78 @@
 # Stocks Checker
 
-A Scala service for collecting and analyzing stock market data.
+A Scala service for collecting stock market data, producing immutable investment rankings, saving screens and evaluating their cohorts. Finnhub supplies listings, profiles and financials; TwelveData supplies daily prices.
 
-## Architecture
+## Build and run
 
-Services depend on their own repositories, `MarketDataClient`, `ActionDispatcher`, clocks, logging and config. Services never depend on other services. Cross-aggregate writes are dispatched actions; cross-aggregate reads are aggregate queries in the requesting service's own repository. Pure scoring, selection and evaluation decisions live in `domain.investment`, including the `EvaluationCapture` capture decisions and report assembly.
+Install Java 27 and sbt; the project pins Scala 3.10.0 and sbt 2.0.11. Select Java 27 with `JAVA_HOME` and `PATH`, configure the environment below, then run:
 
-`PriceService` owns both `PriceAnalyticsRepository` and `PriceHistoryRepository`, including quote acquisition, analytics and explicit evaluation-history refreshes. `FinancialMetricsService` owns metrics and financial history. Ranking, screen and evaluation services each own their corresponding repository. `InvestmentConfig` validates the recipe's freshness limits while loading configuration.
+```sh
+sbt compile
+sbt "core/testOnly *"
+sbt "core/run"
+```
 
-| Requesting repository | Collections read across aggregates |
+The full test command includes unchanged suites; plain `sbt test` uses sbt 2's affected-suite selection. Use `sbt scalafmtAll scalafmtCheck` for formatting. `sbt "core/Docker/publishLocal"` builds a local Docker image. The manually dispatched Docker workflow publishes to the configured registry.
+
+See [AGENTS.md](AGENTS.md) for architecture, repository ownership, cross-aggregate reads and development conventions.
+
+## Configuration
+
+PureConfig loads [application.conf](modules/core/src/main/resources/application.conf). Investment freshness limits are validated during configuration loading. API keys and database access belong in deployment configuration.
+
+| Environment variable | Purpose / default |
 | :--- | :--- |
-| `SecurityRepository` | `company-profiles` for visible security reads; profile-fetch selection remains available for active, listed securities without a cached profile. |
-| `CompanyProfileRepository` | `securities` to enforce active/listed status before sorting and limiting. |
-| `StockRepository` | `securities`, `company-profiles`, `price-analytics` and `financial-metrics`, joined by the shared `StockAggregates` pipeline. Activation checks read only the security ID. |
-| `InvestmentRankingRepository` | The stock collections through `StockAggregates`, plus `financial-history` by ticker `_id`. Pruning reads `investment-screens` to protect referenced rankings and joins old input groups to published rankings to identify orphans. |
-| `InvestmentScreenRepository` | `investment-rankings` for headers and `investment-ranking-inputs` for ordinal-sorted entries. Entries remain a separate query to avoid embedding a full ranking in one MongoDB document. Screen lists and input visibility join `securities` and `company-profiles`. |
-| `InvestmentEvaluationRepository` | `investment-screens` joined to saved evaluations and to `securities`/`company-profiles` for cohort visibility and capture tasks; each price-series read queries all matching adjusted `price-observations` together, filters coverage and fetch timestamps, trims candles, and retains the original count for truncation checks. |
-| `DataQualityRepository` | `dataset-availability`, excluded `securities`, the latest `investment-rankings` header, compact `price-analytics` projections and grouped complete `investment-ranking-inputs`. |
+| `API_KEY` | Internal API credential, sent as `X-API-Key` |
+| `HOST` | HTTP bind host; `0.0.0.0` |
+| `PORT` | HTTP port; `7070` |
+| `FINNHUB_API_KEY` | Finnhub credential |
+| `TWELVE_DATA_API_KEY` | Comma-separated TwelveData credentials; duplicates share one budget |
+| `FINNHUB_REQUESTS_PER_MINUTE` | Finnhub spacing budget; `60` |
+| `FINNHUB_DAILY_ALLOWANCE` | Finnhub daily request budget; `0` means unlimited |
+| `TWELVE_DATA_REQUESTS_PER_MINUTE` | Per distinct TwelveData key; `8` |
+| `TWELVE_DATA_DAILY_ALLOWANCE` | Per distinct TwelveData key; `800` |
+| `ACTION_EXECUTOR_CONCURRENCY` | Concurrent background job workers; `2`, with provider limits enforced separately |
+| `MAX_LISTING_SHRINK_FRACTION` | Maximum accepted decrease in an exchange's listed count; `0.2` |
+| `MONGO_USER` | MongoDB username |
+| `MONGO_PASSWORD` | MongoDB password |
+| `MONGO_HOST` | MongoDB host |
+| `DOCKER_USERNAME` | Image namespace when packaging/publishing |
+| `DOCKER_REPO_URI` | Registry when packaging/publishing |
 
-## Investment research actions
+Provider concurrency limits, MongoDB database/timeouts and investment freshness limits are configurable in the HOCON file. The default database is `stocks-checker`. Providers receive credentials in request headers. Only credential failures (401) pause accounts and jobs; both retry after fifteen minutes. Per-symbol 403 and missing market data fail that request without disabling the account.
 
-The following public actions can be scheduled independently:
+## Research and diagnostics
 
-| Action | Behavior |
+`RefreshInvestmentResearch` runs a ranking-then-monthly-screen sequence alongside independent evaluation capture. Every ranking refresh publishes a new ID. Monthly screen creation returns created, already-exists, insufficient-eligible or ranking-unavailable; successful job completion can therefore mean a documented skip. Creation requires a usable ranking from the same UTC day. Existing monthly screens keep their original ranking.
+
+All routes below require `X-API-Key`:
+
+| Route | Purpose |
 | :--- | :--- |
-| `RefreshInvestmentRanking` | Builds candidates through the ranking repository, publishes a new immutable ranking on every execution, and prunes expired unreferenced rankings and orphaned inputs. |
-| `CreateMonthlyScreen` | Returns immediately if this month's screen already exists. Otherwise, reads a usable ranking from the same UTC day and creates the screen, unless the eligible universe is too small. |
-| `CaptureMonthlyEvaluations` | Captures the current month and resumes unsettled captures, dispatching missing price-history requests through `ActionDispatcher`. |
+| `GET /api/data-quality` | Dataset availability, security exclusions, frozen peer readiness and current analytics freshness |
+| `GET /api/investment-screens?limit=20` | Saved screens; limit 1–100 |
+| `GET /api/investment-screens/{id}` | Stored cohorts, candidates and bounded near misses |
+| `GET /api/investment-screens/{id}?includeExclusions=true` | Include all in-scope exclusion scorecards |
+| `GET /api/investment-screens/{id}/evaluation` | Read existing evaluation state; does not create jobs |
+| `GET /api/investment-rankings/{id}/inputs?limit=50` | Frozen diagnostics; optional `industry`, `sector`, exclusive ordinal `after`; limit 1–100 |
+| `GET /api/jobs?limit=20` | Recent jobs; optional `commandId`, `state`, `actionKind` |
+| `GET /api/jobs/status?id={url-encoded-id}` | One job, including hierarchical child IDs |
+| `POST /api/commands/{id}/execute` | Dispatch once; HTTP 204 carries `X-Job-Id`, independent of schedule state |
 
-`RefreshInvestmentResearch` expands into a sequence of ranking then screen creation, alongside an independent evaluation-capture action. The executor manages dependencies, retries and parent state. Evaluation capture still runs if ranking or screen creation fails, and mixed child outcomes make the umbrella job `Partial`. `ActionHandler` only routes leaf actions and expands composite plans; `RefreshEvaluationPrices` goes directly to `PriceService.refreshHistory`.
+`POST /api/investment-screens` creates a screen. Its JSON `limit` controls candidate count (default 20); the detail route does not accept a candidate-limit query. `rankingReadiness` describes the frozen ranking, while `priceAnalyticsReadiness` describes current persisted analytics. A successful provider request alone does not establish that the computed analytics are fresh.
 
-Monthly screen creation logs `created`, `already-exists`, or `insufficient-eligible` with the ranking ID and eligible/required counts. A skipped screen is an explicit outcome, not a provider failure. Repeated refreshes can recover within the same UTC day; existing monthly screens retain their original ranking. The financial, price-freshness and peer-group thresholds are unchanged.
+### Troubleshooting and data refill
 
-`GET /api/investment-screens/{id}` returns selected candidates with their financial evidence, bounded near misses, saved cohorts and summary exclusion counts. The full `exclusions` field is omitted unless `includeExclusions=true` is supplied; opting in can return thousands of scorecards. Default detail reads fetch only stored cohort inputs and up to ten visible financial near misses, then check every stored holding's current availability. Full frozen diagnostics remain available through the paginated ranking-input endpoint.
+- After a snapshot reset, restore required adjusted price histories before resuming pending evaluations. Captures retain `requestedHistory` and do not redispatch recorded requests; rerunning capture alone cannot reliably restore missing history. There is no public force-history endpoint.
+- Existing financial metrics cannot reconstruct `financial-history`. Refill it through `UpdateFinancialMetrics` with explicit tickers or an unrestricted active-profile selector; freshness filters can skip records whose update timestamps still look recent.
+- Creating a one-shot command with `maxExecutions: 1` already schedules it. Do not also execute it manually. Wait for refresh jobs and timestamp updates to finish before refreshing investment research.
 
-The response's `request` contains the original creation criteria. A null `request.limit` means the default of 20 candidates. To set a different candidate limit, put `limit` in the JSON body of `POST /api/investment-screens`; the saved detail endpoint does not accept a `limit` query parameter. The list endpoint's `limit` controls the number of screens returned.
+## Deactivation and storage lifecycle
 
-Stock and cached-profile reads hide inactive, delisted or unprofiled stocks; accepted profile deactivation removes cached price analytics and financial metrics through internal actions and clears their refresh timestamps. Listing reconciliation retains profiles and cached data, allowing relisting to restore visibility. Historical observations and snapshots are retained. Confirmed empty profile responses deactivate the security and exclude it from future scheduled queries; there is no automatic recheck or reactivation. Screens/evaluations containing an unavailable holding are hidden as a whole and retain their immutable stored history. See [the recovery procedure](INVESTMENT_RECOVERY.md) for deployment-dependent diagnosis and recovery steps.
+Explicit deactivation, delisting and confirmed empty profiles enqueue a purge. The security document remains as an inactive tombstone. The purge deletes profiles, analytics, price observations, financial metrics/history, ranking-input rows and every screen/evaluation whose cohorts contain the stock. VTI is protected as the evaluation benchmark. Exclusion reasons distinguish user exclusions from empty provider profiles.
 
-`GET /api/investment-rankings/{rankingId}/inputs` provides read-only frozen input diagnostics, with optional `industry`, `sector`, `after` (ordinal), and `limit` (1–100, default 50) parameters. Responses identify the ranking and provide `nextAfter` when another page exists.
+The equal-universe cohort contains every eligible stock, so purging one eligible stock can delete every screen containing it. Research history is intentionally survivor-only. Reactivating a listed security refetches its profile and allows data to refill; it does not restore deleted screens. Unexpected listing shrinkage is rejected before reconciliation. Durable pending-purge markers preserve delisting cleanup across dispatch failures and restarts.
 
-`GET /api/data-quality` retains dataset availability and ranking coverage, and adds:
+Rankings and input rows initially receive BSON-date `expiresAt = createdAt + 3 days`. Zero-second TTL indexes remove unpinned data asynchronously; reads already exclude expired headers. Screens dispatch internal pin actions, removing expiry from inputs before headers. Deleting the last referencing screen releases the ranking, restoring expiry and rechecking references for concurrent pins. A failed ranking publication's input rows also expire. If refreshes stop beyond retention, the data-quality report can correctly show no current ranking.
 
-- `rankingReadiness`: the frozen ranking ID/time/recipe, monthly readiness status, eligible and required counts, and complete-candidate counts by normalized industry and sector. Complete candidates include eligible stocks and stocks excluded solely for insufficient peer coverage. A missing ranking returns `null`; readiness is about the ranking, not whether a monthly screen already exists.
-- `priceAnalyticsReadiness`: current persisted analytics with calculation time, latest price date and price eligibility under the configured freshness limit. Successful provider retrieval can coexist with stale or missing analytics. These rows are not a last-job-status report, and their observation time differs from the frozen ranking.
-
-See [investment recovery](INVESTMENT_RECOVERY.md) for job inspection, targeted refill and provider-capacity checks. All diagnostic endpoints require `X-API-Key`.
-
-Evaluation reads do not create captures or dispatch jobs. Captures preserve their requested-history ticker set across saves, record dispatched batches atomically, and do not recreate pruned completed jobs. `InvestmentRanking.requireUsable` provides the shared recipe and freshness checks for screen creation.
-
-## Storage
-
-Routine price analytics save their calculated results and a small, 14-day unadjusted quote cache. Quotes are fetched first so a job deferred by provider request spacing can resume without downloading the large adjusted history again. Full adjusted histories are cached only for explicit portfolio evaluation captures; the analytics calculations still use the full 13-year history. A repeated forced analytics refresh may therefore require another provider request.
-
-The price cache keeps one current snapshot per ticker and adjustment, replacing the whole vintage rather than merging prices adjusted at different times. Its stable Mongo ID is `ticker:adjustment`; the provider snapshot ID remains in `data.id` for provenance. Older snapshots are not a permanent audit archive. Financial history uses the ticker as `_id` and keeps only the latest canonical snapshot per ticker, including its provider, observation timestamp, payload hash, mapping version and validation issues, without a separate snapshot ID or duplicate raw provider response. Scorecards preserve financial provenance in `evidence`; their JSON no longer includes `financialSnapshotId`. Existing documents containing these removed ID fields remain readable and require no additional reset.
-
-Ranking inputs store the full scorecard and its evidence alongside just the exchange, country, industry, sector, old price score and exclusion explanation needed by screens. They do not duplicate complete stock records, company profiles or financial snapshots. Unreferenced rankings and their input rows expire after three days, allowing a day beyond their freshness window for screen creation; saved screens retain their rankings.
-
-Snapshot `data.fetchedAt` (prices) and `observedAt` (financials) are BSON dates, with millisecond precision. A single conditional replacement accepts only a newer vintage; duplicate IDs and tied timestamps leave the current snapshot unchanged. A duplicate-key collision gets one conditional retry without upsert, so a concurrent first insert cannot discard a newer vintage. API timestamps remain ISO strings.
-
-### Starting after resetting snapshot collections
-
-**Upgrading from the old snapshot schema requires dropping `price-observations` and `financial-history` before starting the updated application.** Old price timestamps are strings, so the BSON-date comparison cannot replace them. Old financial snapshots have ObjectId IDs and a unique `id` index that is incompatible with the new ticker IDs. Also drop the retired `latest-prices` collection. If these three collections have already been dropped, that reset is complete; no additional collection drops or document conversions are needed.
-
-Keep `securities`, `company-profiles`, `price-analytics`, `financial-metrics`, `investment-rankings`, `investment-ranking-inputs`, `investment-screens`, `investment-evaluations`, commands and jobs.
-
-1. **Before resetting or deploying, deactivate the `RefreshInvestmentResearch` command.** Find it with `GET /api/commands`, then call `PUT /api/commands/{id}/active` with `{"isActive":false}` and the configured `X-API-Key` header. Also deactivate any independently scheduled ranking, monthly-screen or evaluation-capture actions, including sequences containing them. Leave these commands inactive through step 5: the scheduler runs as soon as the application starts. Check that no outstanding research or history jobs remain before resetting, including queued or deferred manual jobs; deactivating a command does not cancel independently dispatched manual jobs, which can resume on startup.
-2. Stop all application instances. In `mongosh`, select the application's database (`stocks-checker` by default) and run the following if the reset has not already been done:
-
-   ```javascript
-   use stocks-checker
-   db.getCollection("price-observations").drop()
-   db.getCollection("financial-history").drop()
-   db.getCollection("latest-prices").drop()
-   ```
-
-3. Start the updated application with the research commands still inactive. Provider fetches recreate `price-observations` and `financial-history` with BSON dates and stable IDs. `latest-prices` is no longer used and will not be recreated.
-4. Refill financial history and complete the evaluation recovery check below before running any research action. Run `FetchFinancialMetrics` with `CompanyProfileFilter.IsActive(true)` for the active universe, or `UpdateFinancialMetrics` for explicit tickers, and wait for the refresh jobs to finish. Existing `financial-metrics` documents do not reconstruct financial snapshots. A freshness-based filter can skip tickers whose profile timestamps still look recent, so use the active-universe or explicit-ticker action for this initial refill. Price caches refill on demand: `UpdatePriceAnalytics` refreshes analytics and the small unadjusted cache; evaluation captures request adjusted histories. Existing saved price analytics can remain in place.
-5. With financial history refilled and affected captures recovered, manually run the inactive `RefreshInvestmentResearch` command using `POST /api/commands/{id}/execute`, then check its results. This endpoint can dispatch an inactive command without reactivating its schedule. Every refresh builds a new ranking, including later on the same UTC day. Existing monthly screens retain their original ranking.
-6. Reactivate the commands paused in step 1 using `PUT /api/commands/{id}/active` with `{"isActive":true}`.
-
-The application creates the new `{ screenId: 1, month: 1 }` index on `investment-evaluations` during startup. Dropping `financial-history` already removed its obsolete indexes; its built-in `_id` index now enforces one snapshot per ticker. Old evaluation indexes on `settled` and `(finished, screenId)` may remain without affecting correctness. Removing those indexes is optional space cleanup, not a startup requirement.
-
-Preserve saved evaluation reports: persisted monthly reports are self-contained. The evaluation endpoint can return the current month's settled report or the latest finished report without the deleted candles; an unfinished screen's later month can require recalculation. Captures still requiring computation may need targeted history recovery after the cache reset. Their `requestedHistory` can already record the missing tickers, and even a new capture can share a terminal history job for the same ticker and cutoff date with another screen. Running `CaptureMonthlyEvaluations` again does not guarantee that these histories will be downloaded again: when no jobs remain pending, it can permanently settle an incomplete report. Check affected captures and restore their required adjusted histories before resuming them; do not broadly delete screens, reports or jobs. Ordinary analytics refreshes do not persist the adjusted histories used by evaluations, and there is no public force-history endpoint. If no evaluation history requests have ever been dispatched, this recovery case does not apply.
-
-Atlas's free-tier quota counts uncompressed documents and indexes, so use the collection's **Data size** and **Total index size** columns, rather than compressed **Storage size**, to check the result ([MongoDB documentation](https://www.mongodb.com/docs/atlas/reference/free-shared-limitations/)).
+Price observations keep one current snapshot per ticker and adjustment under `ticker:adjustment`; `data.id` retains provider provenance. Routine analytics save a short unadjusted quote cache; full adjusted histories are persisted only for evaluation captures. Financial history keeps one canonical ticker-keyed snapshot. Snapshot replacement accepts only a newer timestamp. Scorecards preserve financial evidence/provenance without copying entire financial snapshots or raw responses. TTL controls the number of rankings retained, not the size of each scorecard.

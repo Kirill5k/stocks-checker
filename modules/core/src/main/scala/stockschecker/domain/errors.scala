@@ -16,11 +16,7 @@ object errors {
       case _: FailedValidation      => "Provider data failed validation"
       case _                        => error.getClass.getSimpleName
 
-    sealed trait Unauth        extends AppError
     sealed trait NotFound      extends AppError
-    sealed trait Conflict      extends AppError
-    sealed trait BadReq        extends AppError
-    sealed trait Forbidden     extends AppError
     sealed trait Unprocessable extends AppError
 
     final case class FailedValidation(message: String) extends Unprocessable

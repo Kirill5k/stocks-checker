@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 trait InvestmentEvaluationService[F[_]]:
+  def delete(ticker: Ticker): F[Unit]
   def evaluate(id: InvestmentScreenId): F[InvestmentEvaluation]
   def captureMonthlyEvaluations: F[Int]
 
@@ -28,6 +29,8 @@ final private class LiveInvestmentEvaluationService[F[_]](
 )(using F: Sync[F], C: Clock[F], L: Logger[F])
     extends InvestmentEvaluationService[F] {
   import InvestmentEvaluationService.historyJobId
+
+  override def delete(ticker: Ticker): F[Unit] = evaluations.delete(ticker)
 
   private def buildReport(screen: InvestmentScreen, now: Instant, month: YearMonth): F[EvaluationCapture.Draft] =
     evaluations

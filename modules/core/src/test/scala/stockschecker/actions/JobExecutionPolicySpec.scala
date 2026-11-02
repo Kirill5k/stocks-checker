@@ -24,8 +24,10 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
     "back off provider deferrals from thirty seconds to five minutes independently of transient retries" in {
       val job = Job(JobId("deferred"), Action.SetSecurityActive(AAPL, false, ts), ts, ts, retries = MaxTransientRetries)
       List(-1 -> 30L, 0 -> 30L, 1 -> 60L, 2 -> 120L, 3 -> 240L, 4 -> 300L, 30 -> 300L, Int.MaxValue -> 300L).foreach {
-        case (waitCount, seconds) =>
-          providerDeferUntil(job.copy(waitCount = waitCount), ts, ts.plusSeconds(1), 0) mustBe ts.plusSeconds(seconds)
+        case (deferralCount, seconds) =>
+          providerDeferUntil(job.copy(deferralCount = deferralCount, waitCount = 50), ts, ts.plusSeconds(1), 0) mustBe ts.plusSeconds(
+            seconds
+          )
       }
     }
 
@@ -36,7 +38,7 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
       providerDeferUntil(job, ts, reset, MaximumProviderDeferJitterMillis) mustBe reset.plusSeconds(30)
       providerDeferUntil(job, ts, ts.minusSeconds(1), 0) mustBe ts.plusSeconds(30)
       providerDeferUntil(job, ts, ts.plusSeconds(1), MaximumProviderDeferJitterMillis) mustBe ts.plusSeconds(60)
-      providerDeferUntil(job.copy(waitCount = 10), ts, ts.plusSeconds(1), MaximumProviderDeferJitterMillis) mustBe ts.plusSeconds(330)
+      providerDeferUntil(job.copy(deferralCount = 10), ts, ts.plusSeconds(1), MaximumProviderDeferJitterMillis) mustBe ts.plusSeconds(330)
     }
 
     "wait for missing dependencies while permitting partially successful preceding steps" in {
@@ -69,7 +71,13 @@ class JobExecutionPolicySpec extends AnyWordSpec with Matchers:
     }
 
     "retain bounded transport retries" in {
-      failure(new com.mongodb.MongoException("connection failed"), 0) mustBe Failure.Retry
+      failure(new com.mongodb.MongoSocketReadException("connection failed", new com.mongodb.ServerAddress()), 0) mustBe Failure.Retry
+      failure(new com.mongodb.MongoTimeoutException("server timeout"), 0) mustBe Failure.Retry
+      val retryable = new com.mongodb.MongoException("retryable write")
+      retryable.addLabel("RetryableWriteError")
+      failure(retryable, 0) mustBe Failure.Retry
+      failure(new com.mongodb.MongoException("invalid document"), 0) mustBe Failure.Fail
+      failure(new com.mongodb.MongoException(11000, "duplicate key"), 0) mustBe Failure.Fail
       failure(new java.io.IOException("connection interrupted"), 0) mustBe Failure.Retry
       failure(new com.mongodb.MongoException("connection failed"), MaxTransientRetries) mustBe Failure.Fail
       failure(new java.io.IOException("connection interrupted"), MaxTransientRetries) mustBe Failure.Fail

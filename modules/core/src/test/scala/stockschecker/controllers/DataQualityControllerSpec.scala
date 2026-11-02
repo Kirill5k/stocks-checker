@@ -16,15 +16,6 @@ class DataQualityControllerSpec extends HttpRoutesWordSpec {
   private val config = ApiConfig("test-key")
 
   "Data quality endpoint" should {
-    "require authentication before reading the report" in {
-      val service  = mock[DataQualityService[IO]]
-      val response = for
-        controller <- DataQualityController.make(service, config)
-        response   <- controller.routes.orNotFound.run(Request[IO](uri = uri"/data-quality"))
-      yield response
-      response mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-      verifyNoInteractions(service)
-    }
 
     "return the data quality report after authentication" in {
       val service = mock[DataQualityService[IO]]

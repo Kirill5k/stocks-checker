@@ -45,7 +45,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
   "A PriceAnalyticsRepository" when {
     "delete" should {
       "remove only the requested analytics and remain idempotent" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo     <- PriceAnalyticsRepository.make[IO](db)
             _        <- repo.save(List(AAPLPriceAnalytics, MSFTPriceAnalytics))
@@ -60,37 +60,37 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
     }
     "save" should {
       "save price analytics in the repository" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
-            _    <- repo.save(AAPLPriceAnalytics)
+            _    <- repo.save(List(AAPLPriceAnalytics))
             res  <- repo.find(AAPL)
           yield res mustBe Some(AAPLPriceAnalytics)
         }
 
       "update analytics when saving same ticker" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           val updatedAnalytics = AAPLPriceAnalytics.copy(
             performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(latestPrice = BigDecimal("235.00"))
           )
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
-            _    <- repo.save(AAPLPriceAnalytics)
-            _    <- repo.save(updatedAnalytics)
+            _    <- repo.save(List(AAPLPriceAnalytics))
+            _    <- repo.save(List(updatedAnalytics))
             res  <- repo.find(AAPL)
           yield res.map(_.performanceSummary.latestPrice) mustBe Some(BigDecimal("235.00"))
         }
 
       "preserve absent basis and allow refreshed basis to be written or cleared" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           val withoutBasis = AAPLPriceAnalytics.copy(basis = None)
           for
             repo      <- PriceAnalyticsRepository.make[IO](db)
-            _         <- repo.save(withoutBasis)
+            _         <- repo.save(List(withoutBasis))
             absent    <- repo.find(AAPL)
-            _         <- repo.save(AAPLPriceAnalytics)
+            _         <- repo.save(List(AAPLPriceAnalytics))
             refreshed <- repo.find(AAPL)
-            _         <- repo.save(withoutBasis)
+            _         <- repo.save(List(withoutBasis))
             cleared   <- repo.find(AAPL)
           yield
             absent mustBe Some(withoutBasis)
@@ -100,7 +100,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
         }
 
       "save batch of analytics" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           val withoutBasis  = AAPLPriceAnalytics.copy(basis = None)
           val analyticsList = List(withoutBasis, MSFTPriceAnalytics)
           for
@@ -122,7 +122,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
             toDoc(MSFTPriceAnalytics).add("basis", BsonValue.Null)
           )
         )
-        withEmbeddedMongoDatabase(seedData) { db =>
+        withProfiles(seedData.updated(SecurityRepository.CollectionName, List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)))) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
             aapl <- repo.find(AAPL)
@@ -136,7 +136,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
       }
 
       "return None when analytics does not exist for ticker" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
             res  <- repo.find(MSFT)
@@ -144,10 +144,10 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
         }
 
       "find analytics by ticker" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
-            _    <- repo.save(AAPLPriceAnalytics)
+            _    <- repo.save(List(AAPLPriceAnalytics))
             res  <- repo.find(AAPL)
           yield
             res mustBe defined
@@ -156,9 +156,27 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
         }
     }
 
+    "active security joins" should {
+      "hide rows recreated after a purge, applying security restrictions before limits" in
+        withProfiles(List(AAPL, MSFT)) { db =>
+          for
+            securities <- SecurityRepository.make[IO](db)
+            repo       <- PriceAnalyticsRepository.make[IO](db)
+            _          <- securities.setActive(AAPL, false, ts)
+            _          <- repo.save(List(AAPLPriceAnalytics, MSFTPriceAnalytics))
+            one        <- repo.find(AAPL)
+            all        <- repo.findAll(Some(1))
+            filtered   <- repo.findBy(PriceAnalyticsFilter.PriceAbove(0), Some(1))
+          yield
+            one mustBe None
+            all.map(_.ticker) mustBe List(MSFT)
+            filtered.map(_.ticker) mustBe List(MSFT)
+        }
+    }
+
     "findAll" should {
       "return empty list when no analytics exist" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
             res  <- repo.findAll(None)
@@ -166,7 +184,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
         }
 
       "return all analytics sorted by overall score" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
             _    <- repo.save(List(AAPLPriceAnalytics, MSFTPriceAnalytics))
@@ -177,7 +195,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
         }
 
       "respect limit parameter" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
             _    <- repo.save(List(AAPLPriceAnalytics, MSFTPriceAnalytics))
@@ -188,7 +206,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
 
     "findBy" should {
       "filter by price above" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
             _    <- repo.save(List(AAPLPriceAnalytics, MSFTPriceAnalytics))
@@ -199,7 +217,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
         }
 
       "filter by price below" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
             _    <- repo.save(List(AAPLPriceAnalytics, MSFTPriceAnalytics))
@@ -210,7 +228,7 @@ class PriceAnalyticsRepositorySpec extends RepositorySpec {
         }
 
       "filter by composite filters" in
-        withEmbeddedMongoDatabase { db =>
+        withProfiles(List(AAPL, MSFT)) { db =>
           for
             repo <- PriceAnalyticsRepository.make[IO](db)
             _    <- repo.save(List(AAPLPriceAnalytics, MSFTPriceAnalytics))

@@ -12,17 +12,25 @@ import sttp.tapir.generic.auto.SchemaDerivation
 import sttp.tapir.json.circe.TapirJsonCirce
 import sttp.tapir.server.http4s.Http4sServerInterpreter
 
-final private class JobController[F[_]: Async](service: JobService[F], apiKeyRequirement: ApiKeyRequirement)
-    extends Controller[F](apiKeyRequirement):
-  private val list = secured(JobController.listEndpoint).serverLogic { _ =>
-    { case (limit, commandId, state, actionKind) =>
-      service.list(limit.getOrElse(20), JobFilter(commandId, state, actionKind)).asResponse
-    }
-  }
-  private val get                    = secured(JobController.getEndpoint).serverLogic(_ => id => service.get(id).asResponse)
-  override val routes: HttpRoutes[F] = Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(list, get))
+final private class JobController[F[_]: Async](
+    private val service: JobService[F],
+    apiKeyRequirement: ApiKeyRequirement
+) extends Controller[F](apiKeyRequirement) {
 
-object JobController extends TapirJsonCirce with SchemaDerivation:
+  private val list = secured(JobController.listEndpoint)
+    .serverLogic { _ =>
+      { case (limit, commandId, state, actionKind) =>
+        service.list(limit, JobFilter(commandId, state, actionKind)).asResponse
+      }
+    }
+
+  private val get = secured(JobController.getEndpoint)
+    .serverLogic(_ => id => service.get(id).asResponse)
+
+  override val routes: HttpRoutes[F] = Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(list, get))
+}
+
+object JobController extends TapirJsonCirce with SchemaDerivation {
   private given Schema[Action]              = Schema.string
   private given Schema[CommandId]           = Schema.string
   private given Schema[JobState]            = Schema.string
@@ -35,10 +43,6 @@ object JobController extends TapirJsonCirce with SchemaDerivation:
       )(DecodeResult.Value(_))
   }(_.value)
 
-  private val validLimit = Validator.custom[Option[Int]] { limit =>
-    if limit.forall(value => value >= 1 && value <= 100) then ValidationResult.Valid
-    else ValidationResult.Invalid("limit must be between 1 and 100")
-  }
   private val validActionKind = Validator.custom[Option[String]] { kind =>
     if kind.exists(_.trim.isEmpty) then ValidationResult.Invalid("actionKind must not be empty")
     else if kind.exists(_.length > 100) then ValidationResult.Invalid("actionKind must not exceed 100 characters")
@@ -52,7 +56,7 @@ object JobController extends TapirJsonCirce with SchemaDerivation:
 
   private val listEndpoint = Controller.secureEndpoint.get
     .in("jobs")
-    .in(query[Option[Int]]("limit").validate(validLimit))
+    .in(query[Int]("limit").default(20).validate(Validator.inRange(1, 100)))
     .in(query[Option[CommandId]]("commandId"))
     .in(query[Option[JobState]]("state"))
     .in(query[Option[String]]("actionKind").validate(validActionKind))
@@ -65,3 +69,4 @@ object JobController extends TapirJsonCirce with SchemaDerivation:
 
   def make[F[_]: Async](service: JobService[F], config: ApiConfig): F[Controller[F]] =
     Async[F].pure(JobController(service, ApiKeyRequirement.Required(config.key)))
+}

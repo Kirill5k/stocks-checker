@@ -65,8 +65,7 @@ class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
         InvestmentCandidate(
           AAPLStock.copy(
             security = AAPLSecurity.copy(ticker = ticker),
-            profile =
-              Some(AAPLCompanyProfile.copy(ticker = ticker, country = country, industry = "Software", sector = Some(Sector.Technology))),
+            profile = AAPLCompanyProfile.copy(ticker = ticker, country = country, industry = "Software", sector = Some(Sector.Technology)),
             priceAnalytics =
               Some(AAPLPriceAnalytics.copy(ticker = ticker, scores = AAPLPriceAnalytics.scores.copy(overallScore = priceScore)))
           ),
@@ -107,7 +106,7 @@ class InvestmentScreenSelectionSpec extends AnyWordSpec with Matchers:
       )
       result.cohorts.foreach { cohort =>
         cohort.concentration.map(_.sectorWeightsPercent) mustBe Some(Map("technology" -> BigDecimal(100)))
-        cohort.concentration.map(_.industryWeightsPercent) mustBe Some(Map("Software" -> BigDecimal(100)))
+        cohort.concentration.map(_.industryWeightsPercent) mustBe Some(Map("software" -> BigDecimal(100)))
       }
     }
 

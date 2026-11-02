@@ -51,7 +51,7 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
     InvestmentCandidate(
       Stock(
         AAPLSecurity.copy(ticker = ticker),
-        Some(AAPLCompanyProfile.copy(ticker = ticker, industry = industry, sector = Some(sector))),
+        AAPLCompanyProfile.copy(ticker = ticker, industry = industry, sector = Some(sector)),
         Some(analytics)
       ),
       Some(snapshot)
@@ -249,11 +249,10 @@ class InvestmentScorerSpec extends AnyWordSpec with Matchers:
     }
 
     List("Banks" -> Sector.Financials, "REIT" -> Sector.RealEstate).foreach { case (industry, sector) =>
-      s"keep $industry companies and inactive securities out of industrial cohorts" in {
-        val input    = candidate("SPECIALIST", industry = industry, sector = sector)
-        val modified = input.copy(stock = input.stock.copy(security = input.stock.security.copy(isActive = false)))
-        val card     = InvestmentScorer.rank(List(modified), now, recipe).head
-        card.exclusions must contain allOf ("specialist-sector-model-required", "inactive-security")
+      s"keep $industry companies out of industrial cohorts" in {
+        val input = candidate("SPECIALIST", industry = industry, sector = sector)
+        val card  = InvestmentScorer.rank(List(input), now, recipe).head
+        card.exclusions must contain("specialist-sector-model-required")
       }
     }
 

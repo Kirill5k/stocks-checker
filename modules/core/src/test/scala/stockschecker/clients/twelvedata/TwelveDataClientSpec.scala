@@ -102,14 +102,16 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           val expectedParams = Map(
             "symbol"     -> "AAPL",
             "interval"   -> "1day",
-            "apikey"     -> "api-key",
             "outputsize" -> "5000",
             "start_date" -> from.toString,
             "end_date"   -> through.toString,
             "adjust"     -> wireValue
           )
           val backend = fs2BackendStub.whenRequestMatchesPartial {
-            case r if r.isGet && r.hasPath("/time_series") && r.hasParams(expectedParams) =>
+            case r
+                if r.isGet && r.hasPath("/time_series") && r.hasParams(expectedParams) && r
+                  .header("Authorization")
+                  .contains("apikey api-key") && !r.uri.toString.contains("api-key") =>
               ResponseStub.adjust(dailyResponse(candles, currency = "EUR"))
             case _ => throw new RuntimeException("Unexpected daily history request")
           }
@@ -287,6 +289,34 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           }
       }
 
+      "treat successful empty values as unavailable data" in {
+        val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(dailyResponse(Nil)))
+        makeClient(config, backend)
+          .flatMap(_.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.Unadjusted))
+          .attempt
+          .asserting(_.left.toOption.get mustBe a[AppError.DataUnavailable])
+      }
+
+      List(StatusCode.Forbidden, StatusCode.Ok).foreach { status =>
+        s"treat symbol permission failures at HTTP ${status.code} as unavailable without disabling the key" in {
+          val backend = fs2BackendStub.whenAnyRequest.thenRespondCyclic(
+            ResponseStub.adjust("""{"status":"error","code":403,"message":"restricted"}""", status),
+            ResponseStub.adjust(dailyResponse(candles))
+          )
+          val repository = mock[ProviderBudgetRepository[IO]]
+          when(repository.reserve(any[Provider], any[Instant], any[Long], any[Int], any[Option[String]])).thenReturnIO(None)
+          (for
+            access <- ProviderAccess.make[IO](repository)
+            client <- TwelveDataClient.make[IO](config, backend, access)
+            first  <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.Unadjusted).attempt
+            second <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.Unadjusted)
+          yield (first, second)).asserting { case (first, second) =>
+            first.left.toOption.get mustBe a[AppError.DataUnavailable]
+            second.ticker mustBe Ticker("AAPL")
+          }
+        }
+      }
+
       "preserve historical gaps that can represent trading halts" in {
         val values  = List(from.minusMonths(6) -> BigDecimal(90), from -> BigDecimal(100), through -> BigDecimal(102))
         val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(dailyResponse(values)))
@@ -313,7 +343,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           val error = first.left.toOption.get.asInstanceOf[AppError.ProviderDeferred]
           error.provider mustBe Provider.TwelveData
           error.reason mustBe ProviderDeferralReason.Provider429
-          error.context mustBe Some("rate limited")
+          error.context mustBe Some("Error retrieving daily prices for AAPL")
           error.retryAt.isBefore(before.plusSeconds(120)) mustBe false
           error.retryAt.isAfter(after.plusSeconds(120)) mustBe false
           second.left.toOption mustBe Some(error.copy(context = None))
@@ -336,7 +366,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           val error = first.left.toOption.get.asInstanceOf[AppError.ProviderDeferred]
           error.reason mustBe ProviderDeferralReason.Provider429
           error.message must include("AAPL")
-          error.message must include("rate limited")
+          error.message must include("Error retrieving daily prices for AAPL")
           second.left.toOption mustBe Some(error.copy(context = None))
         }
       }
@@ -344,9 +374,11 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
       "normalize and rotate distinct API keys with a separate daily allowance for each key" in {
         val multiple = config.copy(apiKey = " key-one, , key-one, key-two, ", limits = ProviderLimits(60000, 1, 1))
         val backend  = fs2BackendStub.whenRequestMatchesPartial {
-          case r if r.hasParams(Map("apikey" -> "key-one")) => ResponseStub.adjust(dailyResponse(List(from -> BigDecimal(101))))
-          case r if r.hasParams(Map("apikey" -> "key-two")) => ResponseStub.adjust(dailyResponse(List(from -> BigDecimal(202))))
-          case _                                            => throw new AssertionError("Unexpected API key")
+          case r if r.header("Authorization").contains("apikey key-one") =>
+            ResponseStub.adjust(dailyResponse(List(from -> BigDecimal(101))))
+          case r if r.header("Authorization").contains("apikey key-two") =>
+            ResponseStub.adjust(dailyResponse(List(from -> BigDecimal(202))))
+          case _ => throw new AssertionError("Unexpected API key")
         }
         (for
           fixture  <- accessFixture
@@ -376,9 +408,11 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
       "preserve credential budgets when clients are recreated with API keys in a different order" in {
         val multiple = config.copy(apiKey = "key-one,key-two", limits = ProviderLimits(60000, 1, 1))
         val backend  = fs2BackendStub.whenRequestMatchesPartial {
-          case r if r.hasParams(Map("apikey" -> "key-one")) => ResponseStub.adjust(dailyResponse(List(from -> BigDecimal(101))))
-          case r if r.hasParams(Map("apikey" -> "key-two")) => ResponseStub.adjust(dailyResponse(List(from -> BigDecimal(202))))
-          case _                                            => throw new AssertionError("Unexpected API key")
+          case r if r.header("Authorization").contains("apikey key-one") =>
+            ResponseStub.adjust(dailyResponse(List(from -> BigDecimal(101))))
+          case r if r.header("Authorization").contains("apikey key-two") =>
+            ResponseStub.adjust(dailyResponse(List(from -> BigDecimal(202))))
+          case _ => throw new AssertionError("Unexpected API key")
         }
         (for
           fixture   <- accessFixture
@@ -408,9 +442,9 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           secondStarted <- Deferred[IO, Unit]
           release       <- Deferred[IO, Unit]
           backend = fs2BackendStub
-            .whenRequestMatches(_.hasParams(Map("apikey" -> "key-one")))
+            .whenRequestMatches(_.header("Authorization").contains("apikey key-one"))
             .thenRespondF(firstStarted.complete(()).void >> release.get.as(ResponseStub.adjust(dailyResponse(candles))))
-            .whenRequestMatches(_.hasParams(Map("apikey" -> "key-two")))
+            .whenRequestMatches(_.header("Authorization").contains("apikey key-two"))
             .thenRespondF(secondStarted.complete(()).void >> release.get.as(ResponseStub.adjust(dailyResponse(candles))))
           client <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
           first  <- client.getDailyPriceHistory(Ticker("AAPL"), DateRange(from, through), PriceAdjustment.SplitsAndDividends).start
@@ -461,9 +495,10 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
       "continue with a healthy key after an authentication failure" in {
         val multiple = config.copy(apiKey = "invalid-secret,healthy-secret", limits = ProviderLimits(60000, 0, 1))
         val backend  = fs2BackendStub.whenRequestMatchesPartial {
-          case r if r.hasParams(Map("apikey" -> "invalid-secret")) => ResponseStub.adjust("invalid-secret", StatusCode.Unauthorized)
-          case r if r.hasParams(Map("apikey" -> "healthy-secret")) => ResponseStub.adjust(dailyResponse(candles))
-          case _                                                   => throw new AssertionError("Unexpected API key")
+          case r if r.header("Authorization").contains("apikey invalid-secret") =>
+            ResponseStub.adjust("invalid-secret", StatusCode.Unauthorized)
+          case r if r.header("Authorization").contains("apikey healthy-secret") => ResponseStub.adjust(dailyResponse(candles))
+          case _                                                                => throw new AssertionError("Unexpected API key")
         }
         (for
           fixture  <- accessFixture
@@ -483,9 +518,9 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
       "return the earliest available key deadline when all keys are rate limited" in {
         val multiple = config.copy(apiKey = "slow-secret,fast-secret")
         val backend  = fs2BackendStub.whenRequestMatchesPartial {
-          case r if r.hasParams(Map("apikey" -> "slow-secret")) =>
+          case r if r.header("Authorization").contains("apikey slow-secret") =>
             ResponseStub.adjust("slow-secret", StatusCode.TooManyRequests).copy(headers = Seq(Header("Retry-After", "120")))
-          case r if r.hasParams(Map("apikey" -> "fast-secret")) =>
+          case r if r.header("Authorization").contains("apikey fast-secret") =>
             ResponseStub.adjust("fast-secret", StatusCode.TooManyRequests).copy(headers = Seq(Header("Retry-After", "60")))
           case _ => throw new AssertionError("Unexpected API key")
         }
@@ -502,7 +537,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
           error.retryAt.isBefore(before.plusSeconds(60)) mustBe false
           error.retryAt.isAfter(after.plusSeconds(60)) mustBe false
           second.left.toOption mustBe Some(error.copy(context = None))
-          error.context mustBe Some("[redacted]")
+          error.context mustBe Some("Error retrieving daily prices for AAPL")
           error.toString must not include "slow-secret"
           error.toString must not include "fast-secret"
           AppError.safeSummary(error) must include(Provider.TwelveData.print)
@@ -514,7 +549,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
 
       "return a configuration error without exposing keys when every key is invalid" in {
         val multiple = config.copy(apiKey = "first-secret,second-secret")
-        val backend  = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust("first-secret,second-secret", StatusCode.Forbidden))
+        val backend  = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust("first-secret,second-secret", StatusCode.Unauthorized))
         (for
           fixture  <- accessFixture
           client   <- TwelveDataClient.make[IO](multiple, backend, fixture.access)
@@ -532,7 +567,7 @@ class TwelveDataClientSpec extends Sttp4WordSpec {
         }
       }
 
-      "redact configured API keys from provider error bodies" in {
+      "omit provider error bodies from operational errors" in {
         val multiple = config.copy(apiKey = "first-secret,second-secret")
         val backend  = fs2BackendStub.whenAnyRequest.thenRespond(
           ResponseStub.adjust("failure for first-secret and second-secret", StatusCode.InternalServerError)

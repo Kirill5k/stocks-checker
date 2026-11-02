@@ -29,11 +29,6 @@ object config {
       limits: ProviderLimits
   ) derives ConfigReader
 
-  final case class AlphaVantageClientConfig(
-      baseUri: String,
-      apiKey: String
-  ) derives ConfigReader
-
   final case class TwelveDataConfig(
       baseUri: String,
       apiKey: String,
@@ -42,7 +37,6 @@ object config {
 
   final case class ClientsConfig(
       finnhub: FinnhubClientConfig,
-      alphaVantage: AlphaVantageClientConfig,
       twelveData: TwelveDataConfig
   ) derives ConfigReader
 
@@ -59,6 +53,17 @@ object config {
   final case class ActionExecutorConfig(
       concurrency: Int
   ) derives ConfigReader
+
+  final case class SecurityConfig(maxListingShrinkFraction: Double)
+
+  object SecurityConfig:
+    given ConfigReader[SecurityConfig] = ConfigReader.derived[SecurityConfig].emap { config =>
+      Either.cond(
+        config.maxListingShrinkFraction >= 0 && config.maxListingShrinkFraction <= 1,
+        config,
+        UserValidationFailed("max-listing-shrink-fraction must be between 0 and 1")
+      )
+    }
 
   final case class InvestmentConfig(
       priceFreshnessDays: Int,
@@ -84,7 +89,8 @@ object config {
       clients: ClientsConfig,
       mongo: MongoConfig,
       actionExecutor: ActionExecutorConfig,
-      investment: InvestmentConfig
+      investment: InvestmentConfig,
+      security: SecurityConfig
   ) derives ConfigReader
 
   object AppConfig:

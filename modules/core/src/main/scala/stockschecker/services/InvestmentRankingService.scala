@@ -1,16 +1,20 @@
 package stockschecker.services
 
+import java.time.Instant
+
 import cats.effect.Sync
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
-import kirill5k.common.syntax.time.*
 import org.typelevel.log4cats.Logger
 import stockschecker.domain.*
 import stockschecker.domain.investment.InvestmentScorer
 import stockschecker.repositories.InvestmentRankingRepository
 
 trait InvestmentRankingService[F[_]]:
+  def delete(ticker: Ticker): F[Unit]
+  def pin(id: InvestmentRankingId): F[Unit]
+  def release(id: InvestmentRankingId, requestedAt: Instant): F[Unit]
   def refresh: F[Unit]
   def rankingInputs(id: InvestmentRankingId, query: RankingInputsQuery): F[RankingInputsPage]
 
@@ -22,6 +26,10 @@ final private class LiveInvestmentRankingService[F[_]](
     C: Clock[F],
     logger: Logger[F]
 ) extends InvestmentRankingService[F]:
+  override def delete(ticker: Ticker): F[Unit]                                 = rankings.delete(ticker)
+  override def pin(id: InvestmentRankingId): F[Unit]                           = rankings.pin(id)
+  override def release(id: InvestmentRankingId, requestedAt: Instant): F[Unit] = rankings.release(id, requestedAt)
+
   override def rankingInputs(id: InvestmentRankingId, query: RankingInputsQuery): F[RankingInputsPage] =
     rankings.rankingInputs(id, query)
 
@@ -38,12 +46,11 @@ final private class LiveInvestmentRankingService[F[_]](
       _ <- logger.info(
         s"Published investment ranking ${id.value}: universe=${ranking.summary.universeCount}, eligible=${ranking.summary.eligibleCount}, createdAt=$capturedAt"
       )
-      _ <- rankings.prune(capturedAt.minus(InvestmentRecipe.RankingRetention))
     yield ()
 
 object InvestmentRankingService:
   def make[F[_]: {Sync, Clock, Logger}](
       rankings: InvestmentRankingRepository[F],
-      recipe: InvestmentRecipe = InvestmentRecipe()
+      recipe: InvestmentRecipe
   ): F[InvestmentRankingService[F]] =
     Sync[F].pure(LiveInvestmentRankingService(rankings, recipe))

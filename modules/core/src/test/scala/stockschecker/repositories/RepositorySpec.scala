@@ -1,6 +1,6 @@
 package stockschecker.repositories
 
-import cats.effect.IO
+import cats.effect.{IO, Resource}
 import cats.effect.unsafe.IORuntime
 import cats.syntax.traverse.*
 import mongo4cats.bson.Document
@@ -10,6 +10,7 @@ import mongo4cats.client.MongoClient
 import mongo4cats.database.MongoDatabase
 import mongo4cats.embedded.EmbeddedMongo
 import mongo4cats.operations.Filter
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.matchers.must.Matchers
 import org.scalatest.wordspec.AsyncWordSpec
 import stockschecker.domain.{CompanyProfile, FinancialMetrics, PriceAnalytics, Security, Ticker}
@@ -17,13 +18,36 @@ import stockschecker.fixtures.{AAPLCompanyProfile, AAPLSecurity, MSFT, MSFTCompa
 import stockschecker.repositories.entities.{CompanyProfileEntity, SecurityEntity}
 
 import java.time.Instant
+import java.util.UUID
 import scala.concurrent.Future
 
-trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
+trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo with BeforeAndAfterAll {
 
   def port: Int
 
-  private val now = Instant.now()
+  private val now        = Instant.now()
+  private lazy val mongo = EmbeddedMongo
+    .start[IO](port, mongoUsername, mongoPassword, mongoVersion)
+    .flatMap(_ => MongoClient.fromConnectionString[IO](s"mongodb://localhost:$port"))
+    // Expiry semantics are tested explicitly; wall-clock TTL deletion must not race frozen test timestamps.
+    .evalTap(
+      _.getDatabase("admin")
+        .flatMap(
+          _.runCommand(new org.bson.Document("setParameter", 1).append("ttlMonitorEnabled", false), com.mongodb.ReadPreference.primary())
+        )
+        .void
+    )
+    .allocated
+    .unsafeRunSync()(using IORuntime.global)
+
+  override protected def beforeAll(): Unit = {
+    super.beforeAll()
+    val _ = mongo
+  }
+
+  override protected def afterAll(): Unit =
+    try mongo._2.unsafeRunSync()(using IORuntime.global)
+    finally super.afterAll()
 
   protected def readSecurity(db: MongoDatabase[IO], ticker: Ticker): IO[Option[Security]] =
     db.getCollectionWithCodec[SecurityEntity](SecurityRepository.CollectionName)
@@ -35,8 +59,8 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
       .flatMap(_.find(Filter.idEq(ticker.value)).first)
       .map(_.map(_.toDomain))
 
-  protected def withActiveStocks[A](tickers: List[Ticker])(test: MongoDatabase[IO] => IO[A]): Future[A] =
-    withActiveStocks(
+  protected def withProfiles[A](tickers: List[Ticker])(test: MongoDatabase[IO] => IO[A]): Future[A] =
+    withProfiles(
       Map(
         SecurityRepository.CollectionName -> tickers.map { ticker =>
           toDoc(if ticker == MSFT then MSFTSecurity else AAPLSecurity.copy(ticker = ticker))
@@ -47,7 +71,7 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
       )
     )(test)
 
-  protected def withActiveStocks[A](seed: Map[String, List[Document]])(test: MongoDatabase[IO] => IO[A]): Future[A] =
+  protected def withProfiles[A](seed: Map[String, List[Document]])(test: MongoDatabase[IO] => IO[A]): Future[A] =
     val profiles = seed.getOrElse(CompanyProfileRepository.CollectionName, Nil)
     val existing = profiles.flatMap(_.getString("_id")).toSet
     val missing  = seed.getOrElse(SecurityRepository.CollectionName, Nil).flatMap(_.getString("_id")).filterNot(existing)
@@ -72,7 +96,6 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
   protected def toDoc(profile: CompanyProfile): Document =
     Document(
       "_id"                           := profile.ticker.value,
-      "isActive"                      := true,
       "name"                          := profile.name,
       "country"                       := profile.country,
       "industry"                      := profile.industry,
@@ -118,29 +141,22 @@ trait RepositorySpec extends AsyncWordSpec with Matchers with EmbeddedMongo {
     )
 
   protected def withEmbeddedMongoDatabase[A](test: MongoDatabase[IO] => IO[A]): Future[A] =
-    withRunningEmbeddedMongo(port) {
-      MongoClient
-        .fromConnectionString[IO](s"mongodb://localhost:${port}")
-        .evalMap(_.getDatabase("stock-checker"))
-        .use(test)
-    }.unsafeToFuture()(using IORuntime.global)
+    withEmbeddedMongoDatabase(Map.empty)(test)
 
   protected def withEmbeddedMongoDatabase[A](
       seedData: Map[String, List[Document]]
   )(test: MongoDatabase[IO] => IO[A]): Future[A] =
-    withRunningEmbeddedMongo(port) {
-      MongoClient
-        .fromConnectionString[IO](s"mongodb://localhost:${port}")
-        .evalMap(_.getDatabase("stock-checker"))
-        .use { db =>
-          for
-            _ <- seedData.toList.traverse { case (collectionName, documents) =>
-              db.getCollection(collectionName).flatMap { collection =>
-                IO.whenA(documents.nonEmpty)(collection.insertMany(documents).void)
-              }
+    Resource
+      .make(IO.delay(UUID.randomUUID().toString).flatMap(id => mongo._1.getDatabase(s"stocks-checker-$id")))(_.drop)
+      .use { db =>
+        for
+          _ <- seedData.toList.traverse { case (collectionName, documents) =>
+            db.getCollection(collectionName).flatMap { collection =>
+              IO.whenA(documents.nonEmpty)(collection.insertMany(documents).void)
             }
-            result <- test(db)
-          yield result
-        }
-    }.unsafeToFuture()(using IORuntime.global)
+          }
+          result <- test(db)
+        yield result
+      }
+      .unsafeToFuture()(using IORuntime.global)
 }

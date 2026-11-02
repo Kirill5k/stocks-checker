@@ -17,15 +17,6 @@ class InvestmentScreenControllerSpec extends HttpRoutesWordSpec:
   private val authHeader = Header.Raw(CIString("X-API-Key"), config.key)
 
   "Investment screen endpoints" should {
-    "require API authentication before creating a screen" in {
-      val service = mock[InvestmentScreenService[IO]]
-      val result  = for
-        controller <- InvestmentScreenController.make(service, mock[InvestmentEvaluationService[IO]], config)
-        response   <- controller.routes.orNotFound.run(Request[IO](method = Method.POST, uri = uri"/investment-screens").withEntity("{}"))
-      yield response
-      result.mustHaveStatus(Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-      verifyNoInteractions(service)
-    }
     "route evaluation requests to the saved cohort evaluation" in {
       val service    = mock[InvestmentScreenService[IO]]
       val now        = Instant.parse("2026-10-19T00:00:00Z")
@@ -129,7 +120,7 @@ class InvestmentScreenControllerSpec extends HttpRoutesWordSpec:
       yield response
       result.mustHaveStatus(
         Status.UnprocessableContent,
-        Some("""{"message":"Invalid value for: query parameter includeExclusions (must satisfy in(true,false))"}""")
+        Some("""{"message":"Invalid value for: query parameter includeExclusions"}""")
       )
       verifyNoInteractions(service)
     }

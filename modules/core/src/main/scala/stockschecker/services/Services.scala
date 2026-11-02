@@ -8,7 +8,7 @@ import org.typelevel.log4cats.Logger
 import stockschecker.actions.ActionDispatcher
 import stockschecker.clients.Clients
 import stockschecker.repositories.Repositories
-import stockschecker.common.config.InvestmentConfig
+import stockschecker.common.config.{InvestmentConfig, SecurityConfig}
 
 trait Services[F[_]]:
   def security: SecurityService[F]
@@ -28,20 +28,21 @@ object Services:
       clients: Clients[F],
       repos: Repositories[F],
       ad: ActionDispatcher[F],
-      investmentConfig: InvestmentConfig
+      investmentConfig: InvestmentConfig,
+      securityConfig: SecurityConfig
   ): F[Services[F]] =
     val recipe = investmentConfig.recipe
     for
       st          <- StockService.make(repos.stock, ad)
       rankings    <- InvestmentRankingService.make(repos.investmentRankings, recipe)
-      s           <- SecurityService.make(repos.security, clients.marketData, ad)
+      s           <- SecurityService.make(repos.security, clients.marketData, ad, securityConfig)
       quality     <- DataQualityService.make(repos.dataQuality, recipe)
       cp          <- CompanyProfileService.make(repos.companyProfile, clients.marketData, ad)
       p           <- PriceService.make(repos.priceAnalytics, ad, repos.priceHistory, clients.marketData)
       c           <- CommandService.make(repos.command, ad)
       j           <- JobService.make(ad)
       fm          <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, ad, repos.financialHistory)
-      investment  <- InvestmentScreenService.make(repos.investmentScreens, recipe)
+      investment  <- InvestmentScreenService.make(repos.investmentScreens, ad, recipe)
       evaluations <- InvestmentEvaluationService.make(repos.investmentEvaluations, ad)
     yield new Services[F]:
       override def security: SecurityService[F]                          = s

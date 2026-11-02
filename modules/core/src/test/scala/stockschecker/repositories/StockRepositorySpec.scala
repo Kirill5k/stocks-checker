@@ -15,7 +15,6 @@ import stockschecker.fixtures.{
   AAPLStock,
   MSFT,
   MSFTCompanyProfile,
-  MSFTFinancialMetrics,
   MSFTSecurity,
   MSFTStock
 }
@@ -75,7 +74,7 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
         val msftAnalytics = AAPLPriceAnalytics.copy(ticker = MSFT)
         val aapl          = AAPLStock.copy(priceAnalytics = Some(AAPLPriceAnalytics.copy(basis = None)))
         val msft          = MSFTStock.copy(
-          profile = Some(MSFTCompanyProfile),
+          profile = MSFTCompanyProfile,
           priceAnalytics = Some(msftAnalytics.copy(basis = None)),
           financialMetrics = None
         )
@@ -160,1113 +159,247 @@ class StockRepositorySpec extends RepositorySpec with MongoJsonCodecs {
     }
 
     "findAll" should {
-      "enforce current stock visibility before limits and prevent inactive filters from bypassing it" in {
-        val inactive        = Ticker("INACTIVE")
-        val delisted        = Ticker("DELISTED")
-        val inactiveProfile = Ticker("PROFILE")
-        val missingProfile  = Ticker("MISSING")
-        val hiddenTickers   = List(inactive, delisted, inactiveProfile, missingProfile)
-        val seed            = Map(
+      "require an active listed security and profile before sorting and limiting" in {
+        val inactive       = Ticker("INACTIVE")
+        val delisted       = Ticker("DELISTED")
+        val missingProfile = Ticker("MISSING")
+        val hiddenTickers  = List(inactive, delisted, missingProfile)
+        val seed           = Map(
           SecurityRepository.CollectionName -> List(
             toDoc(AAPLSecurity),
             toDoc(AAPLSecurity.copy(ticker = inactive, isActive = false)),
             toDoc(AAPLSecurity.copy(ticker = delisted, listingStatus = ListingStatus.Delisted)),
-            toDoc(AAPLSecurity.copy(ticker = inactiveProfile)),
             toDoc(AAPLSecurity.copy(ticker = missingProfile))
           ),
           CompanyProfileRepository.CollectionName -> (
             List(toDoc(AAPLCompanyProfile.copy(marketCap = 1))) ++
-              List(inactive, delisted).map(ticker => toDoc(AAPLCompanyProfile.copy(ticker = ticker))) ++
-              List(toDoc(AAPLCompanyProfile.copy(ticker = inactiveProfile)).add("isActive", false.toBson))
+              List(inactive, delisted).map(ticker => toDoc(AAPLCompanyProfile.copy(ticker = ticker)))
           )
         )
         withEmbeddedMongoDatabase(seed) { db =>
           for
-            repo           <- StockRepository.make[IO](db)
-            limited        <- repo.findAll(StockFilters(), Some(1))
-            inactiveFilter <- repo.findAll(StockFilters(isActive = Some(false)), None)
-            hidden         <- hiddenTickers.traverse(repo.find)
+            repo    <- StockRepository.make[IO](db)
+            limited <- repo.findAll(StockFilters(), Some(1))
+            all     <- repo.findAll(StockFilters(), None)
+            hidden  <- hiddenTickers.traverse(repo.find)
           yield
             limited.map(_.security.ticker) mustBe List(AAPL)
-            inactiveFilter mustBe Nil
+            all.map(_.security.ticker) mustBe List(AAPL)
             hidden mustBe List.fill(hiddenTickers.size)(None)
         }
       }
 
-      "honor an explicit score sort without a limit" in {
-        val lower    = AAPLPriceAnalytics.copy(scores = AAPLPriceAnalytics.scores.copy(overallScore = 40))
-        val higher   = lower.copy(ticker = MSFT, scores = lower.scores.copy(overallScore = 90))
-        val seedData = Map(
-          SecurityRepository.CollectionName       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          PriceAnalyticsRepository.CollectionName -> List(toDoc(lower), toDoc(higher))
+      "ignore obsolete profile activation fields" in {
+        val seed = Map(
+          SecurityRepository.CollectionName       -> List(toDoc(AAPLSecurity)),
+          CompanyProfileRepository.CollectionName -> List(toDoc(AAPLCompanyProfile).add("isActive", false.toBson))
         )
-        withActiveStocks(seedData) { db =>
-          for
-            repo   <- StockRepository.make[IO](db)
-            stocks <- repo.findAll(StockFilters(sortBy = Some(StockSortField.OverallScore)), None)
-          yield stocks.map(_.security.ticker) mustBe List(MSFT, AAPL)
-        }
-      }
-
-      "retain the default descending market-cap sort without a limit" in {
-        val seedData = Map(
-          SecurityRepository.CollectionName       -> List(toDoc(MSFTSecurity), toDoc(AAPLSecurity)),
-          CompanyProfileRepository.CollectionName -> List(toDoc(MSFTCompanyProfile), toDoc(AAPLCompanyProfile))
-        )
-        withActiveStocks(seedData) { db =>
+        withEmbeddedMongoDatabase(seed) { db =>
           for
             repo   <- StockRepository.make[IO](db)
             stocks <- repo.findAll(StockFilters(), None)
-          yield stocks.map(_.security.ticker) mustBe List(AAPL, MSFT)
+          yield stocks.map(_.security.ticker) mustBe List(AAPL)
         }
       }
 
-      "return all stocks with associated data" in {
-        val seedData = Map(
-          "securities"        -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles"  -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile)),
-          "price-analytics"   -> List(toDoc(AAPLPriceAnalytics)),
-          "financial-metrics" -> List(toDoc(AAPLFinancialMetrics), toDoc(MSFTFinancialMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(), None)
-          yield res.size mustBe 2
-        }
+      "return empty results without securities" in withEmbeddedMongoDatabase { db =>
+        for
+          repo   <- StockRepository.make[IO](db)
+          stocks <- repo.findAll(StockFilters(), None)
+        yield stocks mustBe Nil
       }
 
-      "return limited number of stocks when limit is specified" in {
-        val seedData = Map(
-          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(), Some(1))
-          yield res.size mustBe 1
-        }
-      }
-
-      "return empty list when no securities exist" in
-        withEmbeddedMongoDatabase(Map.empty) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(), None)
-          yield res mustBe List.empty
-        }
-
-      "return all stocks when limit is greater than available stocks" in {
-        val seedData = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)))
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(), Some(10))
-          yield res.size mustBe 2
-        }
-      }
-
-      "filter by exchange" in {
-        val nyseStock = MSFTSecurity.copy(ticker = Ticker("NYSE1"), exchange = Exchange.NYSE)
-        val seedData  = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock)))
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(exchange = Some(Exchange.NASDAQ)), None)
-          yield
-            res.size mustBe 2
-            res.forall(_.security.exchange == Exchange.NASDAQ) mustBe true
-        }
-      }
-
-      "filter by kind" in {
-        val etfStock = MSFTSecurity.copy(ticker = Ticker("SPY"), kind = SecurityKind.ETF)
-        val seedData = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(etfStock)))
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(kind = Some(SecurityKind.Stock)), None)
-          yield
-            res.size mustBe 2
-            res.forall(_.security.kind == SecurityKind.Stock) mustBe true
-        }
-      }
-
-      "filter by isActive" in {
-        val inactiveSecurity = MSFTSecurity.copy(ticker = Ticker("INACTIVE"), isActive = false)
-        val seedData         = Map("securities" -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(inactiveSecurity)))
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(isActive = Some(true)), None)
-          yield
-            res.size mustBe 2
-            res.forall(_.security.isActive) mustBe true
-        }
-      }
-
-      "filter by country" in {
-        val ukProfile = MSFTCompanyProfile.copy(ticker = Ticker("HSBA"), country = "GB")
-        val seedData  = Map(
-          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("HSBA")))),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile), toDoc(ukProfile))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(country = Some("US")), None)
-          yield
-            res.size mustBe 2
-            res.forall(_.profile.exists(_.country == "US")) mustBe true
-        }
-      }
-
-      "filter by minimum market cap" in {
-        val smallCapProfile = MSFTCompanyProfile.copy(ticker = Ticker("SMALL"), marketCap = 1000000000L)
-        val seedData        = Map(
-          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("SMALL")))),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile), toDoc(smallCapProfile))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minMarketCap = Some(3000000000000L)), None)
-          yield
-            res.size mustBe 2
-            res.forall(_.profile.exists(_.marketCap >= 3000000000000L)) mustBe true
-        }
-      }
-
-      "filter by maximum market cap" in {
-        val seedData = Map(
-          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(maxMarketCap = Some(3200000000000L)), None)
-          yield
-            res.size mustBe 1
-            res.forall(_.profile.exists(_.marketCap <= 3200000000000L)) mustBe true
-        }
-      }
-
-      "filter by market cap range" in {
-        val seedData = Map(
-          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minMarketCap = Some(3000000000000L), maxMarketCap = Some(3200000000000L)), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe MSFT
-        }
-      }
-
-      "filter by minimum price" in {
-        val lowPriceSummary = AAPLPriceAnalytics.copy(
-          ticker = Ticker("LOW"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(latestPrice = BigDecimal("50.00"))
-        )
-        val seedData = Map(
-          "securities"      -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("LOW")))),
-          "price-analytics" -> List(toDoc(AAPLPriceAnalytics), toDoc(lowPriceSummary))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minPrice = Some(BigDecimal("200.00"))), None)
-          yield
-            res.size mustBe 1
-            res.head.priceAnalytics.exists(_.performanceSummary.latestPrice >= BigDecimal("200.00")) mustBe true
-        }
-      }
-
-      "filter by maximum price" in {
-        val seedData = Map(
-          "securities"      -> List(toDoc(AAPLSecurity)),
-          "price-analytics" -> List(toDoc(AAPLPriceAnalytics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(maxPrice = Some(BigDecimal("300.00"))), None)
-          yield
-            res.size mustBe 1
-            res.forall(_.priceAnalytics.exists(_.performanceSummary.latestPrice <= BigDecimal("300.00"))) mustBe true
-        }
-      }
-
-      "filter by price range" in {
-        val highPriceSummary = AAPLPriceAnalytics.copy(
-          ticker = Ticker("HIGH"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(latestPrice = BigDecimal("500.00"))
-        )
-        val seedData = Map(
-          "securities"      -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity.copy(ticker = Ticker("HIGH")))),
-          "price-analytics" -> List(toDoc(AAPLPriceAnalytics), toDoc(highPriceSummary))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minPrice = Some(BigDecimal("200.00")), maxPrice = Some(BigDecimal("300.00"))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe AAPL
-        }
-      }
-
-      "filter by multiple criteria" in {
-        val nyseStock        = MSFTSecurity.copy(ticker = Ticker("NYSE1"), exchange = Exchange.NYSE)
-        val etfStock         = MSFTSecurity.copy(ticker = Ticker("SPY"), kind = SecurityKind.ETF)
-        val inactiveSecurity = AAPLSecurity.copy(ticker = Ticker("INACTIVE"), isActive = false)
-        val seedData         = Map(
-          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity), toDoc(nyseStock), toDoc(etfStock), toDoc(inactiveSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(
-              StockFilters(
-                exchange = Some(Exchange.NASDAQ),
-                kind = Some(SecurityKind.Stock),
-                isActive = Some(true),
-                country = Some("US"),
-                minMarketCap = Some(3000000000000L)
-              ),
-              None
+      val low     = Ticker("LOW")
+      val mid     = Ticker("MID")
+      val high    = Ticker("HIGH")
+      val missing = Ticker("MISSING_DATA")
+      val ordered = List(high, mid, low, missing)
+      val seed    = Map(
+        SecurityRepository.CollectionName -> List(
+          toDoc(AAPLSecurity.copy(ticker = low, exchange = Exchange.NYSE, kind = SecurityKind.ETF)),
+          toDoc(AAPLSecurity.copy(ticker = mid)),
+          toDoc(AAPLSecurity.copy(ticker = high)),
+          toDoc(AAPLSecurity.copy(ticker = missing))
+        ),
+        CompanyProfileRepository.CollectionName -> List(
+          toDoc(AAPLCompanyProfile.copy(ticker = low, country = "GB", marketCap = 1000000000L)),
+          toDoc(AAPLCompanyProfile.copy(ticker = mid, country = "US", marketCap = 3100000000000L)),
+          toDoc(AAPLCompanyProfile.copy(ticker = high, country = "US", marketCap = 3400000000000L)),
+          toDoc(AAPLCompanyProfile.copy(ticker = missing, country = "CA", marketCap = 500L))
+        ),
+        PriceAnalyticsRepository.CollectionName -> List(
+          (low, BigDecimal(50), BigDecimal(2), BigDecimal(20), BigDecimal(45)),
+          (mid, BigDecimal(250), BigDecimal("7.5"), BigDecimal(60), BigDecimal(20)),
+          (high, BigDecimal(500), BigDecimal(25), BigDecimal(90), BigDecimal(8))
+        ).map { case (ticker, price, change, score, drawdown) =>
+          toDoc(
+            AAPLPriceAnalytics.copy(
+              ticker = ticker,
+              performanceSummary = AAPLPriceAnalytics.performanceSummary
+                .copy(latestPrice = price, oneMonthChange = Some(change), threeMonthChange = Some(change), oneYearChange = Some(change)),
+              metrics = AAPLPriceAnalytics.metrics.copy(maxDrawdown = Some(drawdown)),
+              scores =
+                AAPLPriceAnalytics.scores.copy(overallScore = score, cagrScore = score, volatilityScore = score, consistencyScore = score)
             )
-          yield
-            res.size mustBe 2
-            res.forall(s =>
-              s.security.exchange == Exchange.NASDAQ &&
-                s.security.kind == SecurityKind.Stock &&
-                s.security.isActive &&
-                s.profile.exists(p => p.country == "US" && p.marketCap >= 3000000000000L)
-            ) mustBe true
-        }
-      }
-
-      "filter by minimum price change with period" in {
-        val goodPerformer = AAPLPriceAnalytics.copy(
-          ticker = Ticker("GOOD"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneYearChange = Some(BigDecimal("25.50")))
-        )
-        val badPerformer = AAPLPriceAnalytics.copy(
-          ticker = Ticker("BAD"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneYearChange = Some(BigDecimal("5.00")))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("GOOD"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("BAD")))
-          ),
-          "price-analytics" -> List(toDoc(goodPerformer), toDoc(badPerformer))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minChange = Some(BigDecimal("20.00")), period = Some(TimePeriod.OneYear)), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("GOOD")
-            res.head.priceAnalytics.exists(_.performanceSummary.oneYearChange.exists(_ >= BigDecimal("20.00"))) mustBe true
-        }
-      }
-
-      "filter by maximum price change with period" in {
-        val moderatePerformer = AAPLPriceAnalytics.copy(
-          ticker = Ticker("MOD"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(threeMonthChange = Some(BigDecimal("8.50")))
-        )
-        val strongPerformer = AAPLPriceAnalytics.copy(
-          ticker = Ticker("STRONG"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(threeMonthChange = Some(BigDecimal("30.00")))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("MOD"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("STRONG")))
-          ),
-          "price-analytics" -> List(toDoc(moderatePerformer), toDoc(strongPerformer))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(maxChange = Some(BigDecimal("10.00")), period = Some(TimePeriod.ThreeMonth)), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("MOD")
-            res.head.priceAnalytics.exists(_.performanceSummary.threeMonthChange.exists(_ <= BigDecimal("10.00"))) mustBe true
-        }
-      }
-
-      "filter by price change range with period" in {
-        val lowPerformer = AAPLPriceAnalytics.copy(
-          ticker = Ticker("LOW"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneMonthChange = Some(BigDecimal("2.00")))
-        )
-        val midPerformer = AAPLPriceAnalytics.copy(
-          ticker = Ticker("MID"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneMonthChange = Some(BigDecimal("7.50")))
-        )
-        val highPerformer = AAPLPriceAnalytics.copy(
-          ticker = Ticker("HIGH"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneMonthChange = Some(BigDecimal("15.00")))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("LOW"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("MID"))),
-            toDoc(AAPLSecurity.copy(ticker = Ticker("HIGH")))
-          ),
-          "price-analytics" -> List(toDoc(lowPerformer), toDoc(midPerformer), toDoc(highPerformer))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(
-              StockFilters(
-                minChange = Some(BigDecimal("5.00")),
-                maxChange = Some(BigDecimal("10.00")),
-                period = Some(TimePeriod.OneMonth)
-              ),
-              None
-            )
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("MID")
-            res.head.priceAnalytics.exists(p =>
-              p.performanceSummary.oneMonthChange.exists(c => c >= BigDecimal("5.00") && c <= BigDecimal("10.00"))
-            ) mustBe true
-        }
-      }
-
-      "not filter by change when period is not specified" in {
-        val performer = AAPLPriceAnalytics.copy(
-          ticker = Ticker("PERF"),
-          performanceSummary = AAPLPriceAnalytics.performanceSummary.copy(oneYearChange = Some(BigDecimal("50.00")))
-        )
-        val seedData = Map(
-          "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("PERF")))),
-          "price-analytics" -> List(toDoc(performer))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minChange = Some(BigDecimal("20.00"))), None)
-          yield
-            // Without period specified, minChange should not filter anything
-            res.size mustBe 1
-        }
-      }
-
-      "filter by maximum PE ratio" in {
-        val highPEMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("HIGHPE"),
-          peRatioTtm = Some(BigDecimal(50.00))
-        )
-        val lowPEMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("LOWPE"),
-          peRatioTtm = Some(BigDecimal(25.00))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("HIGHPE"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("LOWPE")))
-          ),
-          "financial-metrics" -> List(toDoc(highPEMetrics), toDoc(lowPEMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(maxPE = Some(BigDecimal(30.00))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("LOWPE")
-            res.head.financialMetrics.exists(_.peRatioTtm.exists(_ <= BigDecimal(30.00))) mustBe true
-        }
-      }
-
-      "filter by minimum ROE" in {
-        val highROEMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("HIGHROE"),
-          roeTtm = Some(BigDecimal(150.00))
-        )
-        val lowROEMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("LOWROE"),
-          roeTtm = Some(BigDecimal(30.00))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("HIGHROE"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("LOWROE")))
-          ),
-          "financial-metrics" -> List(toDoc(highROEMetrics), toDoc(lowROEMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minROE = Some(BigDecimal(100.00))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HIGHROE")
-            res.head.financialMetrics.exists(_.roeTtm.exists(_ >= BigDecimal(100.00))) mustBe true
-        }
-      }
-
-      "filter by maximum debt to equity" in {
-        val highDebtMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("HIGHDEBT"),
-          debtToEquityAnnual = Some(BigDecimal(2.50))
-        )
-        val lowDebtMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("LOWDEBT"),
-          debtToEquityAnnual = Some(BigDecimal(0.50))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("HIGHDEBT"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("LOWDEBT")))
-          ),
-          "financial-metrics" -> List(toDoc(highDebtMetrics), toDoc(lowDebtMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(maxDebtToEquity = Some(BigDecimal(1.00))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("LOWDEBT")
-            res.head.financialMetrics.exists(_.debtToEquityAnnual.exists(_ <= BigDecimal(1.00))) mustBe true
-        }
-      }
-
-      "filter by multiple financial metrics criteria" in {
-        val goodMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("GOOD"),
-          peRatioTtm = Some(BigDecimal(30.00)),
-          roeTtm = Some(BigDecimal(120.00)),
-          debtToEquityAnnual = Some(BigDecimal(0.80))
-        )
-        val badPEMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("BADPE"),
-          peRatioTtm = Some(BigDecimal(60.00)),
-          roeTtm = Some(BigDecimal(120.00)),
-          debtToEquityAnnual = Some(BigDecimal(0.80))
-        )
-        val badROEMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("BADROE"),
-          peRatioTtm = Some(BigDecimal(30.00)),
-          roeTtm = Some(BigDecimal(20.00)),
-          debtToEquityAnnual = Some(BigDecimal(0.80))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("GOOD"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("BADPE"))),
-            toDoc(AAPLSecurity.copy(ticker = Ticker("BADROE")))
-          ),
-          "financial-metrics" -> List(toDoc(goodMetrics), toDoc(badPEMetrics), toDoc(badROEMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(
-              StockFilters(
-                maxPE = Some(BigDecimal(40.00)),
-                minROE = Some(BigDecimal(100.00)),
-                maxDebtToEquity = Some(BigDecimal(1.00))
-              ),
-              None
-            )
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("GOOD")
-            res.head.financialMetrics.exists(m =>
-              m.peRatioTtm.exists(_ <= BigDecimal(40.00)) &&
-                m.roeTtm.exists(_ >= BigDecimal(100.00)) &&
-                m.debtToEquityAnnual.exists(_ <= BigDecimal(1.00))
-            ) mustBe true
-        }
-      }
-
-      "filter by minimum PE ratio" in {
-        val lowPEMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("LOWPE"),
-          peRatioTtm = Some(BigDecimal(12.00))
-        )
-        val highPEMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("HIGHPE"),
-          peRatioTtm = Some(BigDecimal(35.00))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWPE"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHPE")))
-          ),
-          "financial-metrics" -> List(toDoc(lowPEMetrics), toDoc(highPEMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minPE = Some(BigDecimal(15.00))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HIGHPE")
-            res.head.financialMetrics.exists(_.peRatioTtm.exists(_ >= BigDecimal(15.00))) mustBe true
-        }
-      }
-
-      "filter by PE ratio range" in {
-        val lowPEMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("LOWPE"),
-          peRatioTtm = Some(BigDecimal(12.00))
-        )
-        val midPEMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("MIDPE"),
-          peRatioTtm = Some(BigDecimal(25.00))
-        )
-        val highPEMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("HIGHPE"),
-          peRatioTtm = Some(BigDecimal(45.00))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWPE"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("MIDPE"))),
-            toDoc(AAPLSecurity.copy(ticker = Ticker("HIGHPE")))
-          ),
-          "financial-metrics" -> List(toDoc(lowPEMetrics), toDoc(midPEMetrics), toDoc(highPEMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(
-              StockFilters(minPE = Some(BigDecimal(15.00)), maxPE = Some(BigDecimal(35.00))),
-              None
-            )
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("MIDPE")
-            res.head.financialMetrics.exists(m => m.peRatioTtm.exists(pe => pe >= BigDecimal(15.00) && pe <= BigDecimal(35.00))) mustBe true
-        }
-      }
-
-      "filter by minimum profit margin" in {
-        val lowMarginMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("LOWMARGIN"),
-          profitMarginTtm = Some(BigDecimal(5.00))
-        )
-        val highMarginMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("HIGHMARGIN"),
-          profitMarginTtm = Some(BigDecimal(25.00))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWMARGIN"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHMARGIN")))
-          ),
-          "financial-metrics" -> List(toDoc(lowMarginMetrics), toDoc(highMarginMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minProfitMargin = Some(BigDecimal(10.00))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HIGHMARGIN")
-            res.head.financialMetrics.exists(_.profitMarginTtm.exists(_ >= BigDecimal(10.00))) mustBe true
-        }
-      }
-
-      "filter by maximum profit margin" in {
-        val lowMarginMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("LOWMARGIN"),
-          profitMarginTtm = Some(BigDecimal(5.00))
-        )
-        val highMarginMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("HIGHMARGIN"),
-          profitMarginTtm = Some(BigDecimal(40.00))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWMARGIN"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHMARGIN")))
-          ),
-          "financial-metrics" -> List(toDoc(lowMarginMetrics), toDoc(highMarginMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(maxProfitMargin = Some(BigDecimal(30.00))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("LOWMARGIN")
-            res.head.financialMetrics.exists(_.profitMarginTtm.exists(_ <= BigDecimal(30.00))) mustBe true
-        }
-      }
-
-      "filter by minimum free cash flow" in {
-        val lowFCFMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("LOWFCF"),
-          freeCashFlowPerShareTtm = Some(BigDecimal(-2.00))
-        )
-        val highFCFMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("HIGHFCF"),
-          freeCashFlowPerShareTtm = Some(BigDecimal(8.50))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWFCF"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHFCF")))
-          ),
-          "financial-metrics" -> List(toDoc(lowFCFMetrics), toDoc(highFCFMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minFreeCashFlow = Some(BigDecimal(0))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HIGHFCF")
-            res.head.financialMetrics.exists(_.freeCashFlowPerShareTtm.exists(_ >= BigDecimal(0))) mustBe true
-        }
-      }
-
-      "filter by minimum revenue growth 5Y" in {
-        val lowGrowthMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("LOWGROWTH"),
-          revenueGrowth5Y = Some(BigDecimal(3.00))
-        )
-        val highGrowthMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("HIGHGROWTH"),
-          revenueGrowth5Y = Some(BigDecimal(15.00))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWGROWTH"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHGROWTH")))
-          ),
-          "financial-metrics" -> List(toDoc(lowGrowthMetrics), toDoc(highGrowthMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minRevenueGrowth5Y = Some(BigDecimal(8.00))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HIGHGROWTH")
-            res.head.financialMetrics.exists(_.revenueGrowth5Y.exists(_ >= BigDecimal(8.00))) mustBe true
-        }
-      }
-
-      "filter by minimum EPS growth 5Y" in {
-        val lowGrowthMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("LOWEPS"),
-          epsGrowth5Y = Some(BigDecimal(5.00))
-        )
-        val highGrowthMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("HIGHEPS"),
-          epsGrowth5Y = Some(BigDecimal(20.00))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWEPS"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("HIGHEPS")))
-          ),
-          "financial-metrics" -> List(toDoc(lowGrowthMetrics), toDoc(highGrowthMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minEpsGrowth5Y = Some(BigDecimal(10.00))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HIGHEPS")
-            res.head.financialMetrics.exists(_.epsGrowth5Y.exists(_ >= BigDecimal(10.00))) mustBe true
-        }
-      }
-
-      "filter by comprehensive long-term investment criteria" in {
-        val goodStock = AAPLFinancialMetrics.copy(
-          ticker = Ticker("GOOD"),
-          peRatioTtm = Some(BigDecimal(25.00)),
-          roeTtm = Some(BigDecimal(120.00)),
-          debtToEquityAnnual = Some(BigDecimal(0.80)),
-          profitMarginTtm = Some(BigDecimal(20.00)),
-          freeCashFlowPerShareTtm = Some(BigDecimal(8.00)),
-          revenueGrowth5Y = Some(BigDecimal(12.00)),
-          epsGrowth5Y = Some(BigDecimal(18.00))
-        )
-        val badPEStock = MSFTFinancialMetrics.copy(
-          ticker = Ticker("BADPE"),
-          peRatioTtm = Some(BigDecimal(50.00)),
-          roeTtm = Some(BigDecimal(120.00)),
-          profitMarginTtm = Some(BigDecimal(20.00)),
-          freeCashFlowPerShareTtm = Some(BigDecimal(8.00)),
-          revenueGrowth5Y = Some(BigDecimal(12.00)),
-          epsGrowth5Y = Some(BigDecimal(18.00))
-        )
-        val lowGrowthStock = AAPLFinancialMetrics.copy(
-          ticker = Ticker("LOWGROWTH"),
-          peRatioTtm = Some(BigDecimal(25.00)),
-          roeTtm = Some(BigDecimal(120.00)),
-          profitMarginTtm = Some(BigDecimal(20.00)),
-          freeCashFlowPerShareTtm = Some(BigDecimal(8.00)),
-          revenueGrowth5Y = Some(BigDecimal(5.00)),
-          epsGrowth5Y = Some(BigDecimal(6.00))
-        )
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(AAPLSecurity.copy(ticker = Ticker("GOOD"))),
-            toDoc(MSFTSecurity.copy(ticker = Ticker("BADPE"))),
-            toDoc(AAPLSecurity.copy(ticker = Ticker("LOWGROWTH")))
-          ),
-          "financial-metrics" -> List(toDoc(goodStock), toDoc(badPEStock), toDoc(lowGrowthStock))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(
-              StockFilters(
-                minPE = Some(BigDecimal(15.00)),
-                maxPE = Some(BigDecimal(35.00)),
-                minROE = Some(BigDecimal(15.00)),
-                maxDebtToEquity = Some(BigDecimal(1.50)),
-                minProfitMargin = Some(BigDecimal(10.00)),
-                minFreeCashFlow = Some(BigDecimal(0)),
-                minRevenueGrowth5Y = Some(BigDecimal(8.00)),
-                minEpsGrowth5Y = Some(BigDecimal(10.00))
-              ),
-              None
-            )
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("GOOD")
-            res.head.financialMetrics.exists(m =>
-              m.peRatioTtm.exists(pe => pe >= BigDecimal(15.00) && pe <= BigDecimal(35.00)) &&
-                m.roeTtm.exists(_ >= BigDecimal(15.00)) &&
-                m.debtToEquityAnnual.exists(_ <= BigDecimal(1.50)) &&
-                m.profitMarginTtm.exists(_ >= BigDecimal(10.00)) &&
-                m.freeCashFlowPerShareTtm.exists(_ >= BigDecimal(0)) &&
-                m.revenueGrowth5Y.exists(_ >= BigDecimal(8.00)) &&
-                m.epsGrowth5Y.exists(_ >= BigDecimal(10.00))
-            ) mustBe true
-        }
-      }
-
-      "return empty list when filters don't match any stocks" in {
-        val seedData = Map(
-          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(exchange = Some(Exchange.NYSE)), None)
-          yield res mustBe List.empty
-        }
-      }
-
-      "respect limit when applying filters" in {
-        val seedData = Map(
-          "securities"       -> List(toDoc(AAPLSecurity), toDoc(MSFTSecurity)),
-          "company-profiles" -> List(toDoc(AAPLCompanyProfile), toDoc(MSFTCompanyProfile))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(exchange = Some(Exchange.NASDAQ)), Some(1))
-          yield res.size mustBe 1
-        }
-      }
-
-      "filter by minimum overall score" in {
-        val highScoreAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("HSCORE"),
-          scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("75.00"))
-        )
-        val lowScoreAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("LSCORE"),
-          scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("30.00"))
-        )
-        val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HSCORE"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LSCORE")))),
-          "price-analytics" -> List(toDoc(highScoreAnalytics), toDoc(lowScoreAnalytics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minOverallScore = Some(BigDecimal("50.00"))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HSCORE")
-            res.head.priceAnalytics.exists(_.scores.overallScore >= BigDecimal("50.00")) mustBe true
-        }
-      }
-
-      "filter by minimum CAGR score" in {
-        val highCagrAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("HCAGR"),
-          scores = AAPLPriceAnalytics.scores.copy(cagrScore = BigDecimal("80.00"))
-        )
-        val lowCagrAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("LCAGR"),
-          scores = AAPLPriceAnalytics.scores.copy(cagrScore = BigDecimal("20.00"))
-        )
-        val seedData = Map(
-          "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HCAGR"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LCAGR")))),
-          "price-analytics" -> List(toDoc(highCagrAnalytics), toDoc(lowCagrAnalytics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minCagrScore = Some(BigDecimal("50.00"))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HCAGR")
-            res.head.priceAnalytics.exists(_.scores.cagrScore >= BigDecimal("50.00")) mustBe true
-        }
-      }
-
-      "filter by minimum volatility score" in {
-        val highVolScoreAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("HVOL"),
-          scores = AAPLPriceAnalytics.scores.copy(volatilityScore = BigDecimal("70.00"))
-        )
-        val lowVolScoreAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("LVOL"),
-          scores = AAPLPriceAnalytics.scores.copy(volatilityScore = BigDecimal("25.00"))
-        )
-        val seedData = Map(
-          "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HVOL"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LVOL")))),
-          "price-analytics" -> List(toDoc(highVolScoreAnalytics), toDoc(lowVolScoreAnalytics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minVolatilityScore = Some(BigDecimal("40.00"))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HVOL")
-            res.head.priceAnalytics.exists(_.scores.volatilityScore >= BigDecimal("40.00")) mustBe true
-        }
-      }
-
-      "filter by maximum drawdown" in {
-        val lowDrawdownAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("LDRAW"),
-          metrics = AAPLPriceAnalytics.metrics.copy(maxDrawdown = Some(BigDecimal("8.00")))
-        )
-        val highDrawdownAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("HDRAW"),
-          metrics = AAPLPriceAnalytics.metrics.copy(maxDrawdown = Some(BigDecimal("45.00")))
-        )
-        val seedData = Map(
-          "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("LDRAW"))), toDoc(MSFTSecurity.copy(ticker = Ticker("HDRAW")))),
-          "price-analytics" -> List(toDoc(lowDrawdownAnalytics), toDoc(highDrawdownAnalytics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(maxDrawdown = Some(BigDecimal("20.00"))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("LDRAW")
-            res.head.priceAnalytics.exists(_.metrics.maxDrawdown.exists(_ <= BigDecimal("20.00"))) mustBe true
-        }
-      }
-
-      "filter by minimum consistency score" in {
-        val highConsistencyAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("HCONS"),
-          metrics = AAPLPriceAnalytics.metrics.copy(consistencyScore = Some(BigDecimal("0.90"))),
-          scores = AAPLPriceAnalytics.scores.copy(consistencyScore = BigDecimal(90))
-        )
-        val lowConsistencyAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("LCONS"),
-          metrics = AAPLPriceAnalytics.metrics.copy(consistencyScore = Some(BigDecimal("0.40"))),
-          scores = AAPLPriceAnalytics.scores.copy(consistencyScore = BigDecimal(40))
-        )
-        val seedData = Map(
-          "securities"      -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HCONS"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LCONS")))),
-          "price-analytics" -> List(toDoc(highConsistencyAnalytics), toDoc(lowConsistencyAnalytics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minConsistencyScore = Some(BigDecimal(70))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HCONS")
-            res.head.priceAnalytics.exists(_.scores.consistencyScore >= BigDecimal(70)) mustBe true
-        }
-      }
-
-      "filter by minimum dividend yield" in {
-        val highDivMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("HDIV"),
-          dividendYieldAnnual = Some(BigDecimal("3.50"))
-        )
-        val lowDivMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("LDIV"),
-          dividendYieldAnnual = Some(BigDecimal("0.40"))
-        )
-        val seedData = Map(
-          "securities"        -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HDIV"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LDIV")))),
-          "financial-metrics" -> List(toDoc(highDivMetrics), toDoc(lowDivMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(minDividendYield = Some(BigDecimal("2.00"))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("HDIV")
-            res.head.financialMetrics.exists(_.dividendYieldAnnual.exists(_ >= BigDecimal("2.00"))) mustBe true
-        }
-      }
-
-      "filter by maximum dividend yield" in {
-        val highDivMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("HDIV2"),
-          dividendYieldAnnual = Some(BigDecimal("5.00"))
-        )
-        val lowDivMetrics = MSFTFinancialMetrics.copy(
-          ticker = Ticker("LDIV2"),
-          dividendYieldAnnual = Some(BigDecimal("0.75"))
-        )
-        val seedData = Map(
-          "securities" -> List(toDoc(AAPLSecurity.copy(ticker = Ticker("HDIV2"))), toDoc(MSFTSecurity.copy(ticker = Ticker("LDIV2")))),
-          "financial-metrics" -> List(toDoc(highDivMetrics), toDoc(lowDivMetrics))
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(StockFilters(maxDividendYield = Some(BigDecimal("2.00"))), None)
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("LDIV2")
-            res.head.financialMetrics.exists(_.dividendYieldAnnual.exists(_ <= BigDecimal("2.00"))) mustBe true
-        }
-      }
-
-      "correctly join and filter across all four collections simultaneously" in {
-        // The "good" stock passes all filters spanning all 4 collections
-        val goodSecurity  = AAPLSecurity.copy(ticker = Ticker("GOOD"), exchange = Exchange.NASDAQ, isActive = true)
-        val goodProfile   = AAPLCompanyProfile.copy(ticker = Ticker("GOOD"), country = "US", marketCap = 5000000000000L)
-        val goodAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("GOOD"),
-          scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("70.00"))
-        )
-        val goodMetrics = AAPLFinancialMetrics.copy(
-          ticker = Ticker("GOOD"),
-          peRatioTtm = Some(BigDecimal("25.00")),
-          roeTtm = Some(BigDecimal("50.00"))
-        )
-
-        // Fails security filter (wrong exchange)
-        val badExchangeSecurity  = MSFTSecurity.copy(ticker = Ticker("BEXCH"), exchange = Exchange.NYSE)
-        val badExchangeProfile   = MSFTCompanyProfile.copy(ticker = Ticker("BEXCH"), country = "US", marketCap = 5000000000000L)
-        val badExchangeAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("BEXCH"),
-          scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("70.00"))
-        )
-        val badExchangeMetrics =
-          AAPLFinancialMetrics.copy(ticker = Ticker("BEXCH"), peRatioTtm = Some(BigDecimal("25.00")), roeTtm = Some(BigDecimal("50.00")))
-
-        // Fails profile filter (wrong country)
-        val badCountrySecurity  = AAPLSecurity.copy(ticker = Ticker("BCNTRY"))
-        val badCountryProfile   = AAPLCompanyProfile.copy(ticker = Ticker("BCNTRY"), country = "GB", marketCap = 5000000000000L)
-        val badCountryAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("BCNTRY"),
-          scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("70.00"))
-        )
-        val badCountryMetrics =
-          AAPLFinancialMetrics.copy(ticker = Ticker("BCNTRY"), peRatioTtm = Some(BigDecimal("25.00")), roeTtm = Some(BigDecimal("50.00")))
-
-        // Fails price analytics filter (low overall score)
-        val badScoreSecurity  = AAPLSecurity.copy(ticker = Ticker("BSCORE"))
-        val badScoreProfile   = AAPLCompanyProfile.copy(ticker = Ticker("BSCORE"), country = "US", marketCap = 5000000000000L)
-        val badScoreAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("BSCORE"),
-          scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("20.00"))
-        )
-        val badScoreMetrics =
-          AAPLFinancialMetrics.copy(ticker = Ticker("BSCORE"), peRatioTtm = Some(BigDecimal("25.00")), roeTtm = Some(BigDecimal("50.00")))
-
-        // Fails financial metrics filter (PE too high)
-        val badPESecurity  = AAPLSecurity.copy(ticker = Ticker("BFIN"))
-        val badPEProfile   = AAPLCompanyProfile.copy(ticker = Ticker("BFIN"), country = "US", marketCap = 5000000000000L)
-        val badPEAnalytics = AAPLPriceAnalytics.copy(
-          ticker = Ticker("BFIN"),
-          scores = AAPLPriceAnalytics.scores.copy(overallScore = BigDecimal("70.00"))
-        )
-        val badPEMetrics =
-          AAPLFinancialMetrics.copy(ticker = Ticker("BFIN"), peRatioTtm = Some(BigDecimal("80.00")), roeTtm = Some(BigDecimal("50.00")))
-
-        val seedData = Map(
-          "securities" -> List(
-            toDoc(goodSecurity),
-            toDoc(badExchangeSecurity),
-            toDoc(badCountrySecurity),
-            toDoc(badScoreSecurity),
-            toDoc(badPESecurity)
-          ),
-          "company-profiles" -> List(
-            toDoc(goodProfile),
-            toDoc(badExchangeProfile),
-            toDoc(badCountryProfile),
-            toDoc(badScoreProfile),
-            toDoc(badPEProfile)
-          ),
-          "price-analytics" -> List(
-            toDoc(goodAnalytics),
-            toDoc(badExchangeAnalytics),
-            toDoc(badCountryAnalytics),
-            toDoc(badScoreAnalytics),
-            toDoc(badPEAnalytics)
-          ),
-          "financial-metrics" -> List(
-            toDoc(goodMetrics),
-            toDoc(badExchangeMetrics),
-            toDoc(badCountryMetrics),
-            toDoc(badScoreMetrics),
-            toDoc(badPEMetrics)
           )
-        )
-        withActiveStocks(seedData) { db =>
-          for
-            stockRepo <- StockRepository.make[IO](db)
-            res       <- stockRepo.findAll(
-              StockFilters(
-                exchange = Some(Exchange.NASDAQ),
-                isActive = Some(true),
-                country = Some("US"),
-                minMarketCap = Some(4000000000000L),
-                minOverallScore = Some(BigDecimal("50.00")),
-                maxPE = Some(BigDecimal("35.00")),
-                minROE = Some(BigDecimal("30.00"))
-              ),
-              None
+        },
+        FinancialMetricsRepository.CollectionName -> List(
+          (
+            low,
+            BigDecimal(12),
+            BigDecimal(5),
+            BigDecimal("2.5"),
+            BigDecimal(5),
+            BigDecimal(-2),
+            BigDecimal(3),
+            BigDecimal(5),
+            BigDecimal("0.4")
+          ),
+          (
+            mid,
+            BigDecimal(25),
+            BigDecimal(30),
+            BigDecimal(1),
+            BigDecimal(20),
+            BigDecimal(8),
+            BigDecimal(12),
+            BigDecimal(18),
+            BigDecimal(2)
+          ),
+          (
+            high,
+            BigDecimal(50),
+            BigDecimal(150),
+            BigDecimal("0.5"),
+            BigDecimal(40),
+            BigDecimal(15),
+            BigDecimal(20),
+            BigDecimal(30),
+            BigDecimal(5)
+          )
+        ).map { case (ticker, pe, roe, debt, margin, cash, revenue, eps, dividend) =>
+          toDoc(
+            AAPLFinancialMetrics.copy(
+              ticker = ticker,
+              peRatioTtm = Some(pe),
+              roeTtm = Some(roe),
+              debtToEquityAnnual = Some(debt),
+              profitMarginTtm = Some(margin),
+              freeCashFlowPerShareTtm = Some(cash),
+              revenueGrowth5Y = Some(revenue),
+              epsGrowth5Y = Some(eps),
+              dividendYieldAnnual = Some(dividend)
             )
-          yield
-            res.size mustBe 1
-            res.head.security.ticker mustBe Ticker("GOOD")
-            res.head.profile.exists(_.country == "US") mustBe true
-            res.head.priceAnalytics.exists(_.scores.overallScore >= BigDecimal("50.00")) mustBe true
-            res.head.financialMetrics.exists(_.peRatioTtm.exists(_ <= BigDecimal("35.00"))) mustBe true
-            res.head.financialMetrics.exists(_.roeTtm.exists(_ >= BigDecimal("30.00"))) mustBe true
+          )
+        }
+      )
+
+      val filters = List(
+        ("all data", StockFilters(), ordered),
+        ("exchange", StockFilters(exchange = Some(Exchange.NYSE)), List(low)),
+        ("kind", StockFilters(kind = Some(SecurityKind.ETF)), List(low)),
+        ("country", StockFilters(country = Some("US")), List(high, mid)),
+        ("minimum market cap", StockFilters(minMarketCap = Some(3100000000000L)), List(high, mid)),
+        ("maximum market cap", StockFilters(maxMarketCap = Some(3100000000000L)), List(mid, low, missing)),
+        ("market cap range", StockFilters(minMarketCap = Some(3000000000000L), maxMarketCap = Some(3200000000000L)), List(mid)),
+        ("minimum price", StockFilters(minPrice = Some(BigDecimal(250))), List(high, mid)),
+        ("maximum price", StockFilters(maxPrice = Some(BigDecimal(250))), List(mid, low)),
+        ("price range", StockFilters(minPrice = Some(BigDecimal(200)), maxPrice = Some(BigDecimal(300))), List(mid)),
+        ("minimum change", StockFilters(minChange = Some(BigDecimal(20)), period = Some(TimePeriod.OneYear)), List(high)),
+        ("maximum change", StockFilters(maxChange = Some(BigDecimal(10)), period = Some(TimePeriod.ThreeMonth)), List(mid, low)),
+        (
+          "change range",
+          StockFilters(minChange = Some(BigDecimal(5)), maxChange = Some(BigDecimal(10)), period = Some(TimePeriod.OneMonth)),
+          List(mid)
+        ),
+        ("change without period", StockFilters(minChange = Some(BigDecimal(20))), ordered),
+        ("minimum overall score", StockFilters(minOverallScore = Some(BigDecimal(60))), List(high, mid)),
+        ("minimum CAGR score", StockFilters(minCagrScore = Some(BigDecimal(60))), List(high, mid)),
+        ("minimum volatility score", StockFilters(minVolatilityScore = Some(BigDecimal(60))), List(high, mid)),
+        ("minimum consistency score", StockFilters(minConsistencyScore = Some(BigDecimal(60))), List(high, mid)),
+        ("maximum drawdown", StockFilters(maxDrawdown = Some(BigDecimal(20))), List(high, mid)),
+        ("minimum PE", StockFilters(minPE = Some(BigDecimal(25))), List(high, mid)),
+        ("maximum PE", StockFilters(maxPE = Some(BigDecimal(25))), List(mid, low)),
+        ("PE range", StockFilters(minPE = Some(BigDecimal(15)), maxPE = Some(BigDecimal(35))), List(mid)),
+        ("minimum ROE", StockFilters(minROE = Some(BigDecimal(30))), List(high, mid)),
+        ("maximum debt to equity", StockFilters(maxDebtToEquity = Some(BigDecimal(1))), List(high, mid)),
+        ("minimum profit margin", StockFilters(minProfitMargin = Some(BigDecimal(20))), List(high, mid)),
+        ("maximum profit margin", StockFilters(maxProfitMargin = Some(BigDecimal(20))), List(mid, low)),
+        ("minimum free cash flow", StockFilters(minFreeCashFlow = Some(BigDecimal(0))), List(high, mid)),
+        ("minimum revenue growth", StockFilters(minRevenueGrowth5Y = Some(BigDecimal(12))), List(high, mid)),
+        ("minimum EPS growth", StockFilters(minEpsGrowth5Y = Some(BigDecimal(18))), List(high, mid)),
+        ("minimum dividend yield", StockFilters(minDividendYield = Some(BigDecimal(2))), List(high, mid)),
+        ("maximum dividend yield", StockFilters(maxDividendYield = Some(BigDecimal(2))), List(mid, low)),
+        ("unmatched criteria", StockFilters(country = Some("FR")), Nil),
+        (
+          "combined financial metrics",
+          StockFilters(maxPE = Some(BigDecimal(40)), minROE = Some(BigDecimal(30)), maxDebtToEquity = Some(BigDecimal(1))),
+          List(mid)
+        ),
+        (
+          "long term investment criteria",
+          StockFilters(
+            minPE = Some(BigDecimal(15)),
+            maxPE = Some(BigDecimal(35)),
+            minROE = Some(BigDecimal(15)),
+            maxDebtToEquity = Some(BigDecimal("1.5")),
+            minProfitMargin = Some(BigDecimal(10)),
+            minFreeCashFlow = Some(BigDecimal(0)),
+            minRevenueGrowth5Y = Some(BigDecimal(8)),
+            minEpsGrowth5Y = Some(BigDecimal(10))
+          ),
+          List(mid)
+        ),
+        (
+          "all four collections",
+          StockFilters(
+            exchange = Some(Exchange.NASDAQ),
+            country = Some("US"),
+            minMarketCap = Some(3000000000000L),
+            minOverallScore = Some(BigDecimal(50)),
+            maxPE = Some(BigDecimal(35)),
+            minROE = Some(BigDecimal(30))
+          ),
+          List(mid)
+        )
+      )
+
+      filters.foreach { case (label, filter, expected) =>
+        s"filter by $label" in withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo   <- StockRepository.make[IO](db)
+            result <- repo.findAll(filter, None)
+          yield result.map(_.security.ticker) mustBe expected
+        }
+      }
+
+      List(None, Some(1), Some(10)).foreach { limit =>
+        s"apply limit $limit after filtering and sorting" in withEmbeddedMongoDatabase(seed) { db =>
+          for
+            repo   <- StockRepository.make[IO](db)
+            result <- repo.findAll(StockFilters(country = Some("US")), limit)
+          yield result.map(_.security.ticker) mustBe List(high, mid).take(limit.getOrElse(2))
+        }
+      }
+
+      StockSortField.values.toList.foreach { sort =>
+        s"sort by $sort without a limit" in {
+          val different = AAPLPriceAnalytics.copy(
+            ticker = low,
+            scores = AAPLPriceAnalytics.scores.copy(overallScore = 100, cagrScore = 100, volatilityScore = 100)
+          )
+          val changed = seed.updated(
+            PriceAnalyticsRepository.CollectionName,
+            seed(PriceAnalyticsRepository.CollectionName).filterNot(_.getString("_id").contains(low.value)) :+ toDoc(different)
+          )
+          withEmbeddedMongoDatabase(changed) { db =>
+            for
+              repo   <- StockRepository.make[IO](db)
+              result <- repo.findAll(StockFilters(sortBy = Some(sort)), None)
+            yield result.map(_.security.ticker) mustBe (if sort == StockSortField.MarketCap then ordered else List(low, high, mid, missing))
+          }
         }
       }
     }
-
   }
 }

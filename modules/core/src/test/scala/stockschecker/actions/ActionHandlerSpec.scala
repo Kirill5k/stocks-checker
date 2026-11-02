@@ -19,81 +19,40 @@ import stockschecker.fixtures.*
 
 class ActionHandlerSpec extends IOWordSpec:
   "An action handler" should {
-    "route analytics deletion to its owning service" in {
+    "expand a purge with ordered research deletes and independent owner deletes" in {
       val services = mock[Services[IO]]
-      val prices   = mock[PriceService[IO]]
-      when(services.price).thenReturn(prices)
-      when(prices.delete(AAPL)).thenReturnUnit
-      ActionHandler.make(services).flatMap(_.execute(Action.DeletePriceAnalytics(AAPL))).asserting { result =>
-        result mustBe ActionResult.Completed
-        verify(prices).delete(AAPL)
-        succeed
-      }
-    }
-
-    "route financial metrics deletion to its owning service" in {
-      val services   = mock[Services[IO]]
-      val financials = mock[FinancialMetricsService[IO]]
-      when(services.financialMetrics).thenReturn(financials)
-      when(financials.delete(AAPL)).thenReturnUnit
-      ActionHandler.make(services).flatMap(_.execute(Action.DeleteFinancialMetrics(AAPL))).asserting { result =>
-        result mustBe ActionResult.Completed
-        verify(financials).delete(AAPL)
-        succeed
-      }
-    }
-
-    "route monthly screen creation to the screen service" in {
-      val services = mock[Services[IO]]
-      val screens  = mock[InvestmentScreenService[IO]]
-      val rankings = mock[InvestmentRankingService[IO]]
-      when(services.investmentScreens).thenReturn(screens)
-      when(services.investmentRankings).thenReturn(rankings)
-      when(screens.createMonthlyScreen)
-        .thenReturnIO(
-          MonthlyScreenOutcome.InsufficientEligible(InvestmentRankingId("published"), 0, InvestmentRecipe.MinimumEligibleStocks)
+      ActionHandler.make(services).flatMap(_.execute(Action.PurgeStock(AAPL, ts))).asserting { result =>
+        result mustBe ActionResult.Expand(
+          JobPlan(
+            List(
+              Action.Sequence(
+                NonEmptyList.of(Action.DeleteRankingInputs(AAPL), Action.DeleteScreenEvaluations(AAPL), Action.DeleteScreens(AAPL, ts))
+              ),
+              Action.DeleteCompanyProfile(AAPL),
+              Action.DeletePriceData(AAPL),
+              Action.DeleteFinancialData(AAPL)
+            ),
+            sequential = false
+          )
         )
-      (for
-        handler <- ActionHandler.make(services)
-        result  <- handler.execute(Action.CreateMonthlyScreen)
-      yield result).asserting { result =>
-        result mustBe ActionResult.Completed
-        verify(screens).createMonthlyScreen
-        verifyNoInteractions(rankings)
-        succeed
       }
     }
 
-    "route investment ranking refresh to its owning service" in {
+    "freeze affected ranking IDs before deleting screens and releasing their rankings" in {
       val services = mock[Services[IO]]
-      val rankings = mock[InvestmentRankingService[IO]]
       val screens  = mock[InvestmentScreenService[IO]]
-      when(services.investmentRankings).thenReturn(rankings)
+      val ids      = List(InvestmentRankingId("first"), InvestmentRankingId("second"))
       when(services.investmentScreens).thenReturn(screens)
-      when(rankings.refresh).thenReturnUnit
-      (for
-        handler <- ActionHandler.make(services)
-        result  <- handler.execute(Action.RefreshInvestmentRanking)
-      yield result).asserting { result =>
-        result mustBe ActionResult.Completed
-        verify(rankings).refresh
-        verifyNoInteractions(screens)
-        succeed
-      }
-    }
-
-    "route evaluation price refreshes directly to the price service" in {
-      val services    = mock[Services[IO]]
-      val prices      = mock[PriceService[IO]]
-      val evaluations = mock[InvestmentEvaluationService[IO]]
-      val through     = java.time.LocalDate.parse("2026-09-30")
-      when(services.price).thenReturn(prices)
-      when(services.investmentEvaluations).thenReturn(evaluations)
-      when(prices.refreshHistory(AAPL, through)).thenReturnUnit
-      ActionHandler.make(services).flatMap(_.execute(Action.RefreshEvaluationPrices(AAPL, through))).asserting { result =>
-        result mustBe ActionResult.Completed
-        verify(prices).refreshHistory(AAPL, through)
-        verifyNoInteractions(evaluations)
+      when(screens.rankingIds(AAPL)).thenReturnIO(ids)
+      ActionHandler.make(services).flatMap(_.execute(Action.DeleteScreens(AAPL, ts))).asserting { result =>
+        result mustBe ActionResult.Expand(
+          JobPlan(
+            Action.DeleteScreenRecords(AAPL) :: ids.map(Action.ReleaseInvestmentRanking(_, ts)),
+            sequential = true
+          )
+        )
+        verify(screens).rankingIds(AAPL)
+        verify(screens, never).delete(any[Ticker])
         succeed
       }
     }
@@ -108,7 +67,7 @@ class ActionHandlerSpec extends IOWordSpec:
       when(services.financialMetrics).thenReturn(financials)
       when(profiles.get(AAPL, true)).thenReturnIO(AAPLCompanyProfile)
       when(prices.findPriceAnalytics(AAPL, true)).thenReturnIO(AAPLPriceAnalytics)
-      when(financials.find(AAPL, true)).thenReturnIO(AAPLFinancialMetrics)
+      when(financials.fetch(AAPL)).thenReturnIO(AAPLFinancialMetrics)
       val updates: List[NonEmptyList[Ticker] => Action] = List(
         Action.UpdateCompanyProfiles(_),
         Action.UpdatePriceAnalytics(_),
@@ -125,7 +84,7 @@ class ActionHandlerSpec extends IOWordSpec:
         )
         verify(profiles).get(AAPL, true)
         verify(prices).findPriceAnalytics(AAPL, true)
-        verify(financials).find(AAPL, true)
+        verify(financials).fetch(AAPL)
         verifyNoMoreInteractions(profiles, prices, financials)
         succeed
       }
@@ -142,18 +101,14 @@ class ActionHandlerSpec extends IOWordSpec:
       when(security.recordCompanyProfileUpdate(tickers)).thenReturnUnit
       when(profiles.recordPriceAnalyticsUpdate(tickers)).thenReturnUnit
       when(profiles.recordFinancialMetricsUpdate(tickers)).thenReturnUnit
-      when(security.setActive(ticker, true, ts)).thenReturnUnit
-      when(profiles.setActive(ticker, true, ts)).thenReturnUnit
-      when(security.setActive(ticker, false, ts)).thenReturnUnit
-      when(profiles.setActive(ticker, false, ts)).thenReturnUnit
+      when(security.setActive(ticker, true, ts, "user-excluded")).thenReturnUnit
+      when(security.setActive(ticker, false, ts, "user-excluded")).thenReturnUnit
       val events = List(
         Action.RecordCompanyProfileUpdate(tickers),
         Action.RecordPriceAnalyticsUpdate(tickers),
         Action.RecordFinancialMetricsUpdate(tickers),
         Action.SetSecurityActive(ticker, true, ts),
-        Action.SetCompanyProfileActive(ticker, true, ts),
-        Action.SetSecurityActive(ticker, false, ts),
-        Action.SetCompanyProfileActive(ticker, false, ts)
+        Action.SetSecurityActive(ticker, false, ts)
       )
       (for {
         handler <- ActionHandler.make(services)
@@ -163,10 +118,8 @@ class ActionHandlerSpec extends IOWordSpec:
         verify(security).recordCompanyProfileUpdate(tickers)
         verify(profiles).recordPriceAnalyticsUpdate(tickers)
         verify(profiles).recordFinancialMetricsUpdate(tickers)
-        verify(security).setActive(ticker, true, ts)
-        verify(profiles).setActive(ticker, true, ts)
-        verify(security).setActive(ticker, false, ts)
-        verify(profiles).setActive(ticker, false, ts)
+        verify(security).setActive(ticker, true, ts, "user-excluded")
+        verify(security).setActive(ticker, false, ts, "user-excluded")
         verifyNoMoreInteractions(security, profiles)
         succeed
       }
@@ -198,23 +151,4 @@ class ActionHandlerSpec extends IOWordSpec:
       }
     }
 
-    "route monthly evaluation capture to its owning service" in {
-      val services    = mock[Services[IO]]
-      val evaluations = mock[InvestmentEvaluationService[IO]]
-      val rankings    = mock[InvestmentRankingService[IO]]
-      val screens     = mock[InvestmentScreenService[IO]]
-      when(services.investmentEvaluations).thenReturn(evaluations)
-      when(services.investmentRankings).thenReturn(rankings)
-      when(services.investmentScreens).thenReturn(screens)
-      when(evaluations.captureMonthlyEvaluations).thenReturnIO(1)
-      (for
-        handler <- ActionHandler.make(services)
-        result  <- handler.execute(Action.CaptureMonthlyEvaluations)
-      yield result).asserting { result =>
-        result mustBe ActionResult.Completed
-        verify(evaluations).captureMonthlyEvaluations
-        verifyNoInteractions(rankings, screens)
-        succeed
-      }
-    }
   }

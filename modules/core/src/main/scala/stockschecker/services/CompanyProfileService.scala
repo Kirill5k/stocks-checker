@@ -11,13 +11,11 @@ import stockschecker.domain.errors.AppError
 import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.CompanyProfileRepository
 
-import java.time.Instant
-
 trait CompanyProfileService[F[_]]:
   def get(ticker: Ticker, fetchLatest: Boolean = false): F[CompanyProfile]
   def getAll(limit: Option[Int]): F[List[CompanyProfile]]
   def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]]
-  def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit]
+  def delete(ticker: Ticker): F[Unit]
   def recordPriceAnalyticsUpdate(tickers: NonEmptyList[Ticker]): F[Unit]
   def recordFinancialMetricsUpdate(tickers: NonEmptyList[Ticker]): F[Unit]
 
@@ -40,7 +38,7 @@ final private class LiveCompanyProfileService[F[_]](
       profile     <- client.getCompanyProfile(ticker)
       _           <- profile match
         case Some(cp) => repository.save(cp) >> dispatcher.dispatch(Action.RecordCompanyProfileUpdate(NonEmptyList.one(ticker)))
-        case None     => dispatcher.dispatch(Action.SetSecurityActive(ticker, false, requestedAt))
+        case None     => dispatcher.dispatch(Action.SetSecurityActive(ticker, false, requestedAt, "provider-profile-empty"))
       result <- F.fromOption(profile, AppError.CompanyProfileNotFound(ticker))
     yield result
 
@@ -50,13 +48,8 @@ final private class LiveCompanyProfileService[F[_]](
   override def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int] = None): F[List[Ticker]] =
     repository.findTickersBy(filter, limit)
 
-  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Unit] =
-    repository.setActive(ticker, active, requestedAt).flatMap { accepted =>
-      F.whenA(accepted && !active)(deleteInactiveAnalytics(ticker))
-    }
-
-  private def deleteInactiveAnalytics(ticker: Ticker): F[Unit] =
-    dispatcher.dispatch(Action.DeletePriceAnalytics(ticker)) >> dispatcher.dispatch(Action.DeleteFinancialMetrics(ticker))
+  override def delete(ticker: Ticker): F[Unit] =
+    repository.delete(ticker)
 
   override def recordPriceAnalyticsUpdate(tickers: NonEmptyList[Ticker]): F[Unit] =
     repository.updatePriceAnalyticsLastUpdated(tickers.toList)

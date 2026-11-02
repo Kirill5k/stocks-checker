@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.traverse.*
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
-import stockschecker.domain.{Provider, ProviderDeferralReason}
+import stockschecker.domain.{Provider, ProviderDeferralReason, Ticker}
 import stockschecker.domain.errors.AppError
 
 import java.time.Instant
@@ -20,7 +20,7 @@ class ProviderErrorsSpec extends IOWordSpec {
           for
             deferred     <- ProviderErrors.fromStatus[IO](provider, 429, Some("120"), "sanitized context")
             unauthorized <- ProviderErrors.fromStatus[IO](provider, 401, message = "sanitized context")
-            forbidden    <- ProviderErrors.fromStatus[IO](provider, 403, message = "sanitized context")
+            forbidden    <- ProviderErrors.fromStatus[IO](provider, 403, message = "sanitized context", ticker = Some(Ticker("AAPL")))
             unavailable  <- ProviderErrors.fromStatus[IO](provider, 503, message = "sanitized context")
           yield
             deferred mustBe AppError.ProviderDeferred(
@@ -30,11 +30,9 @@ class ProviderErrorsSpec extends IOWordSpec {
               Some("sanitized context")
             )
             deferred.message must include("sanitized context")
-            List(unauthorized, forbidden).foreach { error =>
-              error mustBe a[AppError.ProviderConfiguration]
-              error.message must include("sanitized context")
-              error.message must include("check credentials and subscription")
-            }
+            unauthorized mustBe a[AppError.ProviderConfiguration]
+            unauthorized.message must include("check credentials and subscription")
+            forbidden mustBe AppError.DataUnavailable(Ticker("AAPL"), "sanitized context")
             unavailable mustBe AppError.HttpClient(provider.print, 503, "sanitized context")
         }
         .asserting(_ => succeed)

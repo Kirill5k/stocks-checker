@@ -1,228 +1,107 @@
-# AGENTS.md
+# Stocks Checker: agent guide
 
-This file provides guidance to AI agents when working with code in this repository.
+Stocks Checker is a Scala 3.10.0 service on Java 27 and sbt 2.0.11. It collects Finnhub profiles, listings and financials, and TwelveData prices. Cats Effect, FS2, Http4s, Sttp 4, Tapir, Circe, PureConfig and Mongo4Cats form the application stack.
 
-# Stocks Checker
+## Build and verification
 
-## Project Overview
+Select Java 27 with `JAVA_HOME` and `PATH` before running sbt.
 
-**Stocks Checker** is a Scala-based web service designed to aggregate, manage, and analyze stock market data. It integrates with multiple external financial data providers (Finnhub, AlphaVantage, TwelveData) to fetch real-time and historical stock information, which is then stored and processed using MongoDB.
-
-### Key Technologies
-
-*   **Language:** Scala 3.10.0
-*   **Runtime:** Java 27
-*   **Build Tool:** sbt 2.0.11
-*   **Core Stack:**
-    *   **Effect System:** Cats Effect 3
-    *   **Streaming:** FS2
-    *   **HTTP Server:** Http4s (Ember)
-    *   **HTTP Client:** Sttp 4
-    *   **API Definition:** Tapir
-    *   **Database:** MongoDB (via Mongo4Cats)
-    *   **JSON:** Circe
-    *   **Configuration:** PureConfig
-
-### Architecture
-
-The application follows a functional architecture with a clear separation of concerns:
-
-*   **Controllers:** Handle HTTP requests and define API endpoints using Tapir.
-*   **Services:** Implement business logic and orchestrate data flows.
-*   **Repositories:** Manage data persistence in MongoDB.
-*   **Clients:** Interface with external stock market APIs.
-*   **Actions:** Define background tasks and scheduled jobs (e.g., fetching updates).
-
-## Building and Running
-
-### Prerequisites
-
-*   Java 27, selected via `JAVA_HOME` and available on `PATH`
-*   sbt launcher (the project pins sbt 2.0.11 in `project/build.properties`)
-
-### Key Commands
-
-*   **Compile:**
-    ```bash
-    sbt compile
-    ```
-
-*   **Run Tests:**
-    ```bash
-    sbt test
-    ```
-
-*   **Run All Tests, Including Unchanged Suites:**
-    ```bash
-    sbt "core/testOnly *"
-    ```
-    *sbt 2's `test` command selects affected suites; use this command for a full regression run.*
-
-*   **Run Specific Test:**
-    ```bash
-    sbt "testOnly *YourTestClassName*"
-    ```
-
-*   **Run Application:**
-    ```bash
-    sbt "core/run"
-    ```
-    *Note: You may need to set environment variables for API keys and database connections (see Configuration).*
-
-*   **Build Docker Image:**
-    ```bash
-    sbt docker:publishLocal
-    ```
-
-*   **Format Code:**
-    ```bash
-    sbt scalafmtAll
-    ```
-
-*   **Check Formatting:**
-    ```bash
-    sbt scalafmtCheck
-    ```
-
-## Configuration
-
-The application uses `PureConfig` to load settings from `modules/core/src/main/resources/application.conf`. `InvestmentConfig` constructs the investment recipe and validates its freshness limits during configuration loading. Key configuration overrides are handled via environment variables:
-
-| Environment Variable | Description |
+| Task | Command |
 | :--- | :--- |
-| `API_KEY` | Master API key for securing internal endpoints |
-| `HOST` | Server host (default: 0.0.0.0) |
-| `PORT` | Server port (default: 7070) |
-| `ALPHA_VANTAGE_API_KEY` | API key for Alpha Vantage |
-| `FINNHUB_API_KEY` | API key for Finnhub |
-| `TWELVE_DATA_API_KEY` | API key for Twelve Data |
-| `ACTION_EXECUTOR_CONCURRENCY` | Maximum concurrent job workers across all actions (default: 2); provider limits apply separately |
-| `MONGO_USER` | MongoDB username |
-| `MONGO_PASSWORD` | MongoDB password |
-| `MONGO_HOST` | MongoDB host address |
+| Compile | `sbt compile` |
+| Affected tests | `sbt test` |
+| Full regression, including unchanged suites | `sbt "core/testOnly *"` |
+| One suite | `sbt "core/testOnly *SecurityServiceSpec"` |
+| Format / check | `sbt scalafmtAll` / `sbt scalafmtCheck` |
+| Run | `sbt "core/run"` |
+| Build local image | `sbt "core/Docker/publishLocal"` |
+| Regenerate CI | `sbt githubWorkflowGenerate` |
 
-## Architecture Deep Dive
+Always check formatting before committing. CI runs the full regression command; sbt 2's plain `test` selects affected suites. Repository suites start one embedded mongod per suite and isolate tests with fresh databases. Unit tests use ScalaTest and Cats Effect test helpers.
 
-### Application Initialization
+## Architecture and ownership
 
-The application starts in `Application.scala` which:
-1. Loads configuration from `application.conf`
-2. Creates resources (HTTP backend, MongoDB connection)
-3. Initializes the action dispatcher (for background tasks)
-4. Constructs clients, repositories, services, and controllers
-5. Starts the HTTP server and action executor in parallel using FS2 streams
-
-### Action System
-
-The application uses a custom action-based task system for background jobs:
-
-*   **Action**: A sealed trait representing different types of background tasks (e.g., `FetchSecurities`, `FetchCompanyProfiles`). Actions are defined in `actions/Action.scala`.
-*   **ActionDispatcher**: The service gateway to durable jobs. Persists dispatched actions in MongoDB, supports deterministic idempotent dispatch, and reports pending job IDs.
-*   **ActionExecutor**: Claims durable jobs with leases and heartbeats and delegates execution to `ActionHandler`. Parent jobs aggregate child states with backoff. Provider deferrals back off from 30 seconds to five minutes, respect provider cooldowns and add jitter; these routine waits do not consume transient retries. Their provider, typed reason (`concurrency-limit`, `request-spacing`, `daily-quota`, or `provider-429`) and optional context are recorded in `job.error`. Persisted cooldown markers distinguish HTTP 429 waits from request spacing across restarts. Unavailable/stale data is terminal for the current run and logs at info, as do missing profiles; transport failures use the bounded `JobExecutionPolicy`; terminal jobs are not restarted. Jobs and logs retain exception messages. Runs as an FS2 stream in parallel with the HTTP server.
-
-Investment research has three schedulable actions: `RefreshInvestmentRanking` publishes a new immutable ranking on every execution and prunes old unreferenced rankings, `CreateMonthlyScreen` returns a logged typed outcome (created, already exists, or insufficient eligible stocks) and creates a missing monthly screen only from a usable ranking published on the same UTC day, and `CaptureMonthlyEvaluations` captures or resumes portfolio evaluations. `RefreshInvestmentResearch` expands into two independent children: `Sequence(RefreshInvestmentRanking, CreateMonthlyScreen)` and `CaptureMonthlyEvaluations`. The executor waits for ranking completion before screen creation and still runs evaluation capture if the sequence fails; mixed child outcomes make the umbrella job `Partial`. `RefreshEvaluationPrices` routes directly to `PriceService.refreshHistory`.
-
-`ActionHandler` routes each leaf action to its owning service and expands composite actions into durable job plans. The executor owns research dependencies and failure aggregation.
-
-### Command System
-
-Commands provide scheduled execution of actions:
-
-*   **Command**: Represents a scheduled task with a cron or periodic schedule, stored in MongoDB
-*   **Schedule**: Supports both periodic (fixed interval) and cron-based scheduling
-*   Commands track execution count, last execution time, and can have a maximum execution limit
-*   The independent command scheduler reserves deterministic run IDs and recovers a missing job from the command's active run. Per-command failures are isolated; no outbox is needed.
-
-Authenticated job diagnostics use `GET /api/jobs` (bounded recent jobs, optionally filtered by command ID, state and action kind) and `GET /api/jobs/status?id=...` (query IDs support hierarchical child IDs). `JobService` reads through `ActionDispatcher`; the HTTP view omits leases and frozen execution plans. Manual command execution retains HTTP 204 and returns its durable job ID in `X-Job-Id` without changing command scheduling state.
-
-### Layered Architecture
-
-The codebase follows a strict functional architecture:
-
-```
+```text
 Controllers -> Services -> Repositories -> Domain
-                       -> Clients -> ProviderAccess
+                       -> MarketDataClient -> ProviderAccess
                        -> ActionDispatcher -> JobRepository
 ActionExecutor -> ActionHandler -> Services
 CommandScheduler -> CommandRepository, JobRepository
 ```
 
-*   **Resources**: Manage the HTTP client and MongoDB connection lifecycle.
-*   **Clients**: Fetch external data; `MarketDataClient` selects providers and `DatasetObserver` records dataset availability. Provider mappings translate financial metrics and sectors into canonical domain values.
-*   **Repositories**: Persist and query domain data. Services own business decisions. Multi-collection reads use aggregate queries in the requesting service's own repository.
-*   **Services**: Coordinate their own repositories, `MarketDataClient`, `ActionDispatcher`, clocks, logging and config. Services never depend on other services. Each aggregate repository has exactly one owning service; cross-aggregate reads are aggregate queries in the requesting service's own repository, and cross-aggregate writes are dispatched actions. Services access jobs through `ActionDispatcher`.
-*   **Events**: Cross-aggregate writes are internal actions dispatched through `ActionDispatcher` and delivered by `ActionHandler` to the owning service. `RecordCompanyProfileUpdate`, `RecordPriceAnalyticsUpdate`, `RecordFinancialMetricsUpdate`, `SetSecurityActive`, `SetCompanyProfileActive`, `DeletePriceAnalytics` and `DeleteFinancialMetrics` update the owning aggregate when the executor handles them. These changes are eventually consistent. Activation events carry the requested state and timestamp. Repositories accept equal-timestamp retries and quietly ignore older requests; services dispatch follow-up actions only for accepted events. Activation of a delisted security is rejected. Accepted profile deactivation also clears its price/financial refresh timestamps, so ordinary freshness filters can refill deleted caches after reactivation. A confirmed empty provider profile dispatches `SetSecurityActive(false)`; the security owner propagates inactivity to the cached profile and cached analytics are deleted through actions. Inactive securities are excluded from future scheduled fetches and do not automatically reactivate. Internal events take priority over ordinary fan-out jobs. Internal actions cannot be scheduled as commands, including inside a `Sequence`.
-*   **Domain**: Pure investment scoring, selection and evaluation live under `domain.investment`. `EvaluationCapture` decides which histories a capture needs and assembles pending or settled reports. `InvestmentRanking.requireUsable` checks recipe compatibility and ranking freshness. Price analytics live beside `PriceAnalytics`; there is no `utils` package.
-*   **Controllers**: Define Tapir endpoints and map HTTP requests and responses. Internal command scheduling state stays out of response views.
+Services never depend on other services. Each repository has one owning service. Cross-aggregate reads belong in aggregate queries in the requesting repository; writes go through internal actions to the owning service. The composition root wires these dependencies. Keep effects inside `F`/`IO`, and keep investment scoring, selection and evaluation decisions pure under `domain.investment`.
 
-Repository ownership:
+Build Mongo pipelines with `Aggregate` methods (`lookup`, `project`, `set`, `facet`, etc.), never `new Aggregate` with raw stages. The project uses the current persistence schema, without startup migrations or legacy decoders.
 
-| Owning service | Repositories |
+| Service | Owned repositories |
 | :--- | :--- |
 | `SecurityService` | `SecurityRepository` |
 | `CompanyProfileService` | `CompanyProfileRepository` |
 | `PriceService` | `PriceAnalyticsRepository`, `PriceHistoryRepository` |
 | `FinancialMetricsService` | `FinancialMetricsRepository`, `FinancialHistoryRepository` |
-| `StockService` | `StockRepository` (the joined stock read model) |
+| `StockService` | `StockRepository` |
 | `CommandService` | `CommandRepository` |
-| `DataQualityService` | `DataQualityRepository` (availability and joined report reads) |
+| `DataQualityService` | `DataQualityRepository` |
 | `InvestmentRankingService` | `InvestmentRankingRepository` |
 | `InvestmentScreenService` | `InvestmentScreenRepository` |
 | `InvestmentEvaluationService` | `InvestmentEvaluationRepository` |
 
-Cross-aggregate reads stay inside the requesting repository:
-
-| Requesting repository | Collections read and purpose |
+| Requesting repository | Cross-aggregate reads |
 | :--- | :--- |
-| `SecurityRepository` | Reads `securities` and joins `company-profiles` for visible security reads; profile-fetch selection checks active/listed securities without requiring an existing profile. |
-| `CompanyProfileRepository` | Reads `company-profiles` and joins `securities` to enforce active/listed status before sorting and limiting. |
-| `StockRepository` | Starts from `securities` and joins `company-profiles`, `price-analytics` and `financial-metrics` through `StockAggregates`; activation checks project only the security ID. |
-| `InvestmentRankingRepository` | Reuses `StockAggregates`, then joins `financial-history` by ticker `_id` for candidates. Diagnostics read their own ranking header and a bounded input page in two queries. Pruning reads `investment-screens` to retain referenced rankings and joins old input groups to `investment-rankings` to find orphaned inputs. |
-| `InvestmentScreenRepository` | Joins screen headers to `investment-rankings` and reads `investment-ranking-inputs` separately. Default details load indexed stored-cohort rows and bounded visible financial near misses; `includeExclusions=true` and creation retain full ranking reads. Lists join cohort holdings to `securities` and `company-profiles`. Input visibility joins those collections after restricting to requested tickers for the final detail check; creation still validates all scoring peers. |
-| `InvestmentEvaluationRepository` | Joins `investment-screens` to `investment-evaluations` for capture context and work lists, checking every cohort against joined `securities` and `company-profiles`. One query reads matching adjusted `price-observations`, checks coverage and fetch timestamps, and trims candles while retaining the original candle count for truncation checks. |
-| `DataQualityRepository` | Aggregates `dataset-availability`, excluded `securities`, the latest `investment-rankings` header and compact `price-analytics` projections; groups complete `investment-ranking-inputs` inside the latest-ranking lookup to report peer readiness in one aggregation without embedding scorecards. |
+| `SecurityRepository` | Profiles for ordinary security reads; profile-fetch selection only needs active, listed securities. |
+| `CompanyProfileRepository` | Active, listed securities before sorting and limiting. |
+| `PriceAnalyticsRepository` | Active, listed securities, including after an in-flight refresh recreates purged analytics. |
+| `StockRepository` | Securities, required profiles, analytics and financial metrics through `StockAggregates`. Activation checks only need a security ID. |
+| `InvestmentRankingRepository` | Stock aggregates plus financial history. Screen references govern release of pinned rankings. |
+| `InvestmentScreenRepository` | Ranking headers and separate bounded input queries; cohorts identify affected screens during purge. |
+| `InvestmentEvaluationRepository` | Screens for capture contexts and deleting affected evaluations. A single adjusted-history query checks coverage/freshness and trims candles while retaining original counts. |
+| `DataQualityRepository` | Dataset availability, excluded security tombstones, latest unexpired ranking, compact analytics and grouped complete ranking inputs. |
 
-The composition root wires repositories into their owners. Job execution, command scheduling and provider-budget coordination remain infrastructure concerns handled by `ActionDispatcher`, `ActionExecutor`, `CommandScheduler` and `ProviderAccess`. `ProviderAccess` owns persisted request budgets. `DatasetObserver` records dataset availability inside `MarketDataClient` through `DataQualityRepository`; `DataQualityService` uses the same repository to aggregate availability, excluded securities and the latest published ranking into its report.
+`DatasetObserver` records provider availability through `DataQualityRepository`. Availability and cooldown bookkeeping failures are logged without replacing provider results. `ProviderAccess` remains infrastructure: it owns shared persisted request budgets, account concurrency, spacing and credential cooldowns.
 
-### Stock visibility and profile recovery
+## Deactivation and purge
 
-Security and stock reads, and cached profile reads, require an active, listed security and an active cached profile. An explicit profile fetch reads the provider directly, persists successful results and returns the provider profile without a cache lookup; it does not automatically reactivate the security. Batch restrictions precede sorting and limits. Accepted profile deactivation dispatches `DeletePriceAnalytics` and `DeleteFinancialMetrics`; each owning service deletes its current cached document through its repository. Price and financial services have no cross-owner availability guards. Deletion is eventually consistent, and explicit or already queued refreshes can recreate these cached records. Stored price observations and financial history are retained. Authenticated diagnostic endpoints retain evidence about excluded records.
+The security document is the tombstone. Ordinary stock/security/profile queries require an active, listed security and an existing profile; profile documents have no activation state. `Stock.profile` is required. Price reads independently enforce active security status.
 
-The daily profile command retains its active-security and three-day freshness filters. A successful empty provider response deactivates the security; a local cache miss, provider failure or deferral does not. There is no automatic missing-profile retry or reactivation. Listing reconciliation preserves exclusions and changes only security listing/activation state. It does not deactivate profiles or delete caches, so a subsequent complete listing restores visibility for relisted, non-excluded stocks.
+An accepted `SetSecurityActive(false)` dispatches deterministic `PurgeStock(ticker, requestedAt)`. The caller supplies the exclusion reason: `user-excluded` for explicit exclusions or `provider-profile-empty` for confirmed empty provider profiles. The security service rejects deactivation of the VTI benchmark and activation of delisted securities. Repositories return applied, stale, delisted or missing results and preserve timestamp ordering, including equal-timestamp retries.
 
-Screens and evaluation reports are hidden in full when any stored cohort member is unavailable, including the equal-universe cohort. Filtering occurs before list limits and evaluation capture selection. Stored history stays unchanged; the unfiltered monthly existence check still prevents duplicate creation. Reactivation restores visibility. Supplementary scorecards also omit unavailable stocks. New screens reject published rankings whose scoring peers are no longer available. Standalone SPY benchmark history remains independent of company-profile availability.
+`PurgeStock` expands into four branches:
 
-Authenticated `GET /api/investment-rankings/{rankingId}/inputs` exposes frozen ranking diagnostics with industry/sector filters and ordinal pagination (default 50, maximum 100). The ranking service and repository own this query; it does not trigger jobs or modify rankings.
+- A sequence deletes ranking inputs, evaluations of affected screens, and then the screens. Evaluation deletion must precede screen deletion because it joins screens. Input deletion prevents subsequent screen selection of that ticker.
+- Profile deletion.
+- Price deletion: analytics plus every adjustment's observations.
+- Financial deletion: metrics plus history.
 
-### Storage assumptions
+`DeleteScreens` freezes affected ranking IDs into a durable sequence containing `DeleteScreenRecords` and `ReleaseInvestmentRanking` actions, so retries retain the release work after screen documents disappear. Internal actions have priority over ordinary fan-out jobs and cannot be scheduled, even inside a `Sequence`.
 
-Persistence entities use the current schema; there are no legacy decoders, startup backfills or migrations. Price analytics provenance (`basis`) is optional: missing or null values mean unknown provenance, while fresh calculations populate it. Monthly evaluation documents track both pending and settled captures in `investment-evaluations`; reads do not create captures or jobs. Each capture stores its dispatched history requests in an internal `requestedHistory` list, updated in batches with `$addToSet`/`$each` after dispatch and preserved across report saves. Resuming that capture does not recreate pruned history jobs, so job retention does not depend on evaluations. `InvestmentRankingRepository` owns `investment-rankings` and `investment-ranking-inputs`, publishing metadata only after all entries are stored.
+Any cohort reference causes a screen and its evaluations to be deleted. The equal-universe cohort contains every eligible stock: purging one eligible stock can remove many screens. Research history is deliberately survivor-only. Reactivation does not restore deleted research.
 
-Price observations keep one current snapshot per ticker and adjustment under a stable `ticker:adjustment` Mongo ID; `data.id` preserves provider provenance. Routine analytics persist only the short unadjusted quote cache, fetched before adjusted history so provider deferrals can resume. Full adjusted histories are persisted only for explicit evaluation captures. Financial history uses ticker `_id` values and retains only the latest canonical snapshot per ticker without raw provider payloads or a separate snapshot ID. Provider, observation timestamp, payload hash and mapping version preserve financial provenance, including in scorecard evidence; scorecards have no `financialSnapshotId` field. Price `data.fetchedAt` and financial `observedAt` are BSON dates with millisecond precision, while API timestamps remain ISO strings. Conditional replacements reject older or tied timestamps, with one retry without upsert on duplicate-key races. Unreferenced rankings are retained for three days; screens pin their rankings. Existing snapshot data must use the current BSON-date schema before starting the updated application; there is no startup migration. README describes startup and data refill after resetting the snapshot collections, including recovery considerations for pending evaluations. Removed financial ID fields in existing documents are ignored without a migration.
+Listing reconciliation preserves explicit exclusions, marks newly absent securities delisted and persists pending purge markers. The listing refresh drains these markers before fetching and after reconciliation, acknowledging each only after deterministic job dispatch succeeds. This allows recovery after restart or enqueue failure. A configurable listing-shrink guard rejects unexpectedly incomplete listings before changes. Deactivation and delisting clear the profile-fetch timestamp; relisted non-excluded stocks can refill through the normal freshness query. Explicit reactivation dispatches a profile fetch.
 
-Ranking input rows contain a full scorecard plus compact screen-selection fields (exchange, country, industry, sector, old price score and exclusion explanation), rather than copying complete stock records or financial snapshots. Scoring still runs over full candidates before publication.
+A provider's successful empty profile response triggers deactivation. Missing local cache data, malformed responses, transport failures and deferrals do not. Profiles use the requested ticker and reject mismatched provider identities. Explicit and already-running refreshes can recreate deleted cache data; the active-security guards still exclude those rows from ordinary reads.
 
-### Controller Security
+## Rankings and evaluations
 
-Controllers use Tapir for endpoint definition with built-in API key authentication:
+Each refresh publishes a new immutable ranking after all input rows are stored. Input IDs remain `{rankingId}:{ticker}`. Inputs contain the scorecard/evidence and compact selection fields; normalized `input.industry` is the peer key used for exact matching.
 
-*   `Controller.publicEndpoint`: Base endpoint with error handling
-*   `Controller.secureEndpoint`: Endpoint requiring API key in `X-API-Key` header
-*   API key validation uses constant-time comparison to prevent timing attacks
-*   Error responses are consistently mapped to appropriate HTTP status codes
+Headers and inputs have BSON-date `expiresAt` fields and zero-second TTL indexes. Unpinned rankings expire three days after publication (`RankingRetention`); usable rankings are at most two days old. Reads skip expired headers immediately, independently of the asynchronous TTL monitor.
 
-### Testing
+Saving a manual or monthly screen dispatches `PinInvestmentRanking` with deterministic ID `pin-ranking-{screenId}`. Pinning unsets expiry on inputs before the header. Releasing a ranking checks for surviving screen references; without references it sets expiry to `max(now, createdAt + RankingRetention)`, then checks references again and pins if one appeared. Failed publications' input rows already carry expiry. No pruning scan or orphan lookup is required.
 
-Tests use:
-*   **EmbeddedMongo**: For integration testing repositories (via mongo4cats-embedded)
-*   **AsyncWordSpec**: ScalaTest style for async tests
-*   Each repository test extends `RepositorySpec` which provides embedded MongoDB setup
-*   Tests seed data using `Document` objects and verify operations
+`RefreshInvestmentResearch` expands into a ranking-then-monthly-screen sequence and an independent evaluation-capture branch. Evaluation capture runs even if the first branch fails; mixed results produce `Partial`. Monthly creation returns typed created, already-exists, insufficient-eligible or ranking-unavailable outcomes. A new monthly screen requires a compatible usable ranking published on the same UTC day.
 
-## Development Conventions
+Evaluation reads never create captures or jobs. Capture requests and resumptions use the recorded `requestedHistory` set, updated in batches after dispatch and preserved across saves. Pruned completed history jobs are not recreated. VTI benchmark history is independent of company-profile existence.
 
-*   **Code Style:** The project uses `scalafmt` for code formatting. Always run `sbt scalafmtCheck` (or `scalafmtAll`) before committing.
-*   **Mongo Queries:** Build pipelines with the `Aggregate` builder methods (`lookup`, `project`, `set`, `facet`, and other available operations); do not construct `new Aggregate` from raw stages.
-*   **Functional Programming:** The codebase strictly adheres to functional programming principles using Cats and Cats Effect. Avoid side effects outside of `IO` monads.
-*   **Testing:** Unit and integration tests are located in the `test` directory of the `core` module. Tests often use embedded Mongo for integration testing.
-*   **CI/CD:** GitHub Actions are configured in `.github/workflows` for CI (testing) and Docker publishing.
+Price observations keep one snapshot per ticker and adjustment, under `ticker:adjustment`; `data.id` retains provider provenance. Routine analytics persist a short unadjusted quote cache first. Full adjusted histories are persisted only for explicit evaluation captures. Financial history keeps one canonical ticker-keyed snapshot with provider, observation time, payload hash and mapping version. Price `data.fetchedAt`, financial `observedAt` and ranking expiry are BSON dates; API timestamps remain ISO strings. Replacements reject older or tied snapshots, retrying a duplicate-key upsert race once without upsert.
+
+## Jobs, schedules and HTTP
+
+The dispatcher persists durable jobs; the executor owns leases, heartbeats, retry policy, dependencies and parent aggregation. Heartbeat failures are retried while the lease is still valid. Successful action completion retries the finish write without repeating the action. Expired-lease reclaims are bounded, separately from transient retries. Provider deferrals use their own counter, preserve typed reason/context and respect capped provider cooldowns.
+
+A `Paused` job represents a provider credential failure (HTTP/envelope 401). Its availability is moved fifteen minutes ahead; the executor automatically reclaims it after the cooldown. The matching in-memory provider account pause expires too. Startup can resume paused jobs immediately. Repeated credential failures pause again; parents and scheduled runs remain pending until the children complete. Per-symbol 403 is unavailable data and does not disable an account. Terminal jobs are not restarted.
+
+The command scheduler reserves deterministic run IDs and repairs a missing job for an active run. Per-command failures are isolated. Manual execution returns HTTP 204 plus `X-Job-Id` without changing command scheduling state. Diagnostics expose bounded `/api/jobs` lists and `/api/jobs/status?id=...`; job views omit lease tokens and frozen plans.
+
+Tapir endpoints use constant-time `X-API-Key` authentication. Static `/securities/tickers` precedes the ticker capture. Limits use Tapir validation (1–100); missing required non-path inputs return 422. Internal/provider failures return safe HTTP summaries and log details. Provider credentials travel in headers, never URL queries.
+
+Configuration and all supported environment overrides are documented once in [README.md](README.md). Operational diagnosis and targeted refill are in its [troubleshooting section](README.md#troubleshooting-and-data-refill).

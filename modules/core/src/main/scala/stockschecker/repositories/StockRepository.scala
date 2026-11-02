@@ -10,6 +10,7 @@ import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Aggregate, Filter, Projection}
 import stockschecker.domain.{Exchange, SecurityKind, Stock, StockFilters, Ticker}
 import stockschecker.repositories.entities.{Entity, StockEntity}
+import stockschecker.repositories.queries.StockAggregates
 
 trait StockRepository[F[_]]:
   def exists(ticker: Ticker): F[Boolean]

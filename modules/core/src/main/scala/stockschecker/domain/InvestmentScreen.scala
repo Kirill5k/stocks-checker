@@ -79,6 +79,9 @@ final case class InvestmentScreenInput(
     exclusionExplanation: Option[String]
 ) derives Codec.AsObject
 
+object InvestmentScreenInput:
+  def industryKey(value: String): String = value.trim.toLowerCase(java.util.Locale.ROOT)
+
 final case class InvestmentRankingEntry(input: InvestmentScreenInput, scorecard: InvestmentScorecard)
 
 object InvestmentRankingEntry:
@@ -87,9 +90,9 @@ object InvestmentRankingEntry:
     InvestmentRankingEntry(
       InvestmentScreenInput(
         stock.security.exchange,
-        stock.profile.map(_.country),
-        stock.profile.map(_.industry),
-        stock.profile.flatMap(_.sector),
+        Some(stock.profile.country),
+        Some(InvestmentScreenInput.industryKey(stock.profile.industry)).filter(_.nonEmpty),
+        stock.profile.sector,
         stock.priceAnalytics.map(_.scores.overallScore),
         Eligibility.explainExclusion(scorecard, candidate.financialSnapshot)
       ),
@@ -107,6 +110,7 @@ final case class InvestmentScreenSummary(
 ) derives Codec.AsObject
 
 enum MonthlyScreenOutcome:
+  case RankingUnavailable(reason: String)
   case Created(rankingId: InvestmentRankingId, summary: InvestmentScreenSummary)
   case AlreadyExists(rankingId: InvestmentRankingId, summary: InvestmentScreenSummary)
   case InsufficientEligible(rankingId: InvestmentRankingId, eligibleCount: Int, requiredCount: Int)

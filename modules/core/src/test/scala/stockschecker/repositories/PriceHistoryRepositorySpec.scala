@@ -29,6 +29,22 @@ class PriceHistoryRepositorySpec extends RepositorySpec {
   )
 
   "Price history repository" should {
+    "delete every adjustment for one ticker without deleting another ticker" in
+      withEmbeddedMongoDatabase { db =>
+        val other = Ticker("OTHER")
+        for
+          repo     <- PriceHistoryRepository.make[IO](db)
+          _        <- PriceAdjustment.values.toList.traverse_(adjustment => repo.save(original.copy(adjustment = adjustment)))
+          _        <- repo.save(original.copy(ticker = other))
+          _        <- repo.delete(ticker)
+          _        <- repo.delete(ticker)
+          deleted  <- PriceAdjustment.values.toList.traverse(repo.latest(ticker, _))
+          retained <- repo.latest(other, original.adjustment)
+        yield
+          deleted.flatten mustBe Nil
+          retained mustBe defined
+      }
+
     "keep retries of the current snapshot immutable and find only histories covering the requested date range" in
       withEmbeddedMongoDatabase { db =>
         for

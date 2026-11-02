@@ -1,6 +1,7 @@
 package stockschecker.repositories
 
 import cats.effect.IO
+import kirill5k.common.cats.Clock
 import cats.syntax.foldable.*
 import cats.syntax.parallel.*
 import cats.syntax.traverse.*
@@ -15,6 +16,7 @@ import java.time.temporal.ChronoUnit
 import scala.concurrent.duration.*
 
 class JobRepositorySpec extends RepositorySpec {
+  given Clock[IO]                                                  = Clock.mock(ts)
   override def port: Int                                           = 12156
   private val action                                               = Action.SetSecurityActive(AAPL, false, java.time.Instant.EPOCH)
   private val evaluationThrough                                    = LocalDate.parse("2026-01-01")
@@ -47,6 +49,17 @@ class JobRepositorySpec extends RepositorySpec {
         rejected.left.toOption.get mustBe a[MongoJsonParsingException]
         rejected.left.toOption.get.getMessage must include("job.waitCount")
       }
+    }
+
+    "require the current counter schema in persisted jobs" in withEmbeddedMongoDatabase { db =>
+      val previousSchema = Job(JobId("previous-schema"), Action.RefreshInvestmentResearch, ts, ts)
+      for
+        jobs   <- JobRepository.make[IO](db)
+        _      <- enqueue(jobs)(previousSchema)
+        raw    <- db.getCollection(JobRepository.CollectionName)
+        _      <- raw.updateOne(Filter.idEq(previousSchema.id.value), Update.unset("job.deferralCount").unset("job.reclaimCount"))
+        result <- jobs.find(previousSchema.id).attempt
+      yield result.left.toOption.get mustBe a[MongoJsonParsingException]
     }
 
     "preserve sub-millisecond activation request timestamps through persistence and claiming" in withEmbeddedMongoDatabase { db =>
@@ -155,6 +168,8 @@ class JobRepositorySpec extends RepositorySpec {
             completedAt = Some(expiredAt)
           ),
           Job(JobId("finished/0"), action, expiredAt, expiredAt, state = Job.Failed, completedAt = Some(expiredAt)),
+          Job(JobId("finished0"), action, ts, ts),
+          Job(JobId("finished-extra/0"), action, ts, ts),
           Job(JobId("recent"), action, ts, ts, state = Job.Succeeded, completedAt = Some(ts))
         ).traverse_(enqueue(jobs))
         _            <- jobs.pruneCompleted(ts)
@@ -162,11 +177,15 @@ class JobRepositorySpec extends RepositorySpec {
         removedRoot  <- jobs.find(JobId("finished"))
         removedChild <- jobs.find(JobId("finished/0"))
         recent       <- jobs.find(JobId("recent"))
+        neighbor     <- jobs.find(JobId("finished0"))
+        otherChild   <- jobs.find(JobId("finished-extra/0"))
       } yield {
         kept must not be empty
         removedRoot mustBe None
         removedChild mustBe None
         recent must not be empty
+        neighbor must not be empty
+        otherChild must not be empty
       }
     }
 
@@ -190,6 +209,76 @@ class JobRepositorySpec extends RepositorySpec {
         fenced.state mustBe Job.Running
         completed.state mustBe Job.Succeeded
       }
+    }
+
+    "fail a repeatedly abandoned lease after the bounded reclaim allowance" in withEmbeddedMongoDatabase { db =>
+      for
+        jobs      <- JobRepository.make[IO](db)
+        _         <- enqueue(jobs)(Job(JobId("poison"), action, ts, ts))
+        first     <- jobs.claim(ts, 1.second).map(_.get)
+        recovered <- (1 to JobRepository.MaxLeaseReclaims).toList.traverse(n => jobs.claim(ts.plusSeconds(n.toLong), 1.second))
+        exhausted <- jobs.claim(ts.plusSeconds(JobRepository.MaxLeaseReclaims.toLong + 1), 1.second)
+        failed    <- jobs.find(first.id).map(_.get)
+      yield
+        first.reclaimCount mustBe 0
+        recovered.flatten.map(_.reclaimCount) mustBe (1 to JobRepository.MaxLeaseReclaims).toList
+        exhausted mustBe None
+        failed.state mustBe Job.Failed
+        failed.completedAt mustBe Some(ts.plusSeconds(JobRepository.MaxLeaseReclaims.toLong + 1))
+        failed.error mustBe Some("Lease recovery limit exceeded")
+    }
+
+    "resume paused credentials after their cooldown and retain pending parents" in withEmbeddedMongoDatabase { db =>
+      val retryAt = ts.plusMillis(Provider.configurationRetryDelay.toMillis)
+      for
+        jobs    <- JobRepository.make[IO](db)
+        _       <- enqueue(jobs)(Job(JobId("paused"), action, ts, ts))
+        running <- jobs.claim(ts, 2.minutes).map(_.get)
+        _       <- jobs.pause(running, Provider.Finnhub, "invalid credentials")
+        paused  <- jobs.find(running.id).map(_.get)
+        pending <- jobs.pendingIds(List(running.id))
+        early   <- jobs.claim(retryAt.minusMillis(1), 2.minutes)
+        resumed <- jobs.claim(retryAt, 2.minutes).map(_.get)
+      yield
+        paused.state mustBe Job.Paused
+        paused.availableAt mustBe retryAt
+        pending mustBe Set(running.id)
+        early mustBe None
+        resumed.state mustBe Job.Running
+        resumed.pausedProvider mustBe None
+        resumed.retries mustBe 0
+    }
+
+    "use the application clock for terminal timestamps and reject renewal after expiry" in withEmbeddedMongoDatabase { db =>
+      for
+        jobs    <- JobRepository.make[IO](db)
+        _       <- enqueue(jobs)(Job(JobId("clock"), action, ts, ts))
+        running <- jobs.claim(ts, 1.second).map(_.get)
+        renewed <- jobs.renew(running, ts.plusSeconds(1), 1.second)
+        _       <- jobs.finish(running, Job.Succeeded)
+        done    <- jobs.find(running.id).map(_.get)
+      yield
+        renewed mustBe false
+        done.completedAt mustBe Some(ts)
+    }
+
+    "count provider deferrals independently of child waits and transient retries" in withEmbeddedMongoDatabase { db =>
+      for
+        jobs     <- JobRepository.make[IO](db)
+        _        <- enqueue(jobs)(Job(JobId("counters"), action, ts, ts, waitCount = 20, retries = 2))
+        first    <- jobs.claim(ts, 2.minutes).map(_.get)
+        _        <- jobs.defer(first, ts.plusSeconds(1), Some("rate limited"), countRetry = false, countDeferral = true)
+        deferred <- jobs.find(first.id).map(_.get)
+        second   <- jobs.claim(ts.plusSeconds(1), 2.minutes).map(_.get)
+        _        <- jobs.defer(second, ts.plusSeconds(2), Some("transport error"), countRetry = true)
+        retry    <- jobs.find(first.id).map(_.get)
+      yield
+        deferred.waitCount mustBe 20
+        deferred.deferralCount mustBe 1
+        deferred.retries mustBe 2
+        retry.waitCount mustBe 20
+        retry.deferralCount mustBe 1
+        retry.retries mustBe 3
     }
 
     "never cancel a newer occurrence from an older scheduler snapshot" in withEmbeddedMongoDatabase { db =>

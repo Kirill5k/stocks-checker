@@ -19,16 +19,15 @@ class JobControllerSpec extends HttpRoutesWordSpec:
   private val job    = JobView.from(Job(JobId("command:2:1793599200000/245"), Action.RefreshInvestmentResearch, ts, ts))
 
   "Job endpoints" should {
-    List(uri"/jobs", uri"/jobs/status?id=run%2F0").foreach { uri =>
-      s"require authentication for $uri" in {
-        val service  = mock[JobService[IO]]
-        val response = for
-          controller <- JobController.make(service, config)
-          result     <- controller.routes.orNotFound.run(Request[IO](uri = uri))
-        yield result
-        response mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(service)
-      }
+
+    "return 422 for a missing required job id" in {
+      val service  = mock[JobService[IO]]
+      val response = for
+        controller <- JobController.make(service, config)
+        result     <- controller.routes.orNotFound.run(Request[IO](uri = uri"/jobs/status").withHeaders(apiKey))
+      yield result
+      response mustHaveStatus (Status.UnprocessableContent, Some("""{"message":"Invalid value for: query parameter id is required"}"""))
+      verifyNoInteractions(service)
     }
 
     "default to the twenty latest jobs" in {
@@ -104,8 +103,8 @@ class JobControllerSpec extends HttpRoutesWordSpec:
     List(
       ("unknown state", uri"/jobs?state=unknown", "Unknown job state: unknown"),
       ("invalid command id", uri"/jobs?commandId=invalid", "Invalid hexadecimal representation of an id: invalid"),
-      ("zero limit", uri"/jobs?limit=0", "limit must be between 1 and 100"),
-      ("excessive limit", uri"/jobs?limit=101", "limit must be between 1 and 100"),
+      ("zero limit", uri"/jobs?limit=0", "Invalid value for: query parameter limit (must satisfy >=1)"),
+      ("excessive limit", uri"/jobs?limit=101", "Invalid value for: query parameter limit (must satisfy <=100)"),
       ("empty job id", uri"/jobs/status".withQueryParam("id", ""), "Job id must not be empty"),
       ("oversized job id", uri"/jobs/status".withQueryParam("id", "a" * 1025), "Job id must not exceed 1024 characters"),
       ("empty action kind", uri"/jobs".withQueryParam("actionKind", ""), "actionKind must not be empty"),

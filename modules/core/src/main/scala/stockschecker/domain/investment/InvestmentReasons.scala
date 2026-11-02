@@ -1,10 +1,7 @@
 package stockschecker.domain.investment
 
 object InvestmentReasons:
-  val DuplicateTickerInUniverse                             = "duplicate-ticker-in-universe"
   val InsufficientPeerCoverage                              = "insufficient-peer-coverage"
-  val InactiveSecurity                                      = "inactive-security"
-  val SecurityNotListed                                     = "security-not-listed"
   val MissingInvalidOrStalePrice                            = "missing-invalid-or-stale-price"
   val SpecialistSecurityModelRequired                       = "specialist-security-model-required"
   val OutsideUsCompanyUniverse                              = "outside-us-company-universe"
@@ -28,7 +25,6 @@ object InvestmentReasons:
   val ReportingCurrencyUnknownNoCrossCurrencyYieldsComputed = "reporting-currency-unknown-no-cross-currency-yields-computed"
   val InsufficientCashFlowDurability                        = "insufficient-cash-flow-durability"
 
-  def securityExcluded(value: String): String          = s"security-excluded:$value"
   def insufficientAnnualHistory(value: String): String = s"insufficient-annual-history:$value"
   def staleFiscalPeriod(value: String): String         = s"stale-fiscal-period:$value"
   def missingMetric(value: String): String             = s"missing-metric:$value"

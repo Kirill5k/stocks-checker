@@ -1,12 +1,14 @@
 package stockschecker.repositories
 
 import cats.effect.IO
+import kirill5k.common.cats.Clock
 import cats.syntax.foldable.*
 import stockschecker.actions.{Action, ActionPriority}
 import stockschecker.domain.*
 import stockschecker.fixtures.*
 
 class JobRepositoryListingSpec extends RepositorySpec:
+  given Clock[IO]        = Clock.mock(ts)
   override def port: Int = 12175
 
   private def enqueue(jobs: JobRepository[IO])(job: Job): IO[Unit] =

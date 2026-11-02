@@ -5,6 +5,7 @@ import cats.syntax.applicativeError.*
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.domain.*
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.DataQualityRepository
@@ -18,7 +19,11 @@ final private class LiveDatasetObserver[F[_]](
     extends DatasetObserver[F]:
   override def observe[A](provider: Provider, dataset: Dataset, ticker: Ticker)(request: F[A])(present: A => Boolean): F[A] =
     def record(status: DatasetStatus, failure: Option[String]): F[Unit] =
-      C.now.flatMap(now => quality.record(ticker, provider, dataset, status, now, failure))
+      C.now
+        .flatMap(now => quality.record(ticker, provider, dataset, status, now, failure))
+        .handleErrorWith(error =>
+          Slf4jLogger.getLogger[F].warn(error)(s"Could not record ${provider.print} ${dataset} availability for $ticker")
+        )
 
     request.attempt.flatMap {
       case Right(value) =>

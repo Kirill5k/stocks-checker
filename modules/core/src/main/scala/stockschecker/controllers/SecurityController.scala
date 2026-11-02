@@ -37,9 +37,9 @@ final private class SecurityController[F[_]: Async](
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
       List(
+        getAllTickers,
         getSecurityByTicker,
-        getSecuritiesByExchange,
-        getAllTickers
+        getSecuritiesByExchange
       )
     )
 }

@@ -4,7 +4,7 @@ import cats.data.NonEmptyList
 import io.circe.Codec
 import io.circe.derivation.{Configuration, ConfiguredCodec}
 import stockschecker.common.JsonCodecs
-import stockschecker.domain.{CompanyProfileFilter, Exchange, SecurityFilter, Ticker}
+import stockschecker.domain.{CompanyProfileFilter, Exchange, InvestmentRankingId, SecurityFilter, Ticker}
 
 import java.time.{Instant, LocalDate}
 
@@ -28,15 +28,24 @@ enum Action:
   case RecordCompanyProfileUpdate(tickers: NonEmptyList[Ticker])
   case RecordPriceAnalyticsUpdate(tickers: NonEmptyList[Ticker])
   case RecordFinancialMetricsUpdate(tickers: NonEmptyList[Ticker])
-  case SetSecurityActive(ticker: Ticker, active: Boolean, requestedAt: Instant)
-  case SetCompanyProfileActive(ticker: Ticker, active: Boolean, requestedAt: Instant)
-  case DeletePriceAnalytics(ticker: Ticker)
-  case DeleteFinancialMetrics(ticker: Ticker)
+  case SetSecurityActive(ticker: Ticker, active: Boolean, requestedAt: Instant, reason: String = "user-excluded")
+  case PurgeStock(ticker: Ticker, requestedAt: Instant)
+  case DeleteCompanyProfile(ticker: Ticker)
+  case DeletePriceData(ticker: Ticker)
+  case DeleteFinancialData(ticker: Ticker)
+  case DeleteRankingInputs(ticker: Ticker)
+  case DeleteScreenEvaluations(ticker: Ticker)
+  case DeleteScreens(ticker: Ticker, requestedAt: Instant)
+  case DeleteScreenRecords(ticker: Ticker)
+  case PinInvestmentRanking(rankingId: InvestmentRankingId)
+  case ReleaseInvestmentRanking(rankingId: InvestmentRankingId, requestedAt: Instant)
 
   def isSchedulable: Boolean = this match
     case Sequence(actions) => actions.forall(_.isSchedulable)
     case _: RecordCompanyProfileUpdate | _: RecordPriceAnalyticsUpdate | _: RecordFinancialMetricsUpdate | _: SetSecurityActive |
-        _: SetCompanyProfileActive | _: DeletePriceAnalytics | _: DeleteFinancialMetrics | _: RefreshEvaluationPrices =>
+        _: PurgeStock | _: DeleteCompanyProfile | _: DeletePriceData | _: DeleteFinancialData | _: DeleteRankingInputs |
+        _: DeleteScreenEvaluations | _: DeleteScreens | _: DeleteScreenRecords | _: PinInvestmentRanking | _: ReleaseInvestmentRanking |
+        _: RefreshEvaluationPrices =>
       false
     case _ => true
 

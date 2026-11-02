@@ -42,7 +42,6 @@ final private class StockController[F[_]: Async](
       val filters = StockFilters(
         exchange = params.basic.exchange,
         kind = params.basic.kind,
-        isActive = params.basic.isActive,
         country = params.basic.country,
         minMarketCap = params.market.minMarketCap,
         maxMarketCap = params.market.maxMarketCap,
@@ -92,7 +91,6 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       limit: Option[Int],
       exchange: Option[Exchange],
       kind: Option[SecurityKind],
-      isActive: Option[Boolean],
       country: Option[String],
       sortBy: Option[StockSortField]
   )
@@ -157,7 +155,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
       ticker: Ticker,
       name: String,
       security: StockSecurityView,
-      profile: Option[StockCompanyProfileView],
+      profile: StockCompanyProfileView,
       priceAnalytics: Option[PriceAnalyticsView],
       financialMetrics: Option[FinancialMetricsView]
   ) derives CirceCodec.AsObject
@@ -173,17 +171,15 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
         listingStatus = stock.security.listingStatus,
         exclusionReason = stock.security.exclusionReason
       ),
-      profile = stock.profile.map(p =>
-        StockCompanyProfileView(
-          country = p.country,
-          industry = p.industry,
-          description = p.description,
-          website = p.website,
-          ipoDate = p.ipoDate,
-          currency = p.currency,
-          marketCap = p.marketCap,
-          lastUpdatedAt = stock.security.companyProfileLastUpdatedAt
-        )
+      profile = StockCompanyProfileView(
+        country = stock.profile.country,
+        industry = stock.profile.industry,
+        description = stock.profile.description,
+        website = stock.profile.website,
+        ipoDate = stock.profile.ipoDate,
+        currency = stock.profile.currency,
+        marketCap = stock.profile.marketCap,
+        lastUpdatedAt = stock.security.companyProfileLastUpdatedAt
       ),
       priceAnalytics = stock.priceAnalytics.map(pa =>
         PriceAnalyticsView(
@@ -202,7 +198,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
           metrics = pa.metrics,
           scores = pa.scores,
           basis = pa.basis,
-          lastUpdatedAt = stock.profile.flatMap(_.priceAnalyticsLastUpdatedAt)
+          lastUpdatedAt = stock.profile.priceAnalyticsLastUpdatedAt
         )
       ),
       financialMetrics = stock.financialMetrics.map(fm =>
@@ -218,7 +214,7 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
           epsGrowth5Y = fm.epsGrowth5Y,
           priceHigh52Week = fm.priceHigh52Week,
           priceLow52Week = fm.priceLow52Week,
-          lastUpdatedAt = stock.profile.flatMap(_.financialMetricsLastUpdatedAt)
+          lastUpdatedAt = stock.profile.financialMetricsLastUpdatedAt
         )
       )
     )
@@ -269,7 +265,6 @@ object StockController extends TapirJsonCirce with SchemaDerivation {
     query[Option[Int]]("limit")
       .and(query[Option[Exchange]]("exchange"))
       .and(query[Option[SecurityKind]]("kind"))
-      .and(query[Option[Boolean]]("isActive"))
       .and(query[Option[String]]("country"))
       .and(query[Option[StockSortField]]("sortBy"))
       .mapTo[BasicFilters]

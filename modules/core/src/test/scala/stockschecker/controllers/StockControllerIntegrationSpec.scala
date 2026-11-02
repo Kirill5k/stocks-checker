@@ -1,6 +1,7 @@
 package stockschecker.controllers
 
 import cats.effect.IO
+import kirill5k.common.cats.Clock
 import cats.syntax.traverse.*
 import io.circe.Json
 import io.circe.parser.parse
@@ -20,6 +21,7 @@ import stockschecker.services.StockService
 import java.time.Instant
 
 class StockControllerIntegrationSpec extends RepositorySpec {
+  given Clock[IO]        = Clock.make[IO]
   override def port: Int = 12161
   private val config     = ApiConfig("integration-api-key")
   private val authHeader = Header.Raw(CIString("X-API-Key"), config.key)

@@ -16,12 +16,12 @@ class ActionSpec extends AnyWordSpec with Matchers {
     Action.Sequence(
       NonEmptyList.of(
         Action.SetSecurityActive(Ticker("AAPL"), false, requestedAt),
-        Action.SetCompanyProfileActive(Ticker("MSFT"), false, requestedAt)
+        Action.PurgeStock(Ticker("MSFT"), requestedAt)
       )
     ),
     Action.FetchSecurities(NonEmptyList.of(Exchange.NYSE, Exchange.NASDAQ)),
-    Action.FetchCompanyProfiles(SecurityFilter.IsActive(true), Some(100)),
-    Action.FetchFinancialMetrics(CompanyProfileFilter.IsActive(true)),
+    Action.FetchCompanyProfiles(SecurityFilter.KindIs(SecurityKind.Stock), Some(100)),
+    Action.FetchFinancialMetrics(CompanyProfileFilter.CountryIs("US")),
     Action.FetchPriceAnalytics(CompanyProfileFilter.CountryIs("US")),
     Action.UpdateCompanyProfiles(NonEmptyList.one(Ticker("AAPL"))),
     Action.UpdateFinancialMetrics(NonEmptyList.one(Ticker("AAPL"))),
@@ -32,14 +32,14 @@ class ActionSpec extends AnyWordSpec with Matchers {
     Action.CaptureMonthlyEvaluations,
     Action.RefreshEvaluationPrices(Ticker("AAPL"), LocalDate.parse("2026-01-01")),
     Action.RecordCompanyProfileUpdate(NonEmptyList.of(Ticker("AAPL"), Ticker("MSFT"))),
-    Action.DeletePriceAnalytics(Ticker("AAPL")),
-    Action.DeleteFinancialMetrics(Ticker("AAPL")),
+    Action.DeletePriceData(Ticker("AAPL")),
+    Action.DeleteFinancialData(Ticker("AAPL")),
     Action.RecordPriceAnalyticsUpdate(NonEmptyList.one(Ticker("AAPL"))),
     Action.RecordFinancialMetricsUpdate(NonEmptyList.one(Ticker("AAPL"))),
     Action.SetSecurityActive(Ticker("AAPL"), true, requestedAt),
-    Action.SetCompanyProfileActive(Ticker("AAPL"), true, requestedAt),
+    Action.DeleteCompanyProfile(Ticker("AAPL")),
     Action.SetSecurityActive(Ticker("AAPL"), false, requestedAt),
-    Action.SetCompanyProfileActive(Ticker("MSFT"), false, requestedAt)
+    Action.PurgeStock(Ticker("MSFT"), requestedAt)
   )
 
   "Action codec" should {
@@ -47,8 +47,8 @@ class ActionSpec extends AnyWordSpec with Matchers {
       actions.foreach(action => decode[Action](action.asJson.noSpaces) mustBe Right(action))
 
     "preserve wire names and optional defaults" in {
-      decode[Action]("""{"kind":"fetch-company-profiles","filter":{"kind":"is-active","active":true}}""") mustBe
-        Right(Action.FetchCompanyProfiles(SecurityFilter.IsActive(true)))
+      decode[Action]("""{"kind":"fetch-company-profiles","filter":{"kind":"kind-is","securityKind":"stock"}}""") mustBe
+        Right(Action.FetchCompanyProfiles(SecurityFilter.KindIs(SecurityKind.Stock)))
       decode[Action](
         """{"kind":"set-security-active","ticker":"AAPL","active":false,"requestedAt":"2026-10-27T12:00:00Z","extra":true}"""
       ) mustBe
@@ -63,7 +63,7 @@ class ActionSpec extends AnyWordSpec with Matchers {
       val json   = """{
         "id":"cmd-123","isActive":true,
         "action":{"kind":"sequence","actions":[
-          {"kind":"fetch-company-profiles","filter":{"kind":"is-active","active":true}},
+          {"kind":"fetch-company-profiles","filter":{"kind":"kind-is","securityKind":"stock"}},
           {"kind":"set-security-active","ticker":"AAPL","active":false,"requestedAt":"2026-10-27T12:00:00Z"}
         ]},
         "schedule":{"kind":"periodic","period":"10seconds"},
@@ -71,7 +71,7 @@ class ActionSpec extends AnyWordSpec with Matchers {
       }"""
       val action = Action.Sequence(
         NonEmptyList.of(
-          Action.FetchCompanyProfiles(SecurityFilter.IsActive(true)),
+          Action.FetchCompanyProfiles(SecurityFilter.KindIs(SecurityKind.Stock)),
           Action.SetSecurityActive(Ticker("AAPL"), false, requestedAt)
         )
       )

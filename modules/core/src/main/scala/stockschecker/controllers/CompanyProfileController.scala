@@ -50,7 +50,7 @@ object CompanyProfileController extends TapirJsonCirce with SchemaDerivation {
 
   private val getCompanyProfileEndpoint = Controller.secureEndpoint.get
     .in(basePath)
-    .in(query[Option[Int]]("limit"))
+    .in(query[Option[Int]]("limit").validateOption(Validator.inRange(1, 100)))
     .out(jsonBody[List[CompanyProfile]])
     .description("Get all company profiles")
 

@@ -1,6 +1,7 @@
 package stockschecker.repositories
 
 import cats.effect.IO
+import kirill5k.common.cats.Clock
 import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Filter, Sort}
 import stockschecker.repositories.entities.{InvestmentRankingEntity, InvestmentRankingInputEntity}
@@ -20,8 +21,9 @@ private[stockschecker] object InvestmentRepositoryFixtures {
       .flatMap(_.find(Filter.eq("rankingId", id.value)).sort(Sort.asc("ordinal")).all)
       .map(_.toList.map(row => InvestmentRankingEntry(row.input, row.scorecard)))
 
-  val now  = Instant.parse("2026-10-19T12:00:00Z")
-  val card = InvestmentScorecard(
+  val now         = Instant.parse("2026-10-19T12:00:00Z")
+  given Clock[IO] = Clock.mock(now)
+  val card        = InvestmentScorecard(
     AAPL,
     true,
     Some(BigDecimal(70)),

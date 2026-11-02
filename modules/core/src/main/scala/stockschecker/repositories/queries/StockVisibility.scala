@@ -1,7 +1,8 @@
-package stockschecker.repositories
+package stockschecker.repositories.queries
 
 import mongo4cats.operations.{Aggregate, Filter}
 import stockschecker.domain.ListingStatus
+import stockschecker.repositories.{CompanyProfileRepository, SecurityRepository}
 
 /** Current stock visibility. Administrative diagnostics deliberately do not use this restriction. */
 private[repositories] object StockVisibility:
@@ -13,9 +14,7 @@ private[repositories] object StockVisibility:
     Filter.eq(field(path, SecurityRepository.Field.IsActive), true) &&
       Filter.eq(field(path, SecurityRepository.Field.ListingStatus), ListingStatus.Listed.print)
 
-  def activeProfile: Filter = activeProfile("")
-
-  def activeProfile(path: String): Filter = Filter.eq(field(path, CompanyProfileRepository.Field.IsActive), true)
+  def profileExists(path: String): Filter = Filter.exists(field(path, CompanyProfileRepository.Field.Id))
 
   def withActiveSecurity(tickerField: String): Aggregate =
     val security = "visibilitySecurity"
@@ -24,12 +23,9 @@ private[repositories] object StockVisibility:
       .matchBy(activeSecurity(s"$security.0"))
       .unset(security)
 
-  def withActiveProfile(tickerField: String): Aggregate =
+  def withProfile(tickerField: String): Aggregate =
     val profile = "visibilityProfile"
     Aggregate
       .lookup(CompanyProfileRepository.CollectionName, tickerField, CompanyProfileRepository.Field.Id, profile)
-      .matchBy(activeProfile(s"$profile.0"))
+      .matchBy(profileExists(s"$profile.0"))
       .unset(profile)
-
-  def restrict(tickerField: String): Aggregate =
-    withActiveSecurity(tickerField).combinedWith(withActiveProfile(tickerField))

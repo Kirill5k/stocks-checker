@@ -36,10 +36,11 @@ final case class Job(
     pausedProvider: Option[Provider] = None,
     plan: Option[JobPlan] = None,
     waitCount: Int = 0,
-    completedAt: Option[Instant] = None
+    completedAt: Option[Instant] = None,
+    deferralCount: Int = 0,
+    reclaimCount: Int = 0
 ) derives Codec.AsObject {
-  def isTerminal: Boolean       = Job.terminalStates.contains(state)
-  def hasUsableResults: Boolean = state == Job.Succeeded || state == Job.Partial
+  def isTerminal: Boolean = Job.terminalStates.contains(state)
 }
 
 enum JobState(val value: String) {

@@ -57,7 +57,7 @@ private[actions] object JobExecutionPolicy:
   def retryDelay(retries: Int, jitterMillis: Long): FiniteDuration = ((1000L << retries) + jitterMillis).millis
 
   def providerDeferUntil(job: Job, now: Instant, retryAt: Instant, jitterMillis: Long): Instant =
-    val delayMillis  = (InitialProviderDeferDelay.toMillis << job.waitCount.max(0).min(30)).min(MaximumProviderDeferDelay.toMillis)
+    val delayMillis  = (InitialProviderDeferDelay.toMillis << job.deferralCount.max(0).min(30)).min(MaximumProviderDeferDelay.toMillis)
     val backoffUntil = now.plusMillis(delayMillis)
     val earliest     = if retryAt.isAfter(backoffUntil) then retryAt else backoffUntil
     earliest.plusMillis(jitterMillis)
@@ -66,5 +66,8 @@ private[actions] object JobExecutionPolicy:
 
   private def transient(error: Throwable): Boolean = error match
     case AppError.HttpClient(_, status, _) => status == 408 || status == 429 || status >= 500
-    case _: java.io.IOException | _: TimeoutException | _: com.mongodb.MongoException | _: sttp.client4.SttpClientException => true
-    case _                                                                                                                  => false
+    case _: java.io.IOException | _: TimeoutException | _: com.mongodb.MongoSocketException | _: com.mongodb.MongoTimeoutException |
+        _: sttp.client4.SttpClientException =>
+      true
+    case error: com.mongodb.MongoException => error.hasErrorLabel("RetryableWriteError")
+    case _                                 => false

@@ -12,22 +12,20 @@ import mongo4cats.database.MongoDatabase
 import mongo4cats.operations.{Aggregate, Filter, Index, Projection, Sort, Update}
 import stockschecker.domain.{CompanyProfile, CompanyProfileFilter, Ticker}
 import stockschecker.repositories.entities.{CompanyProfileEntity, Entity}
+import stockschecker.repositories.queries.StockVisibility
 import kirill5k.common.cats.syntax.applicative.*
-import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
+import mongo4cats.models.collection.UpdateOptions
 
 import java.time.Instant
 
 trait CompanyProfileRepository[F[_]]:
   def save(cp: CompanyProfile): F[Unit]
-  def save(cps: List[CompanyProfile]): F[Unit]
   def find(ticker: Ticker): F[Option[CompanyProfile]]
   def findAll(limit: Option[Int]): F[List[CompanyProfile]]
   def findTickersBy(filter: CompanyProfileFilter, limit: Option[Int]): F[List[Ticker]]
   def updatePriceAnalyticsLastUpdated(tickers: List[Ticker]): F[Unit]
   def updateFinancialMetricsLastUpdated(tickers: List[Ticker]): F[Unit]
-
-  /** Whether the event is current, including retries and cleanup when no cached profile exists. */
-  def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Boolean]
+  def delete(ticker: Ticker): F[Unit]
 
 final private class LiveCompanyProfileRepository[F[_]](
     private val collection: MongoCollection[F, CompanyProfileEntity]
@@ -43,7 +41,6 @@ final private class LiveCompanyProfileRepository[F[_]](
       Update
         .setOnInsert(Field.Id, cp.ticker)
         .setOnInsert(Field.CreatedAt, now)
-        .setOnInsert(Field.IsActive, true)
         .set(Field.Name, cp.name)
         .set(Field.Country, cp.country)
         .set(Field.Industry, cp.industry)
@@ -60,23 +57,11 @@ final private class LiveCompanyProfileRepository[F[_]](
       collection.updateOne(Filter.idEq(cp.ticker), cp.toUpdate(time), UpdateOptions(upsert = true)).void
     }
 
-  override def save(cps: List[CompanyProfile]): F[Unit] =
-    C.now.flatMap { time =>
-      val updates = cps.map { cp =>
-        WriteCommand.UpdateOne(
-          Filter.idEq(cp.ticker),
-          cp.toUpdate(time),
-          UpdateOptions(upsert = true)
-        )
-      }
-      collection.bulkWrite(updates).void
-    }
-
   override def find(ticker: Ticker): F[Option[CompanyProfile]] =
     collection
       .aggregate[CompanyProfileEntity](
         Aggregate
-          .matchBy(Filter.idEq(ticker) && StockVisibility.activeProfile)
+          .matchBy(Filter.idEq(ticker))
           .combinedWith(StockVisibility.withActiveSecurity(Field.Id))
       )
       .first
@@ -86,7 +71,6 @@ final private class LiveCompanyProfileRepository[F[_]](
     collection
       .aggregate[CompanyProfileEntity](
         Aggregate
-          .matchBy(StockVisibility.activeProfile)
           .combinedWith(StockVisibility.withActiveSecurity(Field.Id))
           .sort(Sort.desc(Field.MarketCap))
           .limit(limit.getOrElse(Int.MaxValue))
@@ -99,7 +83,7 @@ final private class LiveCompanyProfileRepository[F[_]](
       collection
         .aggregate[Entity](
           Aggregate
-            .matchBy(mongoFilter && StockVisibility.activeProfile)
+            .matchBy(mongoFilter)
             .combinedWith(StockVisibility.withActiveSecurity(Field.Id))
             .sort(Sort.desc(Field.MarketCap))
             .limit(limit.getOrElse(Int.MaxValue))
@@ -129,35 +113,10 @@ final private class LiveCompanyProfileRepository[F[_]](
         .void
     }
 
-  override def setActive(ticker: Ticker, active: Boolean, requestedAt: Instant): F[Boolean] =
-    val update = Update
-      .set(Field.IsActive, active)
-      .set(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))
-      .currentDate(Field.UpdatedAt)
-    val activation =
-      if active then update
-      else update.unset(Field.PriceAnalyticsLastUpdatedAt).unset(Field.FinancialMetricsLastUpdatedAt)
-    collection
-      .updateOne(
-        Filter.idEq(ticker.value) &&
-          (Filter.isNull(Field.ActiveChangedAt) || Filter.lte(Field.ActiveChangedAt, ActiveChangedAt.encode(requestedAt))),
-        activation
-      )
-      .flatMap { result =>
-        if result.getMatchedCount > 0 then true.pure[F]
-        else
-          collection
-            .aggregate[Entity](
-              Aggregate.matchBy(Filter.idEq(ticker.value)).project(Projection.include(Field.Id))
-            )
-            .first
-            .map(_.isEmpty)
-      }
+  override def delete(ticker: Ticker): F[Unit] = collection.deleteOne(Filter.idEq(ticker.value)).void
 
   extension (f: CompanyProfileFilter)
     private def toFilter: F[Filter] = f match
-      case CompanyProfileFilter.IsActive(active) =>
-        Filter.eq(Field.IsActive, active).pure
       case CompanyProfileFilter.MarketCapAbove(min) =>
         Filter.gt(Field.MarketCap, min).pure
       case CompanyProfileFilter.MarketCapBelow(max) =>
@@ -191,8 +150,6 @@ object CompanyProfileRepository extends MongoJsonCodecs:
   object Field:
     val Id                            = "_id"
     val Name                          = "name"
-    val IsActive                      = "isActive"
-    val ActiveChangedAt               = "activeChangedAt"
     val Country                       = "country"
     val Industry                      = "industry"
     val Sector                        = "sector"

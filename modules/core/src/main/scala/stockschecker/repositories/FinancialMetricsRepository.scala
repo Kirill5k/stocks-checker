@@ -6,11 +6,10 @@ import cats.syntax.flatMap.*
 import kirill5k.common.cats.Clock
 import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
-import mongo4cats.operations.{Filter, Index, Update}
+import mongo4cats.operations.{Filter, Update}
 import mongo4cats.circe.MongoJsonCodecs
 import stockschecker.domain.{FinancialMetrics, Ticker}
 import stockschecker.repositories.entities.FinancialMetricsEntity
-import kirill5k.common.cats.syntax.applicative.*
 import mongo4cats.models.collection.{UpdateOptions, WriteCommand}
 
 import java.time.Instant
@@ -18,7 +17,6 @@ import java.time.Instant
 trait FinancialMetricsRepository[F[_]]:
   def delete(ticker: Ticker): F[Unit]
   def save(fm: List[FinancialMetrics]): F[Unit]
-  def find(ticker: Ticker): F[Option[FinancialMetrics]]
 
 final private class LiveFinancialMetricsRepository[F[_]](
     private val collection: MongoCollection[F, FinancialMetricsEntity]
@@ -29,7 +27,8 @@ final private class LiveFinancialMetricsRepository[F[_]](
 
   import FinancialMetricsRepository.Field
 
-  override def delete(ticker: Ticker): F[Unit] = collection.deleteOne(Filter.idEq(ticker.value)).void
+  override def delete(ticker: Ticker): F[Unit] =
+    collection.deleteOne(Filter.idEq(ticker.value)).void
 
   extension (fm: FinancialMetrics)
     private def toUpdate(now: Instant): Update =
@@ -56,8 +55,6 @@ final private class LiveFinancialMetricsRepository[F[_]](
       collection.bulkWrite(updates).void
     }
 
-  override def find(ticker: Ticker): F[Option[FinancialMetrics]] =
-    collection.find(Filter.idEq(ticker)).first.mapOpt(_.toDomain)
 }
 
 object FinancialMetricsRepository extends MongoJsonCodecs:
@@ -79,7 +76,6 @@ object FinancialMetricsRepository extends MongoJsonCodecs:
     val CreatedAt               = "createdAt"
 
   def make[F[_]: {Monad, Clock}](database: MongoDatabase[F]): F[FinancialMetricsRepository[F]] =
-    for
-      collection <- database.getCollectionWithCodec[FinancialMetricsEntity](CollectionName)
-      _          <- collection.createIndex(Index.ascending(Field.UpdatedAt))
-    yield LiveFinancialMetricsRepository[F](collection.withAddedCodec[Ticker])
+    database
+      .getCollectionWithCodec[FinancialMetricsEntity](CollectionName)
+      .map(coll => LiveFinancialMetricsRepository[F](coll.withAddedCodec[Ticker]))

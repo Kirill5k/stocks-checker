@@ -87,7 +87,7 @@ package object domain {
 
   final case class Stock(
       security: Security,
-      profile: Option[CompanyProfile],
+      profile: CompanyProfile,
       priceAnalytics: Option[PriceAnalytics] = None,
       financialMetrics: Option[FinancialMetrics] = None
   ) derives CirceCodec.AsObject

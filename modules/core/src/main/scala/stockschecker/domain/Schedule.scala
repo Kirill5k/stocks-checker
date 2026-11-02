@@ -19,7 +19,7 @@ sealed trait Schedule(val kind: String):
 object Schedule {
   final case class Periodic(period: FiniteDuration) extends Schedule("periodic"):
     override def nextExecutionTime(lastExecutionTime: Instant): Instant =
-      lastExecutionTime.plusSeconds(period.toSeconds)
+      lastExecutionTime.plusMillis(period.toMillis)
 
   final case class Cron(cron: JCron) extends Schedule("cron"):
     override def nextExecutionTime(lastExecutionTime: Instant): Instant =

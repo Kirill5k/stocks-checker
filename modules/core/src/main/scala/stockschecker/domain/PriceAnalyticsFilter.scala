@@ -5,8 +5,6 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
 import stockschecker.common.JsonCodecs
 import stockschecker.common.types.EnumType
 
-import scala.concurrent.duration.FiniteDuration
-
 object TimePeriod extends EnumType[TimePeriod](() => TimePeriod.values)
 enum TimePeriod(val fieldName: String):
   case OneMonth   extends TimePeriod("oneMonthChange")
@@ -20,8 +18,6 @@ enum TimePeriod(val fieldName: String):
 
 enum PriceAnalyticsFilter derives ConfiguredCodec:
   case Composite(filters: NonEmptyList[PriceAnalyticsFilter])
-  case UpdatedWithin(duration: FiniteDuration)
-  case NotUpdatedFor(duration: FiniteDuration)
   case PriceAbove(minPrice: BigDecimal)
   case PriceBelow(maxPrice: BigDecimal)
   case PerformanceAbove(period: TimePeriod, minPercentage: BigDecimal)

@@ -25,11 +25,7 @@ final private class PriceController[F[_]: Async](
 
   private val getPriceAnalytics = secured(PriceController.getPriceAnalyticsEndpoint)
     .serverLogic { _ => queryParams =>
-      val analytics = queryParams.toFilter match
-        case Some(filter) => priceService.findPriceAnalyticsBy(filter, queryParams.limit)
-        case None         => priceService.getAllPriceAnalytics(queryParams.limit)
-
-      analytics.asResponse
+      priceService.findPriceAnalyticsBy(queryParams.toFilter, queryParams.limit).asResponse
     }
 
   val routes: HttpRoutes[F] =
@@ -119,7 +115,7 @@ object PriceController extends TapirJsonCirce with SchemaDerivation {
         .and(query[Option[BigDecimal]]("maxTenYearChange"))
         .and(query[Option[BigDecimal]]("minMaxChange"))
         .and(query[Option[BigDecimal]]("maxMaxChange"))
-        .and(query[Option[Int]]("limit"))
+        .and(query[Option[Int]]("limit").validateOption(Validator.inRange(1, 100)))
         .mapTo[PriceAnalyticsQueryParams]
     )
     .out(jsonBody[List[PriceAnalytics]])

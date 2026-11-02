@@ -32,11 +32,24 @@ class FinnhubClientSpec extends Sttp4WordSpec {
     val config = FinnhubClientConfig("http://finnhub.io", "api-key", ProviderLimits(60, 0, 2))
 
     "getListedSecurities" should {
+      "ignore unused nullable listing fields and allow an absent security type" in {
+        val json =
+          """[{"description":"Example","symbol":"EXAMPLE","currency":null,"displaySymbol":null,"figi":null,"mic":null,"type":null}]"""
+        val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(Stream.emit(json).through(fs2.text.utf8.encode)))
+        (for
+          access     <- providerAccess
+          client     <- FinnhubClient.make[IO](config, backend, access)
+          securities <- client.getListedSecurities(Exchange.NASDAQ).compile.toList
+        yield securities).asserting(_ mustBe List(Security(Ticker("EXAMPLE"), Exchange.NASDAQ, "Example", SecurityKind.Other)))
+      }
+
       "return list of securities for NASDAQ on success" in {
-        val expectedParams = Map("token" -> "api-key", "exchange" -> "US", "mic" -> "XNAS")
+        val expectedParams = Map("exchange" -> "US", "mic" -> "XNAS")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
-            case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
+            case r
+                if r.isGet && r.hasPath("/api/v1/stock/symbol") && r
+                  .hasParams(expectedParams) && r.header("X-Finnhub-Token").contains("api-key") && !r.uri.toString.contains("api-key") =>
               ResponseStub.adjust(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
@@ -65,10 +78,12 @@ class FinnhubClientSpec extends Sttp4WordSpec {
       }
 
       "return list of securities for NYSE on success" in {
-        val expectedParams = Map("token" -> "api-key", "exchange" -> "US", "mic" -> "XNYS")
+        val expectedParams = Map("exchange" -> "US", "mic" -> "XNYS")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
-            case r if r.isGet && r.hasPath("/api/v1/stock/symbol") && r.hasParams(expectedParams) =>
+            case r
+                if r.isGet && r.hasPath("/api/v1/stock/symbol") && r
+                  .hasParams(expectedParams) && r.header("X-Finnhub-Token").contains("api-key") && !r.uri.toString.contains("api-key") =>
               ResponseStub.adjust(Stream.emit(readJson("finnhub/list-stocks-success.json")).through(fs2.text.utf8.encode))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
@@ -86,11 +101,56 @@ class FinnhubClientSpec extends Sttp4WordSpec {
     }
 
     "getCompanyProfile" should {
+      "accept nullable optional fields and use currency instead of estimateCurrency" in {
+        val backend = fs2BackendStub.whenAnyRequest.thenRespond(
+          ResponseStub.adjust(
+            """{"ticker":"AAPL","name":"Apple","country":"US","finnhubIndustry":"Technology","weburl":null,"ipo":null,"currency":"USD","estimateCurrency":"EUR","marketCapitalization":12}"""
+          )
+        )
+        (for
+          access  <- providerAccess
+          client  <- FinnhubClient.make[IO](config, backend, access)
+          profile <- client.getCompanyProfile(Ticker("AAPL"))
+        yield profile).asserting { result =>
+          result.map(_.ticker) mustBe Some(Ticker("AAPL"))
+          result.map(_.currency) mustBe Some("USD")
+          result.flatMap(_.ipoDate) mustBe None
+          result.map(_.website) mustBe Some("")
+        }
+      }
+
+      "reject a profile returned for a different ticker" in {
+        val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(readJson("finnhub/company-profile-success.json")))
+        (for
+          access <- providerAccess
+          client <- FinnhubClient.make[IO](config, backend, access)
+          result <- client.getCompanyProfile(Ticker("MSFT")).attempt
+        yield result).asserting(_.left.toOption.get mustBe a[AppError.FailedValidation])
+      }
+
+      "keep the account usable after a per-symbol forbidden response" in {
+        val backend = fs2BackendStub.whenAnyRequest.thenRespondCyclic(
+          ResponseStub.adjust("restricted symbol", StatusCode.Forbidden),
+          ResponseStub.adjust(readJson("finnhub/company-profile-success.json"))
+        )
+        (for
+          access     <- providerAccess
+          client     <- FinnhubClient.make[IO](config, backend, access)
+          restricted <- client.getCompanyProfile(Ticker("MSFT")).attempt
+          available  <- client.getCompanyProfile(Ticker("AAPL"))
+        yield (restricted, available)).asserting { case (restricted, available) =>
+          restricted.left.toOption.get mustBe a[AppError.DataUnavailable]
+          available.map(_.ticker) mustBe Some(Ticker("AAPL"))
+        }
+      }
+
       "return company profile on success" in {
-        val expectedParams = Map("token" -> "api-key", "symbol" -> "AAPL")
+        val expectedParams = Map("symbol" -> "AAPL")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
-            case r if r.isGet && r.hasPath("/api/v1/stock/profile2") && r.hasParams(expectedParams) =>
+            case r
+                if r.isGet && r.hasPath("/api/v1/stock/profile2") && r
+                  .hasParams(expectedParams) && r.header("X-Finnhub-Token").contains("api-key") && !r.uri.toString.contains("api-key") =>
               ResponseStub.adjust(readJson("finnhub/company-profile-success.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
@@ -122,10 +182,12 @@ class FinnhubClientSpec extends Sttp4WordSpec {
       }
 
       "return None when company profile is not found" in {
-        val expectedParams = Map("token" -> "api-key", "symbol" -> "INVALID")
+        val expectedParams = Map("symbol" -> "INVALID")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
-            case r if r.isGet && r.hasPath("/api/v1/stock/profile2") && r.hasParams(expectedParams) =>
+            case r
+                if r.isGet && r.hasPath("/api/v1/stock/profile2") && r
+                  .hasParams(expectedParams) && r.header("X-Finnhub-Token").contains("api-key") && !r.uri.toString.contains("api-key") =>
               ResponseStub.adjust(readJson("finnhub/company-profile-not-found.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
@@ -162,10 +224,12 @@ class FinnhubClientSpec extends Sttp4WordSpec {
 
     "getFinancialData" should {
       "return financial metrics on success" in {
-        val expectedParams = Map("token" -> "api-key", "symbol" -> "AAPL", "metric" -> "all")
+        val expectedParams = Map("symbol" -> "AAPL", "metric" -> "all")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
-            case r if r.isGet && r.hasPath("/api/v1/stock/metric") && r.hasParams(expectedParams) =>
+            case r
+                if r.isGet && r.hasPath("/api/v1/stock/metric") && r
+                  .hasParams(expectedParams) && r.header("X-Finnhub-Token").contains("api-key") && !r.uri.toString.contains("api-key") =>
               ResponseStub.adjust(readJson("finnhub/basic-financials-success.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
@@ -197,10 +261,12 @@ class FinnhubClientSpec extends Sttp4WordSpec {
       }
 
       "return None when financial metrics are not found" in {
-        val expectedParams = Map("token" -> "api-key", "symbol" -> "INVALID", "metric" -> "all")
+        val expectedParams = Map("symbol" -> "INVALID", "metric" -> "all")
         val testingBackend = fs2BackendStub
           .whenRequestMatchesPartial {
-            case r if r.isGet && r.hasPath("/api/v1/stock/metric") && r.hasParams(expectedParams) =>
+            case r
+                if r.isGet && r.hasPath("/api/v1/stock/metric") && r
+                  .hasParams(expectedParams) && r.header("X-Finnhub-Token").contains("api-key") && !r.uri.toString.contains("api-key") =>
               ResponseStub.adjust(readJson("finnhub/basic-financials-not-found.json"))
             case r => throw new RuntimeException(s"Unhandled request to ${r.uri.toString}")
           }
@@ -253,9 +319,10 @@ class FinnhubClientSpec extends Sttp4WordSpec {
               yield result).asserting { result =>
                 val error = result.left.toOption.get
                 status match
-                  case StatusCode.Unauthorized | StatusCode.Forbidden => error mustBe a[AppError.ProviderConfiguration]
-                  case StatusCode.TooManyRequests                     => error mustBe a[AppError.ProviderDeferred]
-                  case _                                              =>
+                  case StatusCode.Unauthorized                    => error mustBe a[AppError.ProviderConfiguration]
+                  case StatusCode.Forbidden if name != "listings" => error mustBe a[AppError.DataUnavailable]
+                  case StatusCode.TooManyRequests                 => error mustBe a[AppError.ProviderDeferred]
+                  case _                                          =>
                     error mustBe a[AppError.HttpClient]
                     error.asInstanceOf[AppError.HttpClient].status mustBe status.code
                 error.getMessage must include(if name == "listings" then "NASDAQ" else "AAPL")

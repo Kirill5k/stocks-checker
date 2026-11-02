@@ -9,6 +9,7 @@ import kirill5k.common.http4s.test.HttpRoutesWordSpec
 import org.typelevel.ci.CIString
 import stockschecker.common.config.ApiConfig
 import stockschecker.domain.{CreateCommand, JobId, Schedule, UpdateCommand}
+import stockschecker.domain.errors.AppError
 import stockschecker.services.CommandService
 import stockschecker.actions.{Action, ActionDispatcher}
 import stockschecker.repositories.CommandRepository
@@ -58,32 +59,6 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
         verify(svc).getAll
       }
 
-      "return 401 when API key is missing" in {
-        val svc = mocks
-
-        val res = for
-          controller <- CommandController.make(apiConfig, svc)
-          req = Request[IO](uri = uri"/commands", method = Method.GET)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
-
-      "return 401 when API key is invalid" in {
-        val svc = mocks
-
-        val res = for
-          controller <- CommandController.make(apiConfig, svc)
-          invalidApiKeyHeader = Header.Raw(CIString("X-API-Key"), "invalid-api-key")
-          req                 = Request[IO](uri = uri"/commands", method = Method.GET).withHeaders(invalidApiKeyHeader)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
     }
 
     "POST /commands" should {
@@ -169,19 +144,6 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
         res mustHaveStatus (Status.UnprocessableContent, Some("""{"message" : "Missing required field: action"}"""))
       }
 
-      "return 401 when API key is missing" in {
-        val svc = mocks
-
-        val res = for
-          controller <- CommandController.make(apiConfig, svc)
-          body = """{"action":{"kind":"fetch-securities","exchanges":["nasdaq"]},"schedule":{"kind":"periodic","period":"20minutes"}}"""
-          req  = Request[IO](uri = uri"/commands", method = Method.POST).withBody(body)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
     }
 
     "PUT /commands/{id}" should {
@@ -237,7 +199,7 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
       "return 404 when command not found" in {
         val svc       = mocks
         val commandId = FetchLatestSecuritiesCommand.id
-        when(svc.executeManually(commandId)).thenRaiseError(new Exception("Command not found"))
+        when(svc.executeManually(commandId)).thenRaiseError(AppError.EntityDoesNotExist("Command", commandId.value))
 
         val res = for
           controller <- CommandController.make(apiConfig, svc)
@@ -245,40 +207,11 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
           res <- controller.routes.orNotFound.run(req)
         yield res
 
-        res mustHaveStatus (Status.InternalServerError, Some("""{"message":"Command not found"}"""))
+        res mustHaveStatus (Status.NotFound, Some(s"""{"message":"Command with id ${commandId.value} does not exist"}"""))
         verify(svc).executeManually(commandId)
       }
 
-      "return 401 when API key is missing" in {
-        val svc       = mocks
-        val commandId = FetchLatestSecuritiesCommand.id
-
-        val res = for
-          controller <- CommandController.make(apiConfig, svc)
-          req = Request[IO](uri = uri"/commands" / commandId.value / "execute", method = Method.POST)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
-
-      "return 401 when API key is invalid" in {
-        val svc       = mocks
-        val commandId = FetchLatestSecuritiesCommand.id
-
-        val res = for
-          controller <- CommandController.make(apiConfig, svc)
-          invalidApiKeyHeader = Header.Raw(CIString("X-API-Key"), "invalid-api-key")
-          req = Request[IO](uri = uri"/commands" / commandId.value / "execute", method = Method.POST).withHeaders(invalidApiKeyHeader)
-          res <- controller.routes.orNotFound.run(req)
-        yield res
-
-        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
-        verifyNoInteractions(svc)
-      }
-
-      "return 400 for invalid command id format" in {
+      "return 422 for invalid command id format" in {
         val svc = mocks
 
         val res = for

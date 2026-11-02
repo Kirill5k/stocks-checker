@@ -25,6 +25,19 @@ class FinancialHistoryRepositorySpec extends RepositorySpec with MongoJsonCodecs
   )
 
   "FinancialHistoryRepository" should {
+    "delete only the requested ticker's canonical history" in
+      withEmbeddedMongoDatabase { db =>
+        for
+          repo       <- FinancialHistoryRepository.make[IO](db)
+          _          <- repo.save(first)
+          _          <- repo.save(first.copy(ticker = MSFT))
+          _          <- repo.delete(AAPL)
+          _          <- repo.delete(AAPL)
+          collection <- db.getCollectionWithCodec[FinancialSnapshotEntity](FinancialHistoryRepository.CollectionName)
+          retained   <- collection.find.all
+        yield retained.map(_.toDomain.ticker).toList mustBe List(MSFT)
+      }
+
     "retain only the latest canonical snapshot per ticker, preserving observations and provenance without raw payloads" in
       withEmbeddedMongoDatabase { db =>
         val second =

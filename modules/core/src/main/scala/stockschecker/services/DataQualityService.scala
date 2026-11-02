@@ -23,6 +23,6 @@ final private class LiveDataQualityService[F[_]](
 object DataQualityService:
   def make[F[_]: {Monad, Clock}](
       repository: DataQualityRepository[F],
-      recipe: InvestmentRecipe = InvestmentRecipe()
+      recipe: InvestmentRecipe
   ): F[DataQualityService[F]] =
     Monad[F].pure(LiveDataQualityService[F](repository, recipe))

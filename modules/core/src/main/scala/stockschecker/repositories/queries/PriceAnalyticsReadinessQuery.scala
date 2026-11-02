@@ -1,10 +1,11 @@
-package stockschecker.repositories
+package stockschecker.repositories.queries
 
 import io.circe.{Codec, Decoder, Encoder}
 import mongo4cats.circe.MongoJsonCodecs
 import mongo4cats.codecs.MongoCodecProvider
 import mongo4cats.operations.{Aggregate, Projection, Sort}
 import stockschecker.domain.{InvestmentRecipe, PriceAnalyticsReadiness, Ticker}
+import stockschecker.repositories.PriceAnalyticsRepository
 
 import java.time.{Instant, LocalDate}
 

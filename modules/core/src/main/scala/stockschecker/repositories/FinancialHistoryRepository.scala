@@ -8,10 +8,11 @@ import mongo4cats.collection.MongoCollection
 import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.ReplaceOptions
 import mongo4cats.operations.Filter
-import stockschecker.domain.FinancialSnapshot
+import stockschecker.domain.{FinancialSnapshot, Ticker}
 import stockschecker.repositories.entities.FinancialSnapshotEntity
 
 trait FinancialHistoryRepository[F[_]]:
+  def delete(ticker: Ticker): F[Unit]
   def save(snapshot: FinancialSnapshot): F[Unit]
 
 final private class LiveFinancialHistoryRepository[F[_]](
@@ -20,6 +21,9 @@ final private class LiveFinancialHistoryRepository[F[_]](
     F: Concurrent[F]
 ) extends FinancialHistoryRepository[F]:
   import FinancialHistoryRepository.Field
+
+  override def delete(ticker: Ticker): F[Unit] =
+    collection.deleteMany(Filter.idEq(ticker.value)).void
 
   override def save(snapshot: FinancialSnapshot): F[Unit] =
     val newer  = Filter.idEq(snapshot.ticker.value) && Filter.lt(Field.ObservedAt, snapshot.observedAt)

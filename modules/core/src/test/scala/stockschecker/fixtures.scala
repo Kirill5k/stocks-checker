@@ -145,14 +145,14 @@ object fixtures {
 
   val AAPLStock: Stock = Stock(
     security = AAPLSecurity,
-    profile = Some(AAPLCompanyProfile),
+    profile = AAPLCompanyProfile,
     priceAnalytics = Some(AAPLPriceAnalytics),
     financialMetrics = Some(AAPLFinancialMetrics)
   )
 
   val MSFTStock: Stock = Stock(
     security = MSFTSecurity,
-    profile = Some(MSFTCompanyProfile),
+    profile = MSFTCompanyProfile,
     priceAnalytics = None,
     financialMetrics = Some(MSFTFinancialMetrics)
   )

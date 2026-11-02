@@ -11,7 +11,7 @@ final case class RankingInputsQuery(
     limit: Int
 )
 
-/** Frozen ranking evidence for administrative diagnosis, including stocks no longer visible in ordinary reads. */
+/** Frozen ranking evidence for administrative diagnosis; purged stock rows are removed. */
 final case class RankingInputDiagnostic(
     ordinal: Int,
     ticker: Ticker,
