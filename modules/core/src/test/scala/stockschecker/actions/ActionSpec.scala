@@ -63,7 +63,9 @@ class ActionSpec extends AnyWordSpec with Matchers {
       val json   = """{
         "id":"cmd-123","isActive":true,
         "action":{"kind":"sequence","actions":[
-          {"kind":"fetch-company-profiles","filter":{"kind":"kind-is","securityKind":"stock"}},
+          {"kind":"fetch-company-profiles","filter":{"kind":"composite","filters":[
+            {"kind":"kind-is","securityKind":"stock"},{"kind":"is-active","active":true}
+          ]}},
           {"kind":"set-security-active","ticker":"AAPL","active":false,"requestedAt":"2026-10-27T12:00:00Z"}
         ]},
         "schedule":{"kind":"periodic","period":"10seconds"},
@@ -71,7 +73,9 @@ class ActionSpec extends AnyWordSpec with Matchers {
       }"""
       val action = Action.Sequence(
         NonEmptyList.of(
-          Action.FetchCompanyProfiles(SecurityFilter.KindIs(SecurityKind.Stock)),
+          Action.FetchCompanyProfiles(
+            SecurityFilter.Composite(NonEmptyList.of(SecurityFilter.KindIs(SecurityKind.Stock), SecurityFilter.IsActive(true)))
+          ),
           Action.SetSecurityActive(Ticker("AAPL"), false, requestedAt)
         )
       )

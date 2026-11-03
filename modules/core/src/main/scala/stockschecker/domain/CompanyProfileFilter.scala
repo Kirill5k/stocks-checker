@@ -8,6 +8,7 @@ import java.time.LocalDate
 import scala.concurrent.duration.FiniteDuration
 
 enum CompanyProfileFilter derives ConfiguredCodec:
+  case IsActive(active: Boolean)
   case MarketCapAbove(min: Long)
   case MarketCapBelow(max: Long)
   case CountryIs(countryCode: String)

@@ -63,6 +63,7 @@ All routes below require `X-API-Key`:
 
 ### Troubleshooting and data refill
 
+- Security and company-profile filters support `{"kind":"is-active","active":true}`, including in saved commands and nested composites. Queries always require active, listed securities, so `active:false` returns no matches.
 - After a snapshot reset, restore required adjusted price histories before resuming pending evaluations. Captures retain `requestedHistory` and do not redispatch recorded requests; rerunning capture alone cannot reliably restore missing history. There is no public force-history endpoint.
 - Existing financial metrics cannot reconstruct `financial-history`. Refill it through `UpdateFinancialMetrics` with explicit tickers or an unrestricted active-profile selector; freshness filters can skip records whose update timestamps still look recent.
 - Creating a one-shot command with `maxExecutions: 1` already schedules it. Do not also execute it manually. Wait for refresh jobs and timestamp updates to finish before refreshing investment research.

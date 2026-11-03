@@ -140,6 +140,35 @@ class SecurityRepositorySpec extends RepositorySpec {
   }
 
   "Security reads" should {
+    "apply explicit activation filters without exposing inactive or delisted securities" in
+      withEmbeddedMongoDatabase(
+        Map(
+          SecurityRepository.CollectionName -> List(
+            toDoc(AAPLSecurity),
+            toDoc(MSFTSecurity.copy(isActive = false)),
+            toDoc(AAPLSecurity.copy(ticker = Ticker("DELISTED"), listingStatus = ListingStatus.Delisted))
+          )
+        )
+      ) { db =>
+        for
+          repo     <- SecurityRepository.make[IO](db)
+          active   <- repo.findTickersBy(SecurityFilter.IsActive(true), Some(1))
+          inactive <- repo.findTickersBy(SecurityFilter.IsActive(false), None)
+          nested   <- repo.findTickersBy(
+            SecurityFilter.Composite(
+              NonEmptyList.of(
+                SecurityFilter.KindIs(SecurityKind.Stock),
+                SecurityFilter.Composite(NonEmptyList.one(SecurityFilter.IsActive(true)))
+              )
+            ),
+            None
+          )
+        yield
+          active mustBe List(AAPL)
+          inactive mustBe Nil
+          nested mustBe List(AAPL)
+      }
+
     "require active listed securities and profiles, but allow profile recovery without a cached profile" in
       withEmbeddedMongoDatabase { db =>
         for

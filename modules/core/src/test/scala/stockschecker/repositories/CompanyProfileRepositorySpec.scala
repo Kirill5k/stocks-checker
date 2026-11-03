@@ -113,11 +113,13 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
         withEmbeddedMongoDatabase(seed) { db =>
           for
             repo                <- CompanyProfileRepository.make[IO](db)
-            res                 <- repo.findTickersBy(CompanyProfileFilter.MarketCapAbove(0), None)
+            res                 <- repo.findTickersBy(CompanyProfileFilter.IsActive(true), None)
+            inactiveSelection   <- repo.findTickersBy(CompanyProfileFilter.IsActive(false), None)
             withoutActiveFilter <- repo.findTickersBy(CompanyProfileFilter.CountryIs("US"), None)
             inactive            <- repo.find(MSFT)
           yield
             res mustBe List(AAPL)
+            inactiveSelection mustBe Nil
             withoutActiveFilter mustBe List(AAPL)
             inactive mustBe None
         }
@@ -141,18 +143,23 @@ class CompanyProfileRepositorySpec extends RepositorySpec {
           NonEmptyList.of(
             CompanyProfileFilter.CountryIs("US"),
             CompanyProfileFilter.Composite(
-              NonEmptyList.of(CompanyProfileFilter.MarketCapAbove(0), CompanyProfileFilter.PriceAnalyticsNotUpdatedFor(3.days))
+              NonEmptyList.of(CompanyProfileFilter.IsActive(true), CompanyProfileFilter.PriceAnalyticsNotUpdatedFor(3.days))
             )
           )
         )
         withEmbeddedMongoDatabase(seed) { db =>
           for
-            repo    <- CompanyProfileRepository.make[IO](db)
-            limited <- repo.findTickersBy(filter, Some(1))
-            all     <- repo.findTickersBy(filter, None)
+            repo     <- CompanyProfileRepository.make[IO](db)
+            limited  <- repo.findTickersBy(filter, Some(1))
+            all      <- repo.findTickersBy(filter, None)
+            inactive <- repo.findTickersBy(
+              CompanyProfileFilter.Composite(NonEmptyList.of(filter, CompanyProfileFilter.IsActive(false))),
+              None
+            )
           yield
             limited mustBe List(MSFT)
             all mustBe List(MSFT, smaller)
+            inactive mustBe Nil
         }
       }
 

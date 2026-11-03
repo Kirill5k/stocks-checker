@@ -212,6 +212,8 @@ final private class LiveSecurityRepository[F[_]](
         Filter.eq(Field.Exchange, exchange).pure
       case SecurityFilter.KindIs(kind) =>
         Filter.eq(Field.Kind, kind).pure
+      case SecurityFilter.IsActive(active) =>
+        Filter.eq(Field.IsActive, active).pure
       case SecurityFilter.UpdatedWithin(duration) =>
         clock.now.map(now => Filter.gt(Field.UpdatedAt, now.minus(duration)))
       case SecurityFilter.NotUpdatedFor(duration) =>

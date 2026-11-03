@@ -9,6 +9,7 @@ import scala.concurrent.duration.FiniteDuration
 enum SecurityFilter derives ConfiguredCodec:
   case ExchangeIs(exchange: Exchange)
   case KindIs(securityKind: SecurityKind)
+  case IsActive(active: Boolean)
   case UpdatedWithin(duration: FiniteDuration)
   case NotUpdatedFor(duration: FiniteDuration)
   case CompanyProfileNotUpdatedFor(duration: FiniteDuration)
