@@ -119,13 +119,34 @@ class FinnhubClientSpec extends Sttp4WordSpec {
         }
       }
 
-      "reject a profile returned for a different ticker" in {
-        val backend = fs2BackendStub.whenAnyRequest.thenRespond(ResponseStub.adjust(readJson("finnhub/company-profile-success.json")))
-        (for
-          access <- providerAccess
-          client <- FinnhubClient.make[IO](config, backend, access)
-          result <- client.getCompanyProfile(Ticker("MSFT")).attempt
-        yield result).asserting(_.left.toOption.get mustBe a[AppError.FailedValidation])
+      List("UROY" -> "URC.TO", "OGG" -> "OGG.V", "GFL" -> "GFL.TO").foreach { case (requested, returned) =>
+        s"use the requested ticker $requested when Finnhub returns $returned" in {
+          val backend = fs2BackendStub.whenAnyRequest.thenRespond(
+            ResponseStub.adjust(
+              s"""{"ticker":"$returned","name":"Example","country":"CA","finnhubIndustry":"Technology","currency":"CAD","marketCapitalization":12}"""
+            )
+          )
+          (for
+            access  <- providerAccess
+            client  <- FinnhubClient.make[IO](config, backend, access)
+            profile <- client.getCompanyProfile(Ticker(requested))
+          yield profile).asserting { result =>
+            result mustBe Some(
+              CompanyProfile(
+                ticker = Ticker(requested),
+                name = "EXAMPLE",
+                country = "CA",
+                industry = "Technology",
+                description = None,
+                website = "",
+                ipoDate = None,
+                currency = "CAD",
+                marketCap = 12_000_000L,
+                sector = Some(Sector.Technology)
+              )
+            )
+          }
+        }
       }
 
       "keep the account usable after a per-symbol forbidden response" in {

@@ -7,6 +7,7 @@ import cats.syntax.functor.*
 import fs2.Stream
 import io.circe.{Codec, JsonObject}
 import io.circe.fs2.{byteArrayParser, decoder}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import stockschecker.clients.{ProviderAccess, ProviderErrors}
 import kirill5k.common.cats.Clock
 import stockschecker.common.config.FinnhubClientConfig
@@ -80,14 +81,15 @@ final private class LiveFinnhubClient[F[_]](
               .as[FinnhubClient.CompanyProfileResponse]
               .left
               .map(err => AppError.JsonParsingFailure(jsonObj.toString, s"Error decoding company profile for $ticker: ${err.getMessage}"))
-              .flatMap { profile =>
-                Either.cond(
-                  profile.ticker == ticker,
-                  Some(profile.toDomain(ticker)),
-                  AppError.FailedValidation(s"Finnhub profile ticker mismatch: requested=$ticker returned=${profile.ticker}")
+          ).flatMap { profile =>
+            F.whenA(profile.ticker != ticker)(
+              Slf4jLogger
+                .getLogger[F]
+                .warn(
+                  s"Finnhub profile ticker mismatch: requested=$ticker returned=${profile.ticker}; using requested ticker"
                 )
-              }
-          )
+            ).as(Some(profile.toDomain(ticker)))
+          }
       }
     }
   }

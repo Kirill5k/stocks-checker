@@ -78,7 +78,7 @@ Any cohort reference causes a screen and its evaluations to be deleted. The equa
 
 Listing reconciliation preserves explicit exclusions, marks newly absent securities delisted and persists pending purge markers. The listing refresh drains these markers before fetching and after reconciliation, acknowledging each only after deterministic job dispatch succeeds. This allows recovery after restart or enqueue failure. A configurable listing-shrink guard rejects unexpectedly incomplete listings before changes. Deactivation and delisting clear the profile-fetch timestamp; relisted non-excluded stocks can refill through the normal freshness query. Explicit reactivation dispatches a profile fetch.
 
-A provider's successful empty profile response triggers deactivation. Missing local cache data, malformed responses, transport failures and deferrals do not. Profiles use the requested ticker and reject mismatched provider identities. Explicit and already-running refreshes can recreate deleted cache data; the active-security guards still exclude those rows from ordinary reads.
+A provider's successful empty profile response triggers deactivation. Missing local cache data, malformed responses, transport failures and deferrals do not. Profiles use the requested ticker; a different ticker in a decoded Finnhub response logs a warning without failing the refresh. Explicit and already-running refreshes can recreate deleted cache data; the active-security guards still exclude those rows from ordinary reads.
 
 ## Rankings and evaluations
 
