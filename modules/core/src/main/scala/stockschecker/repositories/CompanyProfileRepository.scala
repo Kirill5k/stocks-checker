@@ -119,7 +119,7 @@ final private class LiveCompanyProfileRepository[F[_]](
     private def toFilter: F[Filter] = f match
       case CompanyProfileFilter.IsActive(active) =>
         // The mandatory security join already restricts profiles to active securities.
-        (if active then Filter.empty else Filter.exists(Field.Id, false)).pure
+        (if active then Filter.empty else Filter.exists(Field.Id).not).pure
       case CompanyProfileFilter.MarketCapAbove(min) =>
         Filter.gt(Field.MarketCap, min).pure
       case CompanyProfileFilter.MarketCapBelow(max) =>
