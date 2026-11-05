@@ -5,7 +5,7 @@ import cats.effect.Async
 import cats.syntax.applicative.*
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
-import com.mongodb.client.model.ReturnDocument
+import com.mongodb.client.model.{Indexes, ReturnDocument}
 import io.circe.Codec
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.syntax.applicative.*
@@ -128,7 +128,7 @@ final private class LiveJobRepository[F[_]](
         options = FindOneAndUpdateOptions(
           returnDocument = ReturnDocument.AFTER,
           sort = Some(Sort.asc(Field.Priority, Field.AvailableAt, Field.CreatedAt, Field.Id))
-        ).hint(Index.ascending(ClaimIndexFields))
+        ).hint(Indexes.ascending(ClaimIndexFields.asJava))
         // A worker crash consumes a bounded reclaim, independently of normal dependency polling.
         _ <- collection.updateMany(
           expired && Filter.gte(Field.ReclaimCount, MaxLeaseReclaims),
@@ -149,7 +149,7 @@ final private class LiveJobRepository[F[_]](
       .flatMap { now =>
         collection.updateOne(owned(job), release.set(Field.State, state.value).set(Field.Error, error).set(Field.CompletedAt, now)).void
       }
-      
+
   override def savePlan(job: Job, plan: JobPlan): F[Boolean] =
     collection
       .updateOne(owned(job), Update.set(Field.Plan, plan))
