@@ -38,7 +38,7 @@ class ActionExecutorSpec extends IOWordSpec:
     Ref.of[IO, List[(String, String)]](Nil).flatMap { messages =>
       given Logger[IO] = new RecordingLogger(messages)
       for
-        executor <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), ActionExecutorConfig(1))
+        executor <- ActionExecutor.make(jobs, handler, ActionExecutorConfig(1))
         _        <- executor.run.take(1).compile.drain.timeout(3.seconds)
         logs     <- messages.get
       yield logs
@@ -171,7 +171,7 @@ class ActionExecutorSpec extends IOWordSpec:
         handler = new ActionHandler[IO] {
           def execute(action: Action): IO[ActionResult] = renewed.get.as(ActionResult.Completed).onCancel(cancelled.set(true))
         }
-        executor     <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), ActionExecutorConfig(1))
+        executor     <- ActionExecutor.make(jobs, handler, ActionExecutorConfig(1))
         _            <- executor.run.take(1).compile.drain.timeout(JobExecutionPolicy.HeartbeatInterval + 5.seconds)
         wasCancelled <- cancelled.get
       yield wasCancelled).asserting { wasCancelled =>
@@ -197,7 +197,7 @@ class ActionExecutorSpec extends IOWordSpec:
           def execute(action: Action): IO[ActionResult] =
             started.complete(()) >> IO.never[ActionResult].onCancel(cancelled.complete(()).void)
         }
-        executor <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), ActionExecutorConfig(1))
+        executor <- ActionExecutor.make(jobs, handler, ActionExecutorConfig(1))
         _        <- executor.run
           .take(1)
           .compile

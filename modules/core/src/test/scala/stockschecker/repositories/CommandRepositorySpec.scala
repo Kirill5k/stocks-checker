@@ -69,6 +69,49 @@ class CommandRepositorySpec extends RepositorySpec {
         }
     }
 
+    "delete" should {
+      "return an error when the command does not exist" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo   <- CommandRepository.make(db)
+            result <- repo.delete(FetchLatestSecuritiesCommand.id).attempt
+          yield result mustBe Left(AppError.EntityDoesNotExist("Command", FetchLatestSecuritiesCommand.id.value))
+        }
+
+      "remove only the selected command and reject repeated deletion" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo      <- CommandRepository.make(db)
+            command   <- repo.create(newCmd)
+            unrelated <- repo.create(newCmd)
+            _         <- repo.delete(command.id)
+            repeated  <- repo.delete(command.id).attempt
+            found     <- repo.find(command.id).attempt
+            remaining <- repo.all
+          yield
+            repeated mustBe Left(AppError.EntityDoesNotExist("Command", command.id.value))
+            found mustBe Left(AppError.EntityDoesNotExist("Command", command.id.value))
+            remaining mustBe List(unrelated)
+        }
+
+      "prevent stale scheduler writes from recreating a deleted command" in
+        withEmbeddedMongoDatabase { db =>
+          for
+            repo       <- CommandRepository.make(db)
+            command    <- repo.create(newCmd)
+            ready      <- repo.initializeNextRun(command, ts).map(_.get)
+            occurrence <- repo.reserve(ready, ts).map(_.get)
+            _          <- repo.delete(command.id)
+            reserved   <- repo.reserve(ready, ts)
+            completed  <- repo.completeRun(command.id, occurrence.activeRunId.get)
+            remaining  <- repo.all
+          yield
+            reserved mustBe None
+            completed mustBe None
+            remaining mustBe Nil
+        }
+    }
+
     "update" should {
       "return an error when cmd is not found" in
         withEmbeddedMongoDatabase { db =>

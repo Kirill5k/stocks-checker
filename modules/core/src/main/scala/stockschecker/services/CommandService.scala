@@ -6,7 +6,7 @@ import cats.syntax.flatMap.*
 import cats.syntax.functor.*
 import kirill5k.common.cats.Clock
 import stockschecker.actions.{Action, ActionDispatcher}
-import stockschecker.domain.{Command, CommandId, CreateCommand, JobCommand, JobId, Schedule, UpdateCommand}
+import stockschecker.domain.{Command, CommandId, CreateCommand, JobId, Schedule, UpdateCommand}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.CommandRepository
 
@@ -18,7 +18,7 @@ trait CommandService[F[_]]:
   def getAll: F[List[Command]]
   def activate(cid: CommandId, isActive: Boolean): F[Unit]
   def update(uc: UpdateCommand): F[Command]
-  def isCurrent(command: JobCommand): F[Boolean]
+  def delete(id: CommandId): F[Unit]
 
 final private class LiveCommandService[F[_]](
     private val actionDispatcher: ActionDispatcher[F],
@@ -29,16 +29,17 @@ final private class LiveCommandService[F[_]](
 ) extends CommandService[F] {
 
   private def validate(action: Action, schedule: Schedule, maxExecutions: Option[Int]): F[Unit] =
-    F.raiseUnless(action.isSchedulable)(AppError.FailedValidation("Internal actions cannot be scheduled")) >>
-      F.raiseWhen(maxExecutions.exists(_ <= 0) || (schedule match {
+    for
+      _ <- F.raiseUnless(action.isSchedulable)(AppError.FailedValidation("Internal actions cannot be scheduled"))
+      _ <- F.raiseWhen(maxExecutions.exists(_ <= 0) || (schedule match {
         case Schedule.Periodic(period) => period.toMillis < 1000L
         case _                         => false
-      }))(AppError.FailedValidation("Schedule period must be at least one second and maxExecutions must be positive")) >>
-      C.now.flatMap(now =>
-        F.fromEither(
-          Try(schedule.nextExecutionTime(now)).toEither.leftMap(_ => AppError.FailedValidation("Schedule has no valid next execution"))
-        ).void
+      }))(AppError.FailedValidation("Schedule period must be at least one second and maxExecutions must be positive"))
+      now <- C.now
+      _   <- F.fromEither(
+        Try(schedule.nextExecutionTime(now)).toEither.leftMap(_ => AppError.FailedValidation("Schedule has no valid next execution"))
       )
+    yield ()
 
   override def create(cc: CreateCommand): F[Command] =
     for
@@ -49,13 +50,19 @@ final private class LiveCommandService[F[_]](
     yield initialized.getOrElse(cmd)
 
   override def executeManually(cid: CommandId): F[JobId] =
-    repository.find(cid).flatMap(cmd => actionDispatcher.dispatchTracked(cmd.action))
+    repository.find(cid).flatMap(cmd => actionDispatcher.dispatchForCommand(cid, cmd.action))
+
+  override def delete(id: CommandId): F[Unit] =
+    repository.delete(id) >> actionDispatcher.deleteForCommand(id)
 
   override def getAll: F[List[Command]] = repository.all
 
   private def refresh(command: Command): F[Unit] =
-    actionDispatcher.cancelObsolete(command.id, command.version) >>
-      C.now.flatMap(repository.initializeNextRun(command, _)).void
+    for
+      _   <- actionDispatcher.cancelObsolete(command.id, command.version)
+      now <- C.now
+      _   <- repository.initializeNextRun(command, now)
+    yield ()
 
   override def activate(cid: CommandId, isActive: Boolean): F[Unit] =
     repository.setActive(cid, isActive).flatMap(refresh)
@@ -63,8 +70,6 @@ final private class LiveCommandService[F[_]](
   override def update(uc: UpdateCommand): F[Command] =
     validate(uc.action, uc.schedule, uc.maxExecutions) >> repository.update(uc).flatTap(refresh)
 
-  override def isCurrent(command: JobCommand): F[Boolean] =
-    repository.find(command.commandId).map(c => c.isActive && c.version == command.version)
 }
 
 object CommandService:

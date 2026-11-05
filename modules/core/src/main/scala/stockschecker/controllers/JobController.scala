@@ -20,12 +20,12 @@ final private class JobController[F[_]: Async](
   private val list = secured(JobController.listEndpoint)
     .serverLogic { _ =>
       { case (limit, commandId, state, actionKind) =>
-        service.list(limit, JobFilter(commandId, state, actionKind)).asResponse
+        service.list(limit, JobFilter(commandId, state, actionKind)).mapToResponse(_.map(JobView.from))
       }
     }
 
   private val get = secured(JobController.getEndpoint)
-    .serverLogic(_ => id => service.get(id).asResponse)
+    .serverLogic(_ => id => service.get(id).mapToResponse(JobView.from))
 
   override val routes: HttpRoutes[F] = Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(List(list, get))
 }

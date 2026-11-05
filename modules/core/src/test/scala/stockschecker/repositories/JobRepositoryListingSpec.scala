@@ -47,9 +47,12 @@ class JobRepositoryListingSpec extends RepositorySpec:
         error = Some("Provider data unavailable"),
         completedAt = Some(ts)
       )
-      val rows = List(
+      val trackedManual = matching.copy(id = JobId("tracked-manual"), command = None, sourceCommandId = Some(commandId))
+      val rows          = List(
         matching,
+        trackedManual,
         matching.copy(id = JobId("other-command"), command = Some(JobCommand(otherCommand, 1, JobId("other-run")))),
+        matching.copy(id = JobId("other-manual"), command = None, sourceCommandId = Some(otherCommand)),
         matching.copy(id = JobId("other-state"), state = Job.Succeeded),
         matching.copy(id = JobId("other-action"), action = Action.RefreshInvestmentRanking),
         matching.copy(id = JobId("manual"), command = None)
@@ -63,10 +66,12 @@ class JobRepositoryListingSpec extends RepositorySpec:
         byAction  <- jobs.list(20, JobFilter(actionKind = Some("refresh-investment-research")))
         prefix    <- jobs.list(20, JobFilter(actionKind = Some("refresh-investment")))
       yield
-        combined mustBe List(matching)
-        byCommand.map(_.id).toSet mustBe Set("matching", "other-state", "other-action").map(JobId(_))
+        combined mustBe List(trackedManual, matching)
+        byCommand.map(_.id).toSet mustBe Set("matching", "tracked-manual", "other-state", "other-action").map(JobId(_))
         byState.map(_.id) mustBe List(JobId("other-state"))
-        byAction.map(_.id).toSet mustBe Set("matching", "other-command", "other-state", "manual").map(JobId(_))
+        byAction.map(_.id).toSet mustBe Set("matching", "tracked-manual", "other-command", "other-manual", "other-state", "manual").map(
+          JobId(_)
+        )
         prefix mustBe Nil
     }
 

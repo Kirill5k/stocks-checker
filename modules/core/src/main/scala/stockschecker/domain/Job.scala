@@ -38,9 +38,11 @@ final case class Job(
     waitCount: Int = 0,
     completedAt: Option[Instant] = None,
     deferralCount: Int = 0,
-    reclaimCount: Int = 0
+    reclaimCount: Int = 0,
+    sourceCommandId: Option[CommandId] = None
 ) derives Codec.AsObject {
-  def isTerminal: Boolean = Job.terminalStates.contains(state)
+  def isTerminal: Boolean          = Job.terminalStates.contains(state)
+  def commandId: Option[CommandId] = command.map(_.commandId).orElse(sourceCommandId)
 }
 
 enum JobState(val value: String) {

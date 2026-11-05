@@ -58,6 +58,11 @@ final private class CommandController[F[_]: Async](
         .mapToResponse(_.value)
     }
 
+  private val deleteCommand = secured(CommandController.deleteCommandEndpoint)
+    .serverLogic { _ => cid =>
+      service.delete(cid).asVoidResponse
+    }
+
   val routes: HttpRoutes[F] =
     Http4sServerInterpreter[F](Controller.serverOptions).toRoutes(
       List(
@@ -65,7 +70,8 @@ final private class CommandController[F[_]: Async](
         createCommand,
         activateCommand,
         updateCommand,
-        executeManuallyCommand
+        executeManuallyCommand,
+        deleteCommand
       )
     )
 }
@@ -152,6 +158,11 @@ object CommandController extends TapirJsonCirce with SchemaDerivation {
     .out(statusCode(StatusCode.NoContent))
     .out(header[String]("X-Job-Id"))
     .description("Manually execute a command without affecting its schedule or execution count")
+
+  private val deleteCommandEndpoint = Controller.secureEndpoint.delete
+    .in(commandIdPath)
+    .out(statusCode(StatusCode.NoContent))
+    .description("Delete an existing command and its associated jobs; missing commands return 404")
 
   def make[F[_]: Async](config: ApiConfig, service: CommandService[F]): F[Controller[F]] =
     Async[F].pure(CommandController[F](service, ApiKeyRequirement.Required(config.key)))

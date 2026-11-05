@@ -39,7 +39,7 @@ object JobView:
       job.completedAt,
       job.retries,
       job.waitCount,
-      job.command.map(_.commandId),
+      job.commandId,
       job.command.map(_.runId),
       job.dependsOn,
       job.children,

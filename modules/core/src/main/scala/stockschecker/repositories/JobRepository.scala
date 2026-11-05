@@ -15,7 +15,8 @@ import mongo4cats.database.MongoDatabase
 import mongo4cats.models.collection.{FindOneAndUpdateOptions, UpdateOptions}
 import mongo4cats.operations.{Accumulator, Aggregate, Filter, Index, Projection, Sort, Update}
 import stockschecker.domain.{CommandId, Job, JobFilter, JobId, JobPlan, JobState, JobStatusSummary}
-import stockschecker.repositories.entities.{JobEntity, JobIdEntity, JobStateCount}
+import stockschecker.domain.errors.AppError
+import stockschecker.repositories.entities.{JobCommandStateEntity, JobEntity, JobIdEntity, JobStateCount}
 
 import java.time.Instant
 import java.util.UUID
@@ -24,11 +25,13 @@ import scala.jdk.CollectionConverters.*
 
 trait JobRepository[F[_]] {
   def enqueue(job: Job, priority: Int): F[Unit]
+  def get(id: JobId): F[Job]
   def find(id: JobId): F[Option[Job]]
   def list(limit: Int, filter: JobFilter): F[List[Job]]
   def summarize(ids: List[JobId]): F[JobStatusSummary]
   def pendingIds(ids: List[JobId]): F[Set[JobId]]
   def claim(now: Instant, lease: FiniteDuration): F[Option[Job]]
+  def isCurrent(job: Job): F[Boolean]
   def renew(job: Job, now: Instant, lease: FiniteDuration): F[Boolean]
   def finish(job: Job, state: JobState, error: Option[String] = None): F[Unit]
   def savePlan(job: Job, plan: JobPlan): F[Boolean]
@@ -37,6 +40,7 @@ trait JobRepository[F[_]] {
   def pause(job: Job, provider: Provider, error: String): F[Unit]
   def resumePaused(provider: Provider, now: Instant): F[Unit]
   def cancelObsolete(commandId: CommandId, currentVersion: Long): F[Unit]
+  def deleteForCommand(commandId: CommandId): F[Unit]
   def pruneCompleted(now: Instant): F[Unit]
 }
 
@@ -61,6 +65,9 @@ final private class LiveJobRepository[F[_]](
   private val terminal =
     Filter.in(Field.State, Job.terminalStates.map(_.value))
 
+  private def forCommand(commandId: CommandId): Filter =
+    Filter.eq(Field.CommandId, commandId.value) || Filter.eq(Field.SourceCommandId, commandId.value)
+
   override def enqueue(job: Job, priority: Int): F[Unit] =
     collection
       .updateOne(
@@ -72,15 +79,42 @@ final private class LiveJobRepository[F[_]](
       )
       .void
 
+  override def get(id: JobId): F[Job] =
+    find(id).flatMap(job => F.fromOption(job, AppError.EntityDoesNotExist("Job", id.value)))
+
   override def find(id: JobId): F[Option[Job]] =
     collection
       .find(Filter.idEq(id.value))
       .first
       .mapOpt(_.job)
 
+  override def isCurrent(job: Job): F[Boolean] =
+    job.commandId.fold(true.pure[F]) { id =>
+      collection
+        .aggregate[JobCommandStateEntity](
+          Aggregate
+            .matchBy(Filter.idEq(job.id.value))
+            .lookup(
+              CommandRepository.CollectionName,
+              Aggregate
+                .matchBy(Filter.idEq(id.toObjectId))
+                .project(Projection.include(List(CommandRepository.Field.IsActive, CommandRepository.Field.Version)).excludeId),
+              Field.Commands
+            )
+            .project(Projection.include(Field.Commands).excludeId)
+        )
+        .first
+        .flatMap {
+          case None      => false.pure[F]
+          case Some(row) =>
+            F.fromOption(row.commands.headOption, AppError.EntityDoesNotExist("Command", id.value))
+              .map(command => job.command.forall(reference => command.isActive && command.version == reference.version))
+        }
+    }
+
   override def list(limit: Int, filter: JobFilter): F[List[Job]] =
     val query = List(
-      filter.commandId.map(id => Filter.eq(Field.CommandId, id.value)),
+      filter.commandId.map(forCommand),
       filter.state.map(state => Filter.eq(Field.State, state.value)),
       filter.actionKind.map(kind => Filter.eq(Field.ActionKind, kind))
     ).flatten.foldLeft(Filter.empty)(_ && _)
@@ -214,6 +248,9 @@ final private class LiveJobRepository[F[_]](
         .void
     }
 
+  override def deleteForCommand(commandId: CommandId): F[Unit] =
+    collection.deleteMany(forCommand(commandId)).void
+
   override def pruneCompleted(now: Instant): F[Unit] = {
     val expired = terminal && Filter.lte(Field.CompletedAt, now.minusSeconds(Retention.toSeconds))
     // Fan-out IDs are rooted at '<root>/<index>'. Retain every child until its root has finished,
@@ -239,27 +276,29 @@ object JobRepository extends MongoJsonCodecs {
   val CollectionName = "jobs"
 
   object Field:
-    val Id             = "_id"
-    val Job            = "job"
-    val Priority       = "priority"
-    val State          = "job.state"
-    val ActionKind     = "job.action.kind"
-    val LeaseToken     = "job.leaseToken"
-    val LeaseUntil     = "job.leaseUntil"
-    val AvailableAt    = "job.availableAt"
-    val CreatedAt      = "job.createdAt"
-    val CompletedAt    = "job.completedAt"
-    val Error          = "job.error"
-    val Plan           = "job.plan"
-    val Children       = "job.children"
-    val WaitCount      = "job.waitCount"
-    val Retries        = "job.retries"
-    val DeferralCount  = "job.deferralCount"
-    val ReclaimCount   = "job.reclaimCount"
-    val PausedProvider = "job.pausedProvider"
-    val CommandId      = "job.command.commandId"
-    val CommandVersion = "job.command.version"
-    val Count          = "count"
+    val Id              = "_id"
+    val Job             = "job"
+    val Priority        = "priority"
+    val State           = "job.state"
+    val ActionKind      = "job.action.kind"
+    val LeaseToken      = "job.leaseToken"
+    val LeaseUntil      = "job.leaseUntil"
+    val AvailableAt     = "job.availableAt"
+    val CreatedAt       = "job.createdAt"
+    val CompletedAt     = "job.completedAt"
+    val Error           = "job.error"
+    val Plan            = "job.plan"
+    val Children        = "job.children"
+    val WaitCount       = "job.waitCount"
+    val Retries         = "job.retries"
+    val DeferralCount   = "job.deferralCount"
+    val ReclaimCount    = "job.reclaimCount"
+    val PausedProvider  = "job.pausedProvider"
+    val CommandId       = "job.command.commandId"
+    val SourceCommandId = "job.sourceCommandId"
+    val CommandVersion  = "job.command.version"
+    val Commands        = "commands"
+    val Count           = "count"
 
   val Retention                              = 30.days
   val MaxLeaseReclaims                       = 3
@@ -272,6 +311,7 @@ object JobRepository extends MongoJsonCodecs {
       collection <- db.getCollectionWithCodec[JobEntity](CollectionName)
       _          <- collection.createIndex(Index.ascending(ClaimIndexFields))
       _          <- collection.createIndex(Index.ascending(Field.CommandId))
+      _          <- collection.createIndex(Index.ascending(Field.SourceCommandId))
       _          <- collection.createIndex(Index.ascending(List(Field.State, Field.CompletedAt)))
       _          <- collection.createIndex(Index.descending(List(Field.CreatedAt, Field.Id)))
     } yield new LiveJobRepository(
@@ -281,5 +321,6 @@ object JobRepository extends MongoJsonCodecs {
         .withAddedCodec[JobPlan]
         .withAddedCodec[JobStateCount]
         .withAddedCodec[JobIdEntity]
+        .withAddedCodec[JobCommandStateEntity]
     )
 }

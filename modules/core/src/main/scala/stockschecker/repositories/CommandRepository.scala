@@ -24,6 +24,7 @@ trait CommandRepository[F[_]]:
   def pending(now: Instant): F[List[Command]]
   def find(id: CommandId): F[Command]
   def create(cmd: CreateCommand): F[Command]
+  def delete(id: CommandId): F[Unit]
   def update(cmd: UpdateCommand): F[Command]
   def setActive(id: CommandId, isActive: Boolean): F[Command]
   def initializeNextRun(cmd: Command, now: Instant): F[Option[Command]]
@@ -44,8 +45,8 @@ final private class LiveCommandRepository[F[_]](
   override def pending(now: Instant): F[List[Command]] = {
     val remaining = Filter.isNull(Field.MaxExecutions) ||
       Filter.expr(org.bson.Document.parse(s"""{"$$lt":["$$${Field.ExecutionCount}","$$${Field.MaxExecutions}"]}"""))
-    val due = Filter.eq(Field.IsActive, true) && 
-      remaining && 
+    val due = Filter.eq(Field.IsActive, true) &&
+      remaining &&
       Filter.isNull(Field.ActiveRunId) &&
       (Filter.isNull(Field.NextRunAt) || Filter.lte(Field.NextRunAt, now))
     collection
@@ -63,6 +64,11 @@ final private class LiveCommandRepository[F[_]](
   override def create(cmd: CreateCommand): F[Command] =
     val newCmd = CommandEntity.from(cmd)
     collection.insertOne(newCmd).as(newCmd.toDomain)
+
+  override def delete(id: CommandId): F[Unit] =
+    collection
+      .deleteOne(Filter.idEq(id.toObjectId))
+      .flatMap(result => F.raiseWhen(result.getDeletedCount == 0)(AppError.EntityDoesNotExist("Command", id.value)))
 
   override def update(cmd: UpdateCommand): F[Command] =
     editCommand(

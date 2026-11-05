@@ -41,6 +41,7 @@ Build Mongo pipelines with `Aggregate` methods (`lookup`, `project`, `set`, `fac
 | `FinancialMetricsService` | `FinancialMetricsRepository`, `FinancialHistoryRepository` |
 | `StockService` | `StockRepository` |
 | `CommandService` | `CommandRepository` |
+| `JobService` | `JobRepository` (diagnostic reads; dispatcher, executor and scheduler own job lifecycle operations) |
 | `DataQualityService` | `DataQualityRepository` |
 | `InvestmentRankingService` | `InvestmentRankingRepository` |
 | `InvestmentScreenService` | `InvestmentScreenRepository` |
@@ -56,6 +57,7 @@ Build Mongo pipelines with `Aggregate` methods (`lookup`, `project`, `set`, `fac
 | `InvestmentScreenRepository` | Ranking headers and separate bounded input queries; cohorts identify affected screens during purge. |
 | `InvestmentEvaluationRepository` | Screens for capture contexts and deleting affected evaluations. A single adjusted-history query checks coverage/freshness and trims candles while retaining original counts. |
 | `DataQualityRepository` | Dataset availability, excluded security tombstones, latest unexpired ranking, compact analytics and grouped complete ranking inputs. |
+| `JobRepository` | Command existence, activation and version for execution checks; manual runs only require command existence. |
 
 `DatasetObserver` records provider availability through `DataQualityRepository`. Availability and cooldown bookkeeping failures are logged without replacing provider results. `ProviderAccess` remains infrastructure: it owns shared persisted request budgets, account concurrency, spacing and credential cooldowns.
 

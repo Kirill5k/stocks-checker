@@ -4,7 +4,7 @@ import cats.effect.IO
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.test.IOWordSpec
 import org.mockito.ArgumentCaptor
-import stockschecker.domain.{Job, JobFilter, JobId}
+import stockschecker.domain.{Job, JobId}
 import stockschecker.fixtures.*
 import stockschecker.repositories.JobRepository
 
@@ -14,6 +14,21 @@ class ActionDispatcherSpec extends IOWordSpec {
   given Clock[IO] = Clock.mock(ts)
 
   "An ActionDispatcher" should {
+    "link manual runs for cleanup without treating them as scheduled occurrences" in {
+      val jobs    = mock[JobRepository[IO]]
+      val command = FetchLatestSecuritiesCommand
+      when(jobs.enqueue(any[Job], any[Int])).thenReturnUnit
+      val captured = ArgumentCaptor.forClass(classOf[Job])
+      ActionDispatcher.make(jobs).flatMap(_.dispatchForCommand(command.id, command.action)).asserting { id =>
+        verify(jobs).enqueue(captured.capture(), eqTo(ActionPriority.forAction(command.action)))
+        val job = captured.getValue
+        job.id mustBe id
+        job.sourceCommandId mustBe Some(command.id)
+        job.command mustBe None
+        job.action mustBe command.action
+      }
+    }
+
     "persist accepted work before returning" in {
       val jobs   = mock[JobRepository[IO]]
       val action = Action.SetSecurityActive(AAPL, false, java.time.Instant.EPOCH)
@@ -56,22 +71,17 @@ class ActionDispatcherSpec extends IOWordSpec {
       }
     }
 
-    "read job status and filtered lists through the job repository" in {
-      val jobs   = mock[JobRepository[IO]]
-      val id     = JobId("run/0")
-      val job    = Job(id, Action.RefreshInvestmentResearch, ts, ts)
-      val filter = JobFilter(actionKind = Some("refresh-investment-research"))
+    "read optional job status through the job repository" in {
+      val jobs = mock[JobRepository[IO]]
+      val id   = JobId("run/0")
+      val job  = Job(id, Action.RefreshInvestmentResearch, ts, ts)
       when(jobs.find(id)).thenReturnSome(job)
-      when(jobs.list(20, filter)).thenReturnIO(List(job))
       (for
         dispatcher <- ActionDispatcher.make(jobs)
         found      <- dispatcher.findJob(id)
-        listed     <- dispatcher.listJobs(20, filter)
-      yield (found, listed)).asserting { case (found, listed) =>
+      yield found).asserting { found =>
         found mustBe Some(job)
-        listed mustBe List(job)
         verify(jobs).find(id)
-        verify(jobs).list(20, filter)
         succeed
       }
     }

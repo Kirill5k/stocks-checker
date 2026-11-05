@@ -9,6 +9,7 @@ import mongo4cats.errors.MongoJsonParsingException
 import mongo4cats.operations.{Filter, Update}
 import stockschecker.actions.{Action, ActionPriority}
 import stockschecker.domain.*
+import stockschecker.domain.errors.AppError
 import stockschecker.fixtures.*
 
 import java.time.{Instant, LocalDate}
@@ -24,6 +25,112 @@ class JobRepositorySpec extends RepositorySpec {
   private def enqueue(jobs: JobRepository[IO])(job: Job): IO[Unit] = jobs.enqueue(job, ActionPriority.forAction(job.action))
 
   "Durable jobs" should {
+    "return the complete domain job from a required lookup" in withEmbeddedMongoDatabase { db =>
+      val job = Job(
+        JobId("manual/0"),
+        action,
+        ts,
+        ts,
+        dependsOn = List(JobId("preceding")),
+        children = List(JobId("manual/0/0")),
+        state = Job.Running,
+        retries = 2,
+        leaseToken = Some("current-owner"),
+        leaseUntil = Some(ts.plusSeconds(120)),
+        plan = Some(JobPlan(List(evaluationAction), sequential = true)),
+        waitCount = 3,
+        deferralCount = 4,
+        reclaimCount = 1,
+        sourceCommandId = Some(FetchLatestSecuritiesCommand.id)
+      )
+      for
+        jobs   <- JobRepository.make[IO](db)
+        _      <- enqueue(jobs)(job)
+        result <- jobs.get(job.id)
+      yield result mustBe job
+    }
+
+    "fail a required lookup for an absent job while preserving optional lookup semantics" in withEmbeddedMongoDatabase { db =>
+      val id = JobId("absent/0")
+      for
+        jobs     <- JobRepository.make[IO](db)
+        required <- jobs.get(id).attempt
+        optional <- jobs.find(id)
+      yield
+        required mustBe Left(AppError.EntityDoesNotExist("Job", id.value))
+        optional mustBe None
+    }
+
+    "require an active command at the scheduled job's recorded version" in withEmbeddedMongoDatabase { db =>
+      for
+        jobs     <- JobRepository.make[IO](db)
+        commands <- CommandRepository.make[IO](db)
+        command  <- commands.create(CreateCommand(Action.RefreshInvestmentResearch, Schedule.Periodic(1.hour), None))
+        original = Job(JobId("original"), command.action, ts, ts, Some(JobCommand(command.id, command.version, JobId("original"))))
+        _        <- enqueue(jobs)(original)
+        initial  <- jobs.isCurrent(original)
+        inactive <- commands.setActive(command.id, false)
+        inactiveJob = original.copy(id = JobId("inactive"), command = Some(JobCommand(command.id, inactive.version, JobId("inactive"))))
+        _           <- enqueue(jobs)(inactiveJob)
+        blocked     <- jobs.isCurrent(inactiveJob)
+        reactivated <- commands.setActive(command.id, true)
+        stale       <- jobs.isCurrent(original)
+        current = original.copy(id = JobId("current"), command = Some(JobCommand(command.id, reactivated.version, JobId("current"))))
+        _       <- enqueue(jobs)(current)
+        valid   <- jobs.isCurrent(current)
+        _       <- jobs.deleteForCommand(command.id)
+        removed <- jobs.isCurrent(current)
+      yield
+        initial mustBe true
+        blocked mustBe false
+        stale mustBe false
+        valid mustBe true
+        removed mustBe false
+    }
+
+    "keep manual jobs current across command deactivation and edits while requiring command existence" in withEmbeddedMongoDatabase { db =>
+      for
+        jobs     <- JobRepository.make[IO](db)
+        commands <- CommandRepository.make[IO](db)
+        command  <- commands.create(CreateCommand(Action.RefreshInvestmentResearch, Schedule.Periodic(1.hour), None))
+        manual = Job(JobId("manual"), command.action, ts, ts, sourceCommandId = Some(command.id))
+        _        <- enqueue(jobs)(manual)
+        active   <- jobs.isCurrent(manual)
+        _        <- commands.setActive(command.id, false)
+        inactive <- jobs.isCurrent(manual)
+        _        <- commands.update(UpdateCommand(command.id, false, Action.RefreshInvestmentRanking, command.schedule, Some(1)))
+        edited   <- jobs.isCurrent(manual)
+        _        <- commands.delete(command.id)
+        missing  <- jobs.isCurrent(manual).attempt
+      yield
+        active mustBe true
+        inactive mustBe true
+        edited mustBe true
+        missing mustBe Left(AppError.EntityDoesNotExist("Command", command.id.value))
+    }
+
+    "distinguish a missing scheduled command from an already removed job" in withEmbeddedMongoDatabase { db =>
+      val commandId = FetchLatestSecuritiesCommand.id
+      val jobId     = JobId("missing-command")
+      val job       = Job(jobId, action, ts, ts, Some(JobCommand(commandId, 0L, jobId)))
+      for
+        jobs    <- JobRepository.make[IO](db)
+        _       <- enqueue(jobs)(job)
+        missing <- jobs.isCurrent(job).attempt
+        _       <- jobs.deleteForCommand(commandId)
+        removed <- jobs.isCurrent(job)
+      yield
+        missing mustBe Left(AppError.EntityDoesNotExist("Command", commandId.value))
+        removed mustBe false
+    }
+
+    "consider an unassociated job current without a command" in withEmbeddedMongoDatabase { db =>
+      for
+        jobs    <- JobRepository.make[IO](db)
+        current <- jobs.isCurrent(Job(JobId("unassociated"), action, ts, ts))
+      yield current mustBe true
+    }
+
     "reject a null wait count while decoding a valid failed research job" in withEmbeddedMongoDatabase { db =>
       val valid = Job(
         JobId("valid-research"),
@@ -74,7 +181,7 @@ class JobRepositorySpec extends RepositorySpec {
         claimed.map(_.action) mustBe Some(event)
     }
 
-    "prune expired evaluation history jobs without consulting domain state" in withEmbeddedMongoDatabase { db =>
+    "prune expired evaluation history jobs and report them missing from required lookups" in withEmbeddedMongoDatabase { db =>
       val expiredAt = ts.minusSeconds(31.days.toSeconds)
       for {
         jobs <- JobRepository.make[IO](db)
@@ -88,9 +195,14 @@ class JobRepositorySpec extends RepositorySpec {
             completedAt = Some(expiredAt)
           )
         )
-        _       <- jobs.pruneCompleted(ts)
-        expired <- jobs.find(JobId("needed"))
-      } yield expired mustBe None
+        before   <- jobs.get(JobId("needed"))
+        _        <- jobs.pruneCompleted(ts)
+        expired  <- jobs.find(JobId("needed"))
+        required <- jobs.get(JobId("needed")).attempt
+      } yield
+        before.id mustBe JobId("needed")
+        expired mustBe None
+        required mustBe Left(AppError.EntityDoesNotExist("Job", "needed"))
     }
 
     "aggregate child outcomes while preserving missing children as unfinished" in withEmbeddedMongoDatabase { db =>
@@ -295,6 +407,57 @@ class JobRepositorySpec extends RepositorySpec {
         old.state mustBe Job.Cancelled
         newer.state mustBe Job.Pending
       }
+    }
+
+    "delete every scheduled and manual job for a command while retaining unrelated jobs" in withEmbeddedMongoDatabase { db =>
+      val commandId = FetchLatestSecuritiesCommand.id
+      val otherId   = CommandId("000000000000000000000001")
+      val scheduled = for
+        version <- List(0L, 2L)
+        state   <- JobState.values.toList
+        suffix  <- List("", "/0")
+      yield
+        val runId = JobId(s"scheduled-$version-${state.value}")
+        Job(JobId(s"${runId.value}$suffix"), action, ts, ts, Some(JobCommand(commandId, version, runId)), state = state)
+      val manual = for
+        state  <- JobState.values.toList
+        suffix <- List("", "/0")
+      yield Job(JobId(s"manual-${state.value}$suffix"), action, ts, ts, state = state, sourceCommandId = Some(commandId))
+      val retained = List(
+        Job(JobId("unrelated"), action, ts, ts, Some(JobCommand(otherId, 0L, JobId("unrelated")))),
+        Job(JobId("unrelated-manual"), action, ts, ts, sourceCommandId = Some(otherId)),
+        Job(JobId("unassociated"), action, ts, ts)
+      )
+      for
+        jobs      <- JobRepository.make[IO](db)
+        _         <- (scheduled ++ manual ++ retained).traverse_(enqueue(jobs))
+        _         <- jobs.deleteForCommand(commandId)
+        _         <- jobs.deleteForCommand(commandId)
+        remaining <- jobs.list(100, JobFilter())
+      yield remaining.toSet mustBe retained.toSet
+    }
+
+    "fence a running owner's writes after its command jobs are deleted" in withEmbeddedMongoDatabase { db =>
+      val commandId = FetchLatestSecuritiesCommand.id
+      val jobId     = JobId("deleted-running")
+      for
+        jobs       <- JobRepository.make[IO](db)
+        _          <- enqueue(jobs)(Job(jobId, action, ts, ts, Some(JobCommand(commandId, 0L, jobId))))
+        running    <- jobs.claim(ts, 2.minutes).map(_.get)
+        _          <- jobs.deleteForCommand(commandId)
+        renewed    <- jobs.renew(running, ts.plusSeconds(1), 2.minutes)
+        savedPlan  <- jobs.savePlan(running, JobPlan(List(action), sequential = false))
+        _          <- jobs.waitForChildren(running, List(JobId(s"${jobId.value}/0")), ts.plusSeconds(1))
+        _          <- jobs.defer(running, ts.plusSeconds(1), Some("transient error"), countRetry = true)
+        _          <- jobs.pause(running, Provider.Finnhub, "invalid credentials")
+        _          <- jobs.finish(running, Job.Succeeded)
+        remaining  <- jobs.find(jobId)
+        claimAfter <- jobs.claim(ts.plusSeconds(121), 2.minutes)
+      yield
+        renewed mustBe false
+        savedPlan mustBe false
+        remaining mustBe None
+        claimAfter mustBe None
     }
 
   }

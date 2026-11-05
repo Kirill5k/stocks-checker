@@ -8,6 +8,14 @@ import stockschecker.fixtures.*
 
 class JobViewSpec extends AnyWordSpec with Matchers:
   "JobView" should {
+    "expose the source command of manual jobs without a scheduled run id" in {
+      val command = FetchLatestSecuritiesCommand
+      val job     = Job(JobId("manual/0"), command.action, ts, ts, sourceCommandId = Some(command.id))
+      val view    = JobView.from(job)
+      view.commandId mustBe Some(command.id)
+      view.runId mustBe None
+    }
+
     "expose execution status without lease or plan internals" in {
       val command = JobCommand(FetchLatestSecuritiesCommand.id, 3, JobId("run"))
       val job     = Job(

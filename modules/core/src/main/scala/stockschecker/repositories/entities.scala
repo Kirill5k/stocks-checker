@@ -247,6 +247,13 @@ private[repositories] object entities extends MongoJsonCodecs {
   object JobIdEntity:
     given MongoCodecProvider[JobIdEntity] = deriveCirceCodecProvider[JobIdEntity]
 
+  final case class JobCommandState(isActive: Boolean, version: Long) derives Codec.AsObject
+
+  final case class JobCommandStateEntity(commands: List[JobCommandState]) derives Codec.AsObject
+
+  object JobCommandStateEntity:
+    given MongoCodecProvider[JobCommandStateEntity] = deriveCirceCodecProvider[JobCommandStateEntity]
+
   final case class InvestmentScreenEntity(
       _id: InvestmentScreenId,
       createdAt: Instant,

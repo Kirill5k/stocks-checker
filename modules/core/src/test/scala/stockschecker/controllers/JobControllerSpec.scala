@@ -16,7 +16,16 @@ import stockschecker.services.JobService
 class JobControllerSpec extends HttpRoutesWordSpec:
   private val config = ApiConfig("test-key")
   private val apiKey = Header.Raw(CIString("X-API-Key"), config.key)
-  private val job    = JobView.from(Job(JobId("command:2:1793599200000/245"), Action.RefreshInvestmentResearch, ts, ts))
+  private val job    = Job(
+    JobId("command:2:1793599200000/245"),
+    Action.RefreshInvestmentResearch,
+    ts,
+    ts,
+    command = Some(JobCommand(FetchLatestSecuritiesCommand.id, 2, JobId("command:2:1793599200000"))),
+    leaseToken = Some("private-lease-token"),
+    leaseUntil = Some(ts.plusSeconds(120)),
+    plan = Some(JobPlan(List(Action.CreateMonthlyScreen), sequential = true))
+  )
 
   "Job endpoints" should {
 
@@ -30,14 +39,14 @@ class JobControllerSpec extends HttpRoutesWordSpec:
       verifyNoInteractions(service)
     }
 
-    "default to the twenty latest jobs" in {
+    "default to the twenty latest jobs and expose views without lease or plan internals" in {
       val service = mock[JobService[IO]]
       when(service.list(20, JobFilter())).thenReturnIO(List(job))
       val response = for
         controller <- JobController.make(service, config)
         result     <- controller.routes.orNotFound.run(Request[IO](uri = uri"/jobs").withHeaders(apiKey))
       yield result
-      response mustHaveStatus (Status.Ok, Some(List(job).asJson.noSpaces))
+      response mustHaveStatus (Status.Ok, Some(List(JobView.from(job)).asJson.noSpaces))
       verify(service).list(20, JobFilter())
     }
 
@@ -73,7 +82,7 @@ class JobControllerSpec extends HttpRoutesWordSpec:
       }
     }
 
-    "look up slash-containing job ids without treating them as path segments" in {
+    "look up slash-containing job ids and expose a view without lease or plan internals" in {
       val service = mock[JobService[IO]]
       when(service.get(job.id)).thenReturnIO(job)
       val response = for
@@ -82,7 +91,7 @@ class JobControllerSpec extends HttpRoutesWordSpec:
           Request[IO](uri = uri"/jobs/status".withQueryParam("id", job.id.value)).withHeaders(apiKey)
         )
       yield result
-      response mustHaveStatus (Status.Ok, Some(job.asJson.noSpaces))
+      response mustHaveStatus (Status.Ok, Some(JobView.from(job).asJson.noSpaces))
       verify(service).get(job.id)
     }
 

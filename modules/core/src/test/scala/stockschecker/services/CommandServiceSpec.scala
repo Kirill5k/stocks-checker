@@ -52,15 +52,72 @@ class CommandServiceSpec extends IOWordSpec {
       val command                = FetchLatestSecuritiesCommand.copy(executionCount = 1, maxExecutions = Some(1))
       val jobId                  = JobId("manual-run")
       when(commands.find(any[CommandId])).thenReturnIO(command)
-      when(dispatcher.dispatchTracked(any[Action])).thenReturnIO(jobId)
+      when(dispatcher.dispatchForCommand(command.id, command.action)).thenReturnIO(jobId)
       (for {
         service <- CommandService.make(commands, dispatcher)
         result  <- service.executeManually(command.id)
       } yield result).asserting { result =>
         result mustBe jobId
-        verify(dispatcher).dispatchTracked(command.action)
+        verify(dispatcher).dispatchForCommand(command.id, command.action)
         verify(commands).find(command.id)
         verifyNoMoreInteractions(commands)
+        succeed
+      }
+    }
+
+    "delete a command once before deleting its jobs directly" in {
+      val (dispatcher, commands) = mocks
+      val id                     = FetchLatestSecuritiesCommand.id
+      when(dispatcher.deleteForCommand(id)).thenReturnUnit
+      when(commands.delete(id)).thenReturnUnit
+      (for
+        service <- CommandService.make(commands, dispatcher)
+        _       <- service.delete(id)
+      yield ()).asserting { _ =>
+        val order = org.mockito.Mockito.inOrder(dispatcher, commands)
+        order.verify(commands).delete(id)
+        order.verify(dispatcher).deleteForCommand(id)
+        verifyNoMoreInteractions(commands, dispatcher)
+        succeed
+      }
+    }
+
+    "report job cleanup failure after deleting the command" in {
+      val (dispatcher, commands) = mocks
+      val id                     = FetchLatestSecuritiesCommand.id
+      val failure                = new java.io.IOException("job storage unavailable")
+      when(commands.delete(id)).thenReturnUnit
+      when(dispatcher.deleteForCommand(id)).thenRaiseError(failure)
+      CommandService.make(commands, dispatcher).flatMap(_.delete(id)).attempt.asserting { result =>
+        result mustBe Left(failure)
+        val order = org.mockito.Mockito.inOrder(commands, dispatcher)
+        order.verify(commands).delete(id)
+        order.verify(dispatcher).deleteForCommand(id)
+        verifyNoMoreInteractions(commands, dispatcher)
+        succeed
+      }
+    }
+
+    "not delete jobs when deleting the command fails" in {
+      val (dispatcher, commands) = mocks
+      val id                     = FetchLatestSecuritiesCommand.id
+      val failure                = new java.io.IOException("command storage unavailable")
+      when(commands.delete(id)).thenRaiseError(failure)
+      CommandService.make(commands, dispatcher).flatMap(_.delete(id)).attempt.asserting { result =>
+        result mustBe Left(failure)
+        verifyNoInteractions(dispatcher)
+        succeed
+      }
+    }
+
+    "not delete jobs when the command does not exist" in {
+      val (dispatcher, commands) = mocks
+      val id                     = FetchLatestSecuritiesCommand.id
+      val failure                = AppError.EntityDoesNotExist("Command", id.value)
+      when(commands.delete(id)).thenRaiseError(failure)
+      CommandService.make(commands, dispatcher).flatMap(_.delete(id)).attempt.asserting { result =>
+        result mustBe Left(failure)
+        verifyNoInteractions(dispatcher)
         succeed
       }
     }

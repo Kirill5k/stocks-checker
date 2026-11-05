@@ -41,7 +41,6 @@ object Application extends IOApp.Simple {
             actionExecutor   <- ActionExecutor.make(
               repositories.jobs,
               actionHandler,
-              services.command.isCurrent,
               config.actionExecutor
             )
             commandScheduler <- CommandScheduler.make(repositories.command, repositories.jobs)

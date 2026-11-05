@@ -40,7 +40,7 @@ object Services:
       cp          <- CompanyProfileService.make(repos.companyProfile, clients.marketData, ad)
       p           <- PriceService.make(repos.priceAnalytics, ad, repos.priceHistory, clients.marketData)
       c           <- CommandService.make(repos.command, ad)
-      j           <- JobService.make(ad)
+      j           <- JobService.make(repos.jobs)
       fm          <- FinancialMetricsService.make(repos.financialMetrics, clients.marketData, ad, repos.financialHistory)
       investment  <- InvestmentScreenService.make(repos.investmentScreens, ad, recipe)
       evaluations <- InvestmentEvaluationService.make(repos.investmentEvaluations, ad)

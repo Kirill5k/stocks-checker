@@ -58,8 +58,11 @@ All routes below require `X-API-Key`:
 | `GET /api/jobs?limit=20` | Recent jobs; optional `commandId`, `state`, `actionKind` |
 | `GET /api/jobs/status?id={url-encoded-id}` | One job, including hierarchical child IDs |
 | `POST /api/commands/{id}/execute` | Dispatch once; HTTP 204 carries `X-Job-Id`, independent of schedule state |
+| `DELETE /api/commands/{id}` | Delete a command and its associated jobs; HTTP 204 after both deletions complete |
 
 `POST /api/investment-screens` creates a screen. Its JSON `limit` controls candidate count (default 20); the detail route does not accept a candidate-limit query. `rankingReadiness` describes the frozen ranking, while `priceAnalyticsReadiness` describes current persisted analytics. A successful provider request alone does not establish that the computed analytics are fresh.
+
+Command deletion removes the command first, then directly deletes its scheduled and linked manual jobs, including descendants and completed jobs. The request waits for both operations and creates no cleanup job. A missing command, including a repeated deletion after removal, returns 404. If job cleanup fails, the request returns a server error after the command has already been removed. Fetched market data remains intact, and provider requests already in flight may still finish. Manual jobs created before command lineage was recorded cannot be associated retrospectively.
 
 ### Troubleshooting and data refill
 

@@ -179,6 +179,79 @@ class CommandControllerSpec extends HttpRoutesWordSpec {
       }
     }
 
+    "DELETE /commands/{id}" should {
+      "return 204 with no body after requesting deletion" in {
+        val svc       = mocks
+        val commandId = FetchLatestSecuritiesCommand.id
+        when(svc.delete(commandId)).thenReturnUnit
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          req = Request[IO](uri = uri"/commands" / commandId.value, method = Method.DELETE).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.NoContent, None)
+        verify(svc).delete(commandId)
+      }
+
+      "return 404 when the command does not exist" in {
+        val svc       = mocks
+        val commandId = FetchLatestSecuritiesCommand.id
+        when(svc.delete(commandId)).thenRaiseError(AppError.EntityDoesNotExist("Command", commandId.value))
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          req = Request[IO](uri = uri"/commands" / commandId.value, method = Method.DELETE).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.NotFound, Some(s"""{"message":"Command with id ${commandId.value} does not exist"}"""))
+        verify(svc).delete(commandId)
+      }
+
+      "reject an invalid command id before requesting deletion" in {
+        val svc = mocks
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          req = Request[IO](uri = uri"/commands/invalid-id", method = Method.DELETE).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.UnprocessableContent, Some("""{"message":"Invalid hexadecimal representation of an id: invalid-id"}"""))
+        verifyNoInteractions(svc)
+      }
+
+      "require an API key before requesting deletion" in {
+        val svc = mocks
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          req = Request[IO](uri = uri"/commands" / FetchLatestSecuritiesCommand.id.value, method = Method.DELETE)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.Unauthorized, Some("""{"message":"Invalid API key"}"""))
+        verifyNoInteractions(svc)
+      }
+
+      "return a safe error when deletion fails" in {
+        val svc       = mocks
+        val commandId = FetchLatestSecuritiesCommand.id
+        when(svc.delete(commandId)).thenRaiseError(new RuntimeException("database connection details"))
+
+        val res = for
+          controller <- CommandController.make(apiConfig, svc)
+          req = Request[IO](uri = uri"/commands" / commandId.value, method = Method.DELETE).withHeaders(apiKeyHeader)
+          res <- controller.routes.orNotFound.run(req)
+        yield res
+
+        res mustHaveStatus (Status.InternalServerError, Some("""{"message":"Internal server error"}"""))
+        verify(svc).delete(commandId)
+      }
+    }
+
     "POST /commands/{id}/execute" should {
       "return 204 with the durable job id on success" in {
         val svc       = mocks

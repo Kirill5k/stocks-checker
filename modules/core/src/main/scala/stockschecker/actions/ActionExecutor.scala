@@ -9,7 +9,7 @@ import fs2.Stream
 import kirill5k.common.cats.Clock
 import org.typelevel.log4cats.Logger
 import stockschecker.common.config.ActionExecutorConfig
-import stockschecker.domain.{Job, JobCommand, JobId, JobPlan}
+import stockschecker.domain.{Job, JobId, JobPlan}
 import stockschecker.domain.errors.AppError
 import stockschecker.repositories.JobRepository
 
@@ -23,7 +23,6 @@ trait ActionExecutor[F[_]]:
 final private class LiveActionExecutor[F[_]](
     jobs: JobRepository[F],
     handler: ActionHandler[F],
-    isCurrent: JobCommand => F[Boolean],
     config: ActionExecutorConfig
 )(using F: Async[F], clock: Clock[F], logger: Logger[F])
     extends ActionExecutor[F] {
@@ -89,12 +88,16 @@ final private class LiveActionExecutor[F[_]](
       }
 
   private def process(job: Job): F[Unit] = {
-    val execute = for
-      current <- job.command.fold(F.pure(true))(isCurrent)
-      _       <-
-        if (!current) finish(job, Job.Cancelled, Some("Command changed or deactivated"))
-        else checkDependencies(job)
-    yield ()
+    val execute = job.commandId.fold(checkDependencies(job)) { id =>
+      jobs.isCurrent(job).attempt.flatMap {
+        // A scheduler or expanding worker may enqueue after deletion. Remove that late work
+        // on claim, including after a crash, before it can execute or recreate descendants.
+        case Left(AppError.EntityDoesNotExist("Command", missingId)) if missingId == id.value => jobs.deleteForCommand(id)
+        case Left(error)                                                                      => F.raiseError(error)
+        case Right(false) => finish(job, Job.Cancelled, Some("Command changed or deactivated"))
+        case Right(true)  => checkDependencies(job)
+      }
+    }
     execute.handleErrorWith(handleFailure(job, _))
   }
 
@@ -124,7 +127,7 @@ final private class LiveActionExecutor[F[_]](
       clock.now.flatMap { now =>
         val children = actions.zipWithIndex.map { case (action, index) =>
           val dependencies = if (sequential && index > 0) List(JobId(s"${job.id.value}/${index - 1}")) else Nil
-          Job(JobId(s"${job.id.value}/$index"), action, now, now, job.command, dependencies)
+          Job(JobId(s"${job.id.value}/$index"), action, now, now, job.command, dependencies, sourceCommandId = job.sourceCommandId)
         }
         // Freeze a query's result before materialization: a crash/retry must not map the same child IDs to a different universe.
         (if (job.plan.nonEmpty) F.pure(true) else jobs.savePlan(job, JobPlan(actions, sequential))).flatMap { owned =>
@@ -154,7 +157,7 @@ final private class LiveActionExecutor[F[_]](
       case JobExecutionPolicy.Failure.Pause(provider) =>
         logger.warn(s"Job ${job.id} paused: $summary") >> jobs.pause(job, provider, summary)
       case JobExecutionPolicy.Failure.Retry =>
-        for {
+        for
           _      <- logger.warn(s"Job ${job.id} failed: $summary")
           now    <- clock.now
           jitter <- F.delay(ThreadLocalRandom.current().nextLong(MinimumRetryJitterMillis, MaximumRetryJitterMillis + 1))
@@ -164,7 +167,7 @@ final private class LiveActionExecutor[F[_]](
             Some(summary),
             countRetry = true
           )
-        } yield ()
+        yield ()
       case JobExecutionPolicy.Failure.Fail =>
         val message = s"Job ${job.id} failed: $summary"
         val log     = error match
@@ -179,7 +182,6 @@ object ActionExecutor:
   def make[F[_]: {Async, Logger, Clock}](
       jobs: JobRepository[F],
       handler: ActionHandler[F],
-      isCurrent: JobCommand => F[Boolean],
       config: ActionExecutorConfig
   ): F[ActionExecutor[F]] =
-    Async[F].pure(new LiveActionExecutor(jobs, handler, isCurrent, config))
+    Async[F].pure(new LiveActionExecutor(jobs, handler, config))

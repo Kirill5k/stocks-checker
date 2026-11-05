@@ -47,7 +47,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
   private def makeExecutor(jobs: JobRepository[IO], services: Services[IO], config: ActionExecutorConfig): IO[ActionExecutor[IO]] =
     ActionHandler
       .make(services)
-      .flatMap(handler => ActionExecutor.make(jobs, handler, command => services.command.isCurrent(command), config))
+      .flatMap(handler => ActionExecutor.make(jobs, handler, config))
 
   private def allowRankingRefresh(services: Services[IO]): Unit =
     val rankings = mock(classOf[InvestmentRankingService[IO]])
@@ -95,10 +95,9 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         commands       <- CommandRepository.make[IO](db)
         dispatcher     <- ActionDispatcher.make(jobs)
         commandService <- CommandService.make(commands, dispatcher)
-        _ = when(services.command).thenReturn(commandService)
-        command <- commandService.create(CreateCommand(Action.RefreshInvestmentResearch, Schedule.Periodic(1.hour), Some(1)))
-        _       <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
-        queued  <- commands.find(command.id)
+        command        <- commandService.create(CreateCommand(Action.RefreshInvestmentResearch, Schedule.Periodic(1.hour), Some(1)))
+        _              <- CommandScheduler.make(commands, jobs).flatMap(_.tick)
+        queued         <- commands.find(command.id)
         runId = queued.activeRunId.get
         executor  <- makeExecutor(jobs, services, ActionExecutorConfig(1))
         result    <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, runId))
@@ -371,13 +370,10 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
         when(services.companyProfile).thenReturn(profiles)
         when(profiles.get(MSFT, true)).thenReturn(IO.raiseError(AppError.DataUnavailable(MSFT, "missing session")))
         for {
-          jobs           <- JobRepository.make[IO](db)
-          commands       <- CommandRepository.make[IO](db)
-          dispatcher     <- ActionDispatcher.make(jobs)
-          commandService <- CommandService.make(commands, dispatcher)
-          _ = when(services.command).thenReturn(commandService)
-          now     <- IO.realTimeInstant
-          command <- commands.create(
+          jobs     <- JobRepository.make[IO](db)
+          commands <- CommandRepository.make[IO](db)
+          now      <- IO.realTimeInstant
+          command  <- commands.create(
             CreateCommand(Action.UpdateCompanyProfiles(NonEmptyList.of(AAPL, MSFT)), Schedule.Periodic(1.hour), Some(1))
           )
           ready      <- commands.initializeNextRun(command, now).map(_.get)
@@ -474,7 +470,7 @@ class ActionExecutorIntegrationSpec extends RepositorySpec {
               .raiseUnless(action == second)(new IllegalStateException("Frozen work was recomputed"))
               .as(ActionResult.Completed)
         }
-        executor   <- ActionExecutor.make(jobs, handler, _ => IO.pure(true), ActionExecutorConfig(1))
+        executor   <- ActionExecutor.make(jobs, handler, ActionExecutorConfig(1))
         result     <- executor.run.compile.drain.background.use(_ => awaitTerminal(jobs, parent.id))
         executed   <- calls.get
         firstChild <- jobs.find(JobId("interrupted/0")).map(_.get)
