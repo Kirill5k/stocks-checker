@@ -62,7 +62,12 @@ final private class LiveInvestmentScreenRepository[F[_]](
       )
 
   override def latestRanking: F[Option[InvestmentRanking]] =
-    C.now.flatMap(now => rankings.aggregate[InvestmentRankingEntity](InvestmentRankingQueries.latest(now)).first.mapOpt(_.toDomain))
+    C.now.flatMap { now =>
+      rankings
+        .aggregate[InvestmentRankingEntity](InvestmentRankingQueries.latest(now))
+        .first
+        .mapOpt(_.toDomain)
+    }
 
   override def rankingEntries(id: InvestmentRankingId): F[List[InvestmentRankingEntry]] =
     inputs

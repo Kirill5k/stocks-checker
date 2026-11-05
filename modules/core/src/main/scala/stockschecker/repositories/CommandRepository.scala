@@ -44,7 +44,9 @@ final private class LiveCommandRepository[F[_]](
   override def pending(now: Instant): F[List[Command]] = {
     val remaining = Filter.isNull(Field.MaxExecutions) ||
       Filter.expr(org.bson.Document.parse(s"""{"$$lt":["$$${Field.ExecutionCount}","$$${Field.MaxExecutions}"]}"""))
-    val due = Filter.eq(Field.IsActive, true) && remaining && Filter.isNull(Field.ActiveRunId) &&
+    val due = Filter.eq(Field.IsActive, true) && 
+      remaining && 
+      Filter.isNull(Field.ActiveRunId) &&
       (Filter.isNull(Field.NextRunAt) || Filter.lte(Field.NextRunAt, now))
     collection
       .find(due || Filter.ne(Field.ActiveRunId, Option.empty[String]))

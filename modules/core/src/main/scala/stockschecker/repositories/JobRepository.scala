@@ -5,7 +5,7 @@ import cats.effect.Async
 import cats.syntax.applicative.*
 import cats.syntax.flatMap.*
 import cats.syntax.functor.*
-import com.mongodb.client.model.{Indexes, ReturnDocument}
+import com.mongodb.client.model.ReturnDocument
 import io.circe.Codec
 import kirill5k.common.cats.Clock
 import kirill5k.common.cats.syntax.applicative.*
@@ -92,8 +92,7 @@ final private class LiveJobRepository[F[_]](
       .mapList(_.job)
 
   override def summarize(ids: List[JobId]): F[JobStatusSummary] =
-    if (ids.isEmpty)
-      JobStatusSummary(Map.empty).pure[F]
+    if (ids.isEmpty) JobStatusSummary(Map.empty).pure[F]
     else
       collection
         .aggregate[JobStateCount](
@@ -118,19 +117,18 @@ final private class LiveJobRepository[F[_]](
 
   override def claim(now: Instant, lease: FiniteDuration): F[Option[Job]] =
     F.delay(UUID.randomUUID().toString).flatMap { token =>
-      val ready = Filter.in(Field.State, List(Job.Pending.value, Job.Waiting.value, Job.Paused.value)) &&
-        Filter.lte(Field.AvailableAt, now)
-      val expired = Filter.eq(Field.State, Job.Running.value) && Filter.lte(Field.LeaseUntil, now)
-      val acquire = Update
-        .set(Field.State, Job.Running.value)
-        .set(Field.LeaseToken, token)
-        .set(Field.LeaseUntil, now.plusMillis(lease.toMillis))
-        .set(Field.PausedProvider, Option.empty[Provider])
-      val options = FindOneAndUpdateOptions(
-        returnDocument = ReturnDocument.AFTER,
-        sort = Some(Sort.asc(Field.Priority, Field.AvailableAt, Field.CreatedAt, Field.Id))
-      ).hint(Indexes.ascending(ClaimIndexFields.asJava))
       for
+        ready   = Filter.in(Field.State, List(Job.Pending.value, Job.Waiting.value, Job.Paused.value)) && Filter.lte(Field.AvailableAt, now)
+        expired = Filter.eq(Field.State, Job.Running.value) && Filter.lte(Field.LeaseUntil, now)
+        acquire = Update
+          .set(Field.State, Job.Running.value)
+          .set(Field.LeaseToken, token)
+          .set(Field.LeaseUntil, now.plusMillis(lease.toMillis))
+          .set(Field.PausedProvider, Option.empty[Provider])
+        options = FindOneAndUpdateOptions(
+          returnDocument = ReturnDocument.AFTER,
+          sort = Some(Sort.asc(Field.Priority, Field.AvailableAt, Field.CreatedAt, Field.Id))
+        ).hint(Index.ascending(ClaimIndexFields))
         // A worker crash consumes a bounded reclaim, independently of normal dependency polling.
         _ <- collection.updateMany(
           expired && Filter.gte(Field.ReclaimCount, MaxLeaseReclaims),
@@ -148,10 +146,10 @@ final private class LiveJobRepository[F[_]](
 
   override def finish(job: Job, state: JobState, error: Option[String]): F[Unit] =
     clock.now
-      .flatMap(now =>
+      .flatMap { now =>
         collection.updateOne(owned(job), release.set(Field.State, state.value).set(Field.Error, error).set(Field.CompletedAt, now)).void
-      )
-
+      }
+      
   override def savePlan(job: Job, plan: JobPlan): F[Boolean] =
     collection
       .updateOne(owned(job), Update.set(Field.Plan, plan))

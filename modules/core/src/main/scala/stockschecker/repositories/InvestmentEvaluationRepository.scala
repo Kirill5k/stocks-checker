@@ -97,34 +97,34 @@ final private class LiveInvestmentEvaluationRepository[F[_]](
       .mapList(_.toDomain)
 
   override def findPriceSeries(tickers: List[Ticker], range: DateRange): F[Map[Ticker, EvaluationPriceSeries]] =
-    val price    = PriceHistoryRepository.Field
-    val matching = Filter.in("_id", tickers.distinct.map(ticker => s"${ticker.value}:${PriceAdjustment.SplitsAndDividends.value}")) &&
-      Filter.lte(price.RangeFrom, range.from.toString) && Filter.gte(price.RangeThrough, range.through.toString) &&
-      Filter.gte(price.FetchedAt, PriceHistorySnapshot.completedSessionCutoff(range.through))
-    val trimmed = Document(
-      "$filter" := Document(
-        "input" := "$data.candles",
-        "as"    := "candle",
-        "cond"  := Document(
-          "$and" := List(
-            Document("$gte" := List("$$candle.date", range.from.toString)),
-            Document("$lte" := List("$$candle.date", range.through.toString))
+    if tickers.isEmpty then F.pure(Map.empty)
+    else {
+      val price    = PriceHistoryRepository.Field
+      val matching = Filter.in("_id", tickers.distinct.map(ticker => s"${ticker.value}:${PriceAdjustment.SplitsAndDividends.value}")) &&
+        Filter.lte(price.RangeFrom, range.from.toString) && Filter.gte(price.RangeThrough, range.through.toString) &&
+        Filter.gte(price.FetchedAt, PriceHistorySnapshot.completedSessionCutoff(range.through))
+      val trimmed = Document(
+        "$filter" := Document(
+          "input" := "$data.candles",
+          "as"    := "candle",
+          "cond"  := Document(
+            "$and" := List(
+              Document("$gte" := List("$$candle.date", range.from.toString)),
+              Document("$lte" := List("$$candle.date", range.through.toString))
+            )
           )
         )
       )
-    )
-    val projection = Projection.include("data").computed("candleCount", Document("$size" := "$data.candles")).excludeId
-    if tickers.isEmpty then F.pure(Map.empty)
-    else
       prices
         .aggregate[EvaluationPriceSeriesEntity](
           Aggregate
             .matchBy(matching)
-            .project(projection)
+            .project(Projection.include("data").computed("candleCount", Document("$size" := "$data.candles")).excludeId)
             .set("data.candles" -> trimmed)
         )
         .all
         .map(_.iterator.map(row => row.data.ticker -> row.toDomain(range)).toMap)
+    }
 
   private def expression(operator: String, arguments: BsonValue*): Document = Document(operator := arguments.toList)
 
