@@ -7,6 +7,7 @@ import cats.syntax.foldable.*
 import cats.syntax.functor.*
 import fs2.Stream
 import kirill5k.common.cats.Clock
+import kirill5k.common.cats.syntax.applicative.*
 import org.typelevel.log4cats.Logger
 import stockschecker.common.config.ActionExecutorConfig
 import stockschecker.domain.{Job, JobId, JobPlan}
@@ -43,16 +44,13 @@ final private class LiveActionExecutor[F[_]](
       )
 
   private def worker: Stream[F, Unit] = Stream.repeatEval {
-    clock.now
-      .flatMap(jobs.claim(_, Lease))
-      .flatMap {
+    (for
+      now <- clock.now
+      job <- jobs.claim(now, Lease)
+      res <- job match
         case None      => F.sleep(IdlePollInterval).as(Option.empty[Unit])
-        case Some(job) =>
-          clock.now
-            .flatMap(now => F.race(process(job), heartbeat(job, job.leaseUntil.getOrElse(now.plusMillis(Lease.toMillis)))))
-            .as(Some(()))
-      }
-      .handleErrorWith(error => logger.error(s"Job worker failed: ${error.getMessage}") >> F.sleep(WorkerRecoveryDelay).as(None))
+        case Some(job) => F.race(process(job), heartbeat(job, job.leaseUntil.getOrElse(now.plusMillis(Lease.toMillis)))).as(Some(()))
+    yield res).handleErrorWith(error => logger.error(s"Job worker failed: ${error.getMessage}") >> F.sleep(WorkerRecoveryDelay).as(None))
   }.unNone
 
   private def heartbeat(job: Job, leaseUntil: Instant, delay: FiniteDuration = HeartbeatInterval): F[Unit] =
@@ -60,21 +58,22 @@ final private class LiveActionExecutor[F[_]](
       val remaining = java.time.Duration.between(before, leaseUntil).toMillis.millis
       if remaining <= Duration.Zero then F.unit
       else
-        F.sleep(delay.min(remaining)) >> clock.now.flatMap { now =>
-          if !now.isBefore(leaseUntil) then F.unit
-          else
-            F.timeoutTo(
-              jobs.renew(job, now, Lease).attempt,
-              java.time.Duration.between(now, leaseUntil).toMillis.millis,
-              F.pure(Right(false))
-            ).flatMap {
-              case Right(true)  => heartbeat(job, now.plusMillis(Lease.toMillis))
-              case Right(false) => F.unit // Losing the lease cancels the competing execution fiber.
-              case Left(error)  =>
-                logger.error(error)(s"Heartbeat renewal failed for job ${job.id}; retrying while the lease is valid") >>
-                  heartbeat(job, leaseUntil, WorkerRecoveryDelay)
-            }
-        }
+        F.sleep(delay.min(remaining)) >>
+          clock.now.flatMap { now =>
+            if !now.isBefore(leaseUntil) then F.unit
+            else
+              F.timeoutTo(
+                jobs.renew(job, now, Lease).attempt,
+                java.time.Duration.between(now, leaseUntil).toMillis.millis,
+                F.pure(Right(false))
+              ).flatMap {
+                case Right(true)  => heartbeat(job, now.plusMillis(Lease.toMillis))
+                case Right(false) => F.unit // Losing the lease cancels the competing execution fiber.
+                case Left(error)  =>
+                  logger.error(error)(s"Heartbeat renewal failed for job ${job.id}; retrying while the lease is valid") >>
+                    heartbeat(job, leaseUntil, WorkerRecoveryDelay)
+              }
+          }
     }
 
   // Completion is a separate durable write: retrying it must never invoke the action again.
@@ -104,8 +103,9 @@ final private class LiveActionExecutor[F[_]](
   private def checkDependencies(job: Job): F[Unit] =
     jobs.summarize(job.dependsOn).flatMap { summary =>
       JobExecutionPolicy.dependencies(job.dependsOn.size, summary) match
-        case JobExecutionPolicy.Progress.Finish(state, error) => finish(job, state, error)
-        case JobExecutionPolicy.Progress.Wait                 =>
+        case JobExecutionPolicy.Progress.Finish(state, error) =>
+          finish(job, state, error)
+        case JobExecutionPolicy.Progress.Wait =>
           clock.now.flatMap(now => jobs.defer(job, now.plusSeconds(pollDelaySeconds(job)), None, countRetry = false))
         case JobExecutionPolicy.Progress.Ready =>
           if job.children.nonEmpty then reconcileChildren(job)
@@ -123,20 +123,20 @@ final private class LiveActionExecutor[F[_]](
 
   private def expand(job: Job, actions: List[Action], sequential: Boolean): F[Unit] =
     if (actions.isEmpty) finish(job, Job.Succeeded)
-    else
-      clock.now.flatMap { now =>
-        val children = actions.zipWithIndex.map { case (action, index) =>
-          val dependencies = if (sequential && index > 0) List(JobId(s"${job.id.value}/${index - 1}")) else Nil
+    else {
+      for
+        now <- clock.now
+        children = actions.zipWithIndex.map { case (action, index) =>
+          val dependencies = Option.when(sequential && index > 0)(JobId(s"${job.id.value}/${index - 1}")).toList
           Job(JobId(s"${job.id.value}/$index"), action, now, now, job.command, dependencies, sourceCommandId = job.sourceCommandId)
         }
-        // Freeze a query's result before materialization: a crash/retry must not map the same child IDs to a different universe.
-        (if (job.plan.nonEmpty) F.pure(true) else jobs.savePlan(job, JobPlan(actions, sequential))).flatMap { owned =>
-          F.whenA(owned)(
-            children.traverse_(child => jobs.enqueue(child, ActionPriority.forAction(child.action))) >> jobs
-              .waitForChildren(job, children.map(_.id), now.plusSeconds(pollDelaySeconds(job)))
-          )
-        }
-      }
+        owned <- F.ifTrueOrElse(job.plan.nonEmpty)(F.pure(true), jobs.savePlan(job, JobPlan(actions, sequential)))
+        _     <- F.whenA(owned)(
+          children.traverse_(child => jobs.enqueue(child, ActionPriority.forAction(child.action))) >>
+            jobs.waitForChildren(job, children.map(_.id), now.plusSeconds(pollDelaySeconds(job)))
+        )
+      yield ()
+    }
 
   private def execute(job: Job): F[Unit] =
     handler.execute(job.action).flatMap {
